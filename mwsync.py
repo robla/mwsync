@@ -86,19 +86,39 @@ def save_config(config: dict, path: str = DEFAULT_CONFIG_PATH) -> bool:
         return False
 
 
-def resolve_article(config: dict, key: str) -> dict:
-    """Look up article entry by key; exit with clear error if not found."""
+def resolve_article_entry(config: dict, key: str) -> tuple[str, dict]:
+    """Look up article entry by key or local filename; return canonical key and entry."""
     articles = config.get("wiki", {}).get("articles", {})
-    if key not in articles:
-        known = list(articles.keys())
-        print(f"Error: article '{key}' not found in mwsync.yaml.", file=sys.stderr)
-        if known:
-            print(f"Known articles: {', '.join(known)}", file=sys.stderr)
-        else:
-            print("No articles registered yet. Use 'mwsync.py add URL' to add one.",
-                  file=sys.stderr)
+    if key in articles:
+        return key, articles[key]
+
+    local_matches = [
+        (article_key, art)
+        for article_key, art in articles.items()
+        if art.get("local", article_key + ".mw") == key
+    ]
+    if len(local_matches) == 1:
+        return local_matches[0]
+    if len(local_matches) > 1:
+        print(
+            f"Error: local filename '{key}' matches multiple articles in mwsync.yaml.",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    return articles[key]
+
+    known = list(articles.keys())
+    print(f"Error: article '{key}' not found in mwsync.yaml.", file=sys.stderr)
+    if known:
+        print(f"Known articles: {', '.join(known)}", file=sys.stderr)
+    else:
+        print("No articles registered yet. Use 'mwsync.py add URL' to add one.",
+              file=sys.stderr)
+    sys.exit(1)
+
+
+def resolve_article(config: dict, key: str) -> dict:
+    """Compatibility wrapper returning only the article entry."""
+    return resolve_article_entry(config, key)[1]
 
 
 def get_api_base(config: dict) -> str:
@@ -354,8 +374,7 @@ def run_add(args, config: dict, config_path: str) -> None:
 
 
 def run_fetch(args, config: dict, config_path: str) -> None:
-    key = args.article
-    art = resolve_article(config, key)
+    key, art = resolve_article_entry(config, args.article)
     title = art.get("title", key)
     local = art.get("local", key + ".mw")
     api_base = get_api_base(config)
@@ -424,8 +443,7 @@ def run_fetch(args, config: dict, config_path: str) -> None:
 
 
 def run_push(args, config: dict, config_path: str) -> None:
-    key = args.article
-    art = resolve_article(config, key)
+    key, art = resolve_article_entry(config, args.article)
     title = art.get("title", key)
     local = art.get("local", key + ".mw")
     api_base = get_api_base(config)
@@ -554,8 +572,7 @@ def run_push(args, config: dict, config_path: str) -> None:
 
 
 def run_diff(args, config: dict, config_path: str) -> None:
-    key = args.article
-    art = resolve_article(config, key)
+    key, art = resolve_article_entry(config, args.article)
     local = art.get("local", key + ".mw")
     snapshot = _server_snapshot_path(key)
 
@@ -580,8 +597,7 @@ def run_diff(args, config: dict, config_path: str) -> None:
 
 
 def run_difftool(args, config: dict, config_path: str) -> None:
-    key = args.article
-    art = resolve_article(config, key)
+    key, art = resolve_article_entry(config, args.article)
     local = art.get("local", key + ".mw")
     snapshot = _server_snapshot_path(key)
 
@@ -601,10 +617,8 @@ def run_status(args, config: dict, config_path: str) -> None:
 
     key_filter = getattr(args, "article", None)
     if key_filter:
-        if key_filter not in articles:
-            print(f"Error: article '{key_filter}' not found.", file=sys.stderr)
-            sys.exit(1)
-        items = [(key_filter, articles[key_filter])]
+        key, art = resolve_article_entry(config, key_filter)
+        items = [(key, art)]
     else:
         items = list(articles.items())
 
