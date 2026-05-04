@@ -1,0 +1,1 @@
+This is an MIT-licensed tool for bringing git-like workflow to wiki page editing (on MediaWiki-based wikis).  It was mostly vibecoded with a combination of OpenAI's ChatGPT, Anthropic's Claude, and Google's Gemini (more the former than the latter).
