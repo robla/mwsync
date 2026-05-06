@@ -4,7 +4,7 @@ mwsync.py — Per-article local ↔ MediaWiki sync tool.
 
 Subcommands:
   init      Create a minimal mwsync.yaml
-  add       Register a new article by URL
+  add       Register a new article by URL or page name
   checkout  Register, fetch, and merge an article into a local .mw file
   fetch     Pull current wikitext and metadata into _cache
   push      Submit local edits back to the wiki
@@ -18,7 +18,7 @@ Subcommands:
 
 Usage:
   mwsync.py init
-  mwsync.py add https://electowiki.org/wiki/Maine
+  mwsync.py add Maine
   mwsync.py checkout https://electowiki.org/wiki/Maine
   mwsync.py checkout Maine@upstream^ --to scratch/Maine-old.mw
   mwsync.py fetch Maine
@@ -123,14 +123,70 @@ def _parse_article_url(url: str) -> tuple[str, str, str]:
     return key, title, local
 
 
+def _parse_article_name(name: str) -> tuple[str, str, str]:
+    raw = name.strip()
+    if not raw:
+        print("Error: article name cannot be empty.", file=sys.stderr)
+        sys.exit(1)
+    if raw.endswith(".mw"):
+        raw = raw[:-3]
+    title = raw.replace("_", " ")
+    key = title.replace(" ", "_")
+    local = key + ".mw"
+    return key, title, local
+
+
+def _article_url_from_key(config: dict, key: str) -> str:
+    parsed = urllib.parse.urlparse(get_api_base(config))
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+
+    path = parsed.path
+    if path.endswith("/w/api.php"):
+        article_path = path[:-len("/w/api.php")] + "/wiki/" + urllib.parse.quote(key, safe="/")
+    elif path.endswith("/api.php"):
+        article_path = path[:-len("/api.php")] + "/wiki/" + urllib.parse.quote(key, safe="/")
+    else:
+        article_path = "/wiki/" + urllib.parse.quote(key, safe="/")
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, article_path, "", "", ""))
+
+
 def _looks_like_article_url(value: str) -> bool:
     parsed = urllib.parse.urlparse(value)
     return bool(parsed.scheme and parsed.netloc and "/wiki/" in parsed.path)
 
 
-def _register_article_url(config: dict, config_path: str, url: str,
-                          allow_existing: bool = False) -> tuple[str, dict, bool]:
-    key, title, local = _parse_article_url(url)
+def find_article_entry(config: dict, key: str) -> tuple[str, dict] | None:
+    wiki = config.setdefault("wiki", {})
+    articles = wiki.setdefault("articles", {})
+    if key in articles:
+        return key, articles[key]
+
+    local_matches = [
+        (article_key, art)
+        for article_key, art in articles.items()
+        if art.get("local", article_key + ".mw") == key
+    ]
+    if len(local_matches) == 1:
+        return local_matches[0]
+    if len(local_matches) > 1:
+        print(
+            f"Error: local filename '{key}' matches multiple articles in mwsync.yaml.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return None
+
+
+def _register_article_target(config: dict, config_path: str, target: str,
+                             allow_existing: bool = False) -> tuple[str, dict, bool]:
+    if _looks_like_article_url(target):
+        key, title, local = _parse_article_url(target)
+        url = target
+    else:
+        key, title, local = _parse_article_name(target)
+        url = _article_url_from_key(config, key)
+
     wiki = config.setdefault("wiki", {})
     articles = wiki.setdefault("articles", {})
 
@@ -152,24 +208,11 @@ def _register_article_url(config: dict, config_path: str, url: str,
 
 def resolve_article_entry(config: dict, key: str) -> tuple[str, dict]:
     """Look up article entry by key or local filename; return canonical key and entry."""
+    found = find_article_entry(config, key)
+    if found:
+        return found
+
     articles = config.get("wiki", {}).get("articles", {})
-    if key in articles:
-        return key, articles[key]
-
-    local_matches = [
-        (article_key, art)
-        for article_key, art in articles.items()
-        if art.get("local", article_key + ".mw") == key
-    ]
-    if len(local_matches) == 1:
-        return local_matches[0]
-    if len(local_matches) > 1:
-        print(
-            f"Error: local filename '{key}' matches multiple articles in mwsync.yaml.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     known = list(articles.keys())
     print(f"Error: article '{key}' not found in mwsync.yaml.", file=sys.stderr)
     if known:
@@ -807,7 +850,7 @@ def run_init(args, config_path: str) -> None:
 
 
 def run_add(args, config: dict, config_path: str) -> None:
-    key, art, _created = _register_article_url(config, config_path, args.url)
+    key, art, _created = _register_article_target(config, config_path, args.article)
     print(f"Registered '{key}'", file=sys.stderr)
     print(f"  title: {art.get('title', key)}", file=sys.stderr)
     print(f"  local: {art.get('local', key + '.mw')}", file=sys.stderr)
@@ -834,16 +877,17 @@ def run_checkout(args, config: dict, config_path: str) -> None:
         print("Error: --to is only supported with ARTICLE@REV checkout.", file=sys.stderr)
         sys.exit(1)
 
-    if _looks_like_article_url(target):
-        key, art, created = _register_article_url(
+    found = None if _looks_like_article_url(target) else find_article_entry(config, target)
+    if found:
+        key, art = found
+    else:
+        key, art, created = _register_article_target(
             config, config_path, target, allow_existing=True,
         )
         if created:
             print(f"# Registered '{key}'", file=sys.stderr)
         else:
             print(f"# Article '{key}' already registered", file=sys.stderr)
-    else:
-        key, art = resolve_article_entry(config, target)
 
     fetch_args = argparse.Namespace(article=key, dry_run=False, depth=depth)
     run_fetch(fetch_args, config, config_path)
@@ -1421,8 +1465,9 @@ def main() -> None:
     sub.add_parser("init", help="Create a minimal mwsync.yaml")
 
     # add
-    p_add = sub.add_parser("add", help="Register a new article by URL")
-    p_add.add_argument("url", metavar="URL", help="Full wiki page URL")
+    p_add = sub.add_parser("add", help="Register a new article by URL or page name")
+    p_add.add_argument("article", metavar="URL_OR_NAME",
+                       help="Full wiki page URL or wiki page title/key")
 
     # checkout
     p_checkout = sub.add_parser("checkout",
@@ -1505,7 +1550,7 @@ def main() -> None:
 
     if (args.subcommand == "checkout"
             and not os.path.exists(config_path)
-            and _looks_like_article_url(args.target)):
+            and "@" not in args.target):
         config = minimal_config()
     else:
         config = load_config(config_path)

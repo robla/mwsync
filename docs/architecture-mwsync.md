@@ -73,9 +73,9 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `main()` defines the CLI with `argparse`, loads config once, and dispatches to one `run_*` handler.
 
-`add` parses a `/wiki/` URL, derives the page title and article key, then inserts a new article entry into `mwsync.yaml`. It does not fetch page content.
+`add` accepts either a `/wiki/` URL or a page name/title. URLs derive the page title, article key, local filename, and stored URL from the URL path. Names derive `title`, `Article_Key`, and `Article_Key.mw` locally, then derive a best-effort page URL from the directory-wide `wiki.api_base`. It does not fetch page content.
 
-`checkout` is the bootstrap convenience command. With a URL, it registers the article if needed, fetches upstream cache state, and merges the fetched upstream revision into the local `.mw` file. With `ARTICLE@REV --to PATH`, it writes that cached or fetchable revision body to a separate path without changing refs.
+`checkout` is the bootstrap convenience command. With a URL or page name, it registers the article if needed, fetches upstream cache state, and merges the fetched upstream revision into the local `.mw` file. With `ARTICLE@REV --to PATH`, it writes that cached or fetchable revision body to a separate path without changing refs.
 
 `fetch` resolves the article, fetches the current server revision, writes `_cache/<Article_Key>/<revid>.mw`, `_cache/<Article_Key>/<revid>.json`, `history.jsonl`, and `refs/upstream`, then leaves the local `.mw` file unchanged. It records metadata for the newest 50 revisions by default without downloading every old revision body; `--depth N` changes that metadata window, `--all-known` walks all available revision metadata, and `--with-bodies` fetches bodies for the selected metadata window.
 
