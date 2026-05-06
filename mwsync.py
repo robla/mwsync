@@ -9,6 +9,7 @@ Subcommands:
   push      Submit local edits back to the wiki
   diff      Compare upstream cache vs working local file
   difftool  Launch meld to compare upstream cache vs working local
+  merge     Merge fetched upstream changes into local file
   log       Show cached revision history
   show      Print cached revision text
   status    Show sync state of tracked articles
@@ -18,6 +19,7 @@ Usage:
   mwsync.py add https://electowiki.org/wiki/Maine
   mwsync.py fetch Maine
   mwsync.py diff Maine
+  mwsync.py merge Maine
   mwsync.py push Maine -m "Update Maine article"
   mwsync.py status
 
@@ -676,6 +678,29 @@ def _file_content_matches(path: str, content: str) -> bool:
         return False
 
 
+def _read_text(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def _run_merge_file(local: str, base: str, upstream: str) -> tuple[int, str, str]:
+    cmd = [
+        "git", "merge-file", "-p",
+        "-L", f"{local} (local)",
+        "-L", f"{base} (base)",
+        "-L", f"{upstream} (upstream)",
+        local, base, upstream,
+    ]
+    res = subprocess.run(
+        cmd,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return res.returncode, res.stdout, res.stderr
+
+
 # ---------------------------------------------------------------------------
 # Subcommand runners
 # ---------------------------------------------------------------------------
@@ -1002,6 +1027,83 @@ def run_difftool(args, config: dict, config_path: str) -> None:
     subprocess.run(["meld", snapshot, local])
 
 
+def run_merge(args, config: dict, config_path: str) -> None:
+    key, art = resolve_article_entry(config, args.article)
+    _check_legacy_cache(key)
+    local = art.get("local", key + ".mw")
+    api_base = get_api_base(config)
+
+    if not os.path.exists(local):
+        print(f"Error: local file not found: {local}", file=sys.stderr)
+        print(f"Run 'mwsync.py fetch {key}' first.", file=sys.stderr)
+        sys.exit(1)
+
+    upstream_revid = _read_ref(key, "upstream")
+    if upstream_revid is None:
+        print(f"Error: no upstream revision cached for '{key}'.", file=sys.stderr)
+        print(f"Run 'mwsync.py fetch {key}' first.", file=sys.stderr)
+        sys.exit(1)
+
+    base_revid = _read_ref(key, "base")
+    upstream_path = _ensure_cached_body(key, art, upstream_revid, api_base)
+    upstream_text = _read_text(upstream_path)
+
+    if base_revid is None:
+        if _file_content_matches(local, upstream_text):
+            if not _write_ref(key, "base", upstream_revid):
+                sys.exit(1)
+            print(f"# Adopted existing {local} as refs/base {upstream_revid}", file=sys.stderr)
+            return
+        print(f"Error: no base revision cached for '{key}'.", file=sys.stderr)
+        print(f"Run 'mwsync.py fetch {key}' before making local edits.", file=sys.stderr)
+        sys.exit(1)
+
+    base_path = _cached_body_or_die(key, base_revid)
+    base_text = _read_text(base_path)
+
+    if int(base_revid) == int(upstream_revid):
+        print(f"# Already up to date at revid {upstream_revid}", file=sys.stderr)
+        return
+
+    if _file_content_matches(local, upstream_text):
+        if not _write_ref(key, "base", upstream_revid):
+            sys.exit(1)
+        print(f"# Local file already matches upstream revid {upstream_revid}", file=sys.stderr)
+        print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
+        return
+
+    if _file_content_matches(local, base_text):
+        if not _atomic_write(local, upstream_text):
+            sys.exit(1)
+        if not _write_ref(key, "base", upstream_revid):
+            sys.exit(1)
+        print(f"# Fast-forwarded {local} from {base_revid} to {upstream_revid}", file=sys.stderr)
+        return
+
+    code, merged_text, merge_stderr = _run_merge_file(local, base_path, upstream_path)
+    if code == 0:
+        if not _atomic_write(local, merged_text):
+            sys.exit(1)
+        if not _write_ref(key, "base", upstream_revid):
+            sys.exit(1)
+        print(f"# Merged upstream revid {upstream_revid} into {local}", file=sys.stderr)
+        print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
+        return
+
+    if code == 1:
+        if not _atomic_write(local, merged_text):
+            sys.exit(1)
+        print(f"Conflict: merged with conflict markers in {local}", file=sys.stderr)
+        print(f"Resolve conflicts, then commit locally. refs/base remains {base_revid}.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    if merge_stderr:
+        print(merge_stderr.rstrip(), file=sys.stderr)
+    print("Error: git merge-file failed.", file=sys.stderr)
+    sys.exit(1)
+
+
 def run_log(args, config: dict, config_path: str) -> None:
     key, art = resolve_article_entry(config, args.article)
     _check_legacy_cache(key)
@@ -1158,6 +1260,10 @@ def main() -> None:
                                 help="Launch meld to compare upstream cache vs local")
     p_difftool.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
 
+    # merge
+    p_merge = sub.add_parser("merge", help="Merge fetched upstream changes into local file")
+    p_merge.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
+
     # log
     p_log = sub.add_parser("log", help="Show cached revision history")
     p_log.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
@@ -1195,6 +1301,8 @@ def main() -> None:
         run_diff(args, config, config_path)
     elif args.subcommand == "difftool":
         run_difftool(args, config, config_path)
+    elif args.subcommand == "merge":
+        run_merge(args, config, config_path)
     elif args.subcommand == "log":
         run_log(args, config, config_path)
     elif args.subcommand == "show":
