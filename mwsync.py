@@ -46,6 +46,7 @@ except ImportError:
 
 DEFAULT_CONFIG_PATH = "mwsync.yaml"
 DEFAULT_API_BASE = "https://electowiki.org/w/api.php"
+DEFAULT_HISTORY_DEPTH = 50
 USER_AGENT = "mwsync/1.0 (+https://electowiki.org/)"
 
 
@@ -665,6 +666,16 @@ def _git_is_modified(path: str) -> bool | None:
         return None
 
 
+def _file_content_matches(path: str, content: str) -> bool:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read() == content
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Subcommand runners
 # ---------------------------------------------------------------------------
@@ -728,7 +739,7 @@ def run_fetch(args, config: dict, config_path: str) -> None:
     api_base = get_api_base(config)
     dry_run = getattr(args, "dry_run", False)
     force = getattr(args, "force", False)
-    depth = max(1, int(getattr(args, "depth", 1) or 1))
+    depth = max(1, int(getattr(args, "depth", DEFAULT_HISTORY_DEPTH) or 1))
 
     if dry_run:
         print(f"# Fetch plan for: {key}", file=sys.stderr)
@@ -742,15 +753,6 @@ def run_fetch(args, config: dict, config_path: str) -> None:
             print(f"#   Current upstream_revid: {prev}", file=sys.stderr)
         return
 
-    # Refuse to overwrite uncommitted local changes
-    if os.path.exists(local) and not force:
-        modified = _git_is_modified(local)
-        if modified:
-            print(f"Error: '{local}' has uncommitted changes.", file=sys.stderr)
-            print("Commit or stash your changes, or use --force to overwrite.",
-                  file=sys.stderr)
-            sys.exit(1)
-
     print(f"# Fetching '{title}' from {api_base}...", file=sys.stderr)
     try:
         result = _fetch_page(title, api_base)
@@ -761,6 +763,21 @@ def run_fetch(args, config: dict, config_path: str) -> None:
     revid = result["revid"]
     wikitext = result["wikitext"]
     print(f"# Got revid {revid} ({len(wikitext)} chars)", file=sys.stderr)
+    current_base = _read_ref(key, "base")
+    local_matches_upstream = os.path.exists(local) and _file_content_matches(local, wikitext)
+    should_update_working = (
+        force
+        or not os.path.exists(local)
+        or (current_base != int(revid) and not local_matches_upstream)
+    )
+
+    if should_update_working and os.path.exists(local) and not force:
+        modified = _git_is_modified(local)
+        if modified:
+            print(f"Error: '{local}' has uncommitted changes.", file=sys.stderr)
+            print("Commit or stash your changes, or use --force to overwrite.",
+                  file=sys.stderr)
+            sys.exit(1)
 
     if not _cache_revision(key, art, result, api_base):
         sys.exit(1)
@@ -777,12 +794,19 @@ def run_fetch(args, config: dict, config_path: str) -> None:
         sys.exit(1)
     print(f"# Cached revision {_revision_body_path(key, revid)}", file=sys.stderr)
 
-    if not _atomic_write(local, wikitext):
-        sys.exit(1)
-    print(f"# Wrote {local}", file=sys.stderr)
-    if not _write_ref(key, "base", int(revid)):
-        sys.exit(1)
-    print(f"# Updated refs/upstream and refs/base to {revid}", file=sys.stderr)
+    if should_update_working:
+        if not _atomic_write(local, wikitext):
+            sys.exit(1)
+        print(f"# Wrote {local}", file=sys.stderr)
+        if not _write_ref(key, "base", int(revid)):
+            sys.exit(1)
+        print(f"# Updated refs/upstream and refs/base to {revid}", file=sys.stderr)
+    else:
+        if current_base != int(revid):
+            if not _write_ref(key, "base", int(revid)):
+                sys.exit(1)
+            print(f"# Adopted existing {local} as refs/base {revid}", file=sys.stderr)
+        print(f"# Left {local} unchanged; refs/base already at {revid}", file=sys.stderr)
 
     # Update config metadata
     wiki = config.setdefault("wiki", {})
@@ -993,6 +1017,17 @@ def run_log(args, config: dict, config_path: str) -> None:
         print(f"{revid}  {ts}  {user}")
         if comment:
             print(f"  {comment}")
+    cached_revids = {int(entry["revid"]) for entry in history if entry.get("revid")}
+    missing_parents = [
+        int(entry.get("parentid") or 0)
+        for entry in history
+        if int(entry.get("parentid") or 0) and int(entry.get("parentid") or 0) not in cached_revids
+    ]
+    if missing_parents:
+        shown = ", ".join(str(parent) for parent in missing_parents[:5])
+        suffix = " ..." if len(missing_parents) > 5 else ""
+        print(f"... history incomplete; missing parent revision(s): {shown}{suffix}")
+        print(f"... fetch a deeper window with: mwsync.py fetch --depth N {key}")
 
 
 def run_show(args, config: dict, config_path: str) -> None:
@@ -1098,8 +1133,9 @@ def main() -> None:
     p_fetch = sub.add_parser("fetch", help="Pull current wikitext from wiki to local .mw file")
     p_fetch.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
     p_fetch.add_argument("--dry-run", action="store_true", help="Preview without writing")
-    p_fetch.add_argument("--depth", type=int, default=1,
-                         help="Fetch metadata for the newest N revisions (default: 1)")
+    p_fetch.add_argument("--depth", type=int, default=DEFAULT_HISTORY_DEPTH,
+                         help=(f"Fetch metadata for the newest N revisions "
+                               f"(default: {DEFAULT_HISTORY_DEPTH})"))
     p_fetch.add_argument("--force", action="store_true",
                          help="Overwrite local file even if uncommitted changes exist")
 

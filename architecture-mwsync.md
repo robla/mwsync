@@ -75,7 +75,7 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `add` parses a `/wiki/` URL, derives the page title and article key, then inserts a new article entry into `mwsync.yaml`. It does not fetch page content.
 
-`fetch` resolves the article, refuses to overwrite an uncommitted local file unless `--force` is used, fetches the current server revision, writes `_cache/<Article_Key>/<revid>.mw`, `_cache/<Article_Key>/<revid>.json`, `history.jsonl`, and `refs/upstream`, writes the local `.mw` file, then updates upstream metadata in `mwsync.yaml` and initializes `refs/base`. With `--depth N`, it also records metadata for the newest N revisions without downloading every old revision body.
+`fetch` resolves the article, refuses to overwrite an uncommitted local file unless `--force` is used, fetches the current server revision, writes `_cache/<Article_Key>/<revid>.mw`, `_cache/<Article_Key>/<revid>.json`, `history.jsonl`, and `refs/upstream`, writes the local `.mw` file, then updates upstream metadata in `mwsync.yaml` and initializes `refs/base`. It records metadata for the newest 50 revisions by default without downloading every old revision body; `--depth N` changes that metadata window.
 
 `push` resolves the article, reads the local file, obtains an edit summary from `-m/--message` or `$VISUAL`/`$EDITOR`, logs in with `MWSYNC_MW_USER` and `MWSYNC_MW_PASSWORD`, submits the edit, records push metadata, updates `refs/last-pushed`, then re-fetches the page to resync the local file, cache, `refs/upstream`, and `refs/base`.
 
@@ -83,7 +83,7 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `difftool` launches `meld` against `New_York@upstream` and the local file.
 
-`log` prints cached revision history from `history.jsonl`.
+`log` prints cached revision history from `history.jsonl`. If the earliest cached revision still points to a parent revision that is not present locally, `log` prints an incomplete-history note before the revision list.
 
 `show` prints revision text for expressions such as `New_York@upstream`, `New_York@upstream^`, or `New_York@19778`. If metadata is known but the requested body is not cached yet, `show` fetches that one revision body by revid and stores it in the article cache.
 
