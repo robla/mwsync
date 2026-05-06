@@ -5,7 +5,8 @@ mwsync.py — Per-article local ↔ MediaWiki sync tool.
 Subcommands:
   init      Create a minimal mwsync.yaml
   add       Register a new article by URL
-  fetch     Pull current wikitext from wiki to local .mw file
+  checkout  Register, fetch, and merge an article into a local .mw file
+  fetch     Pull current wikitext and metadata into _cache
   push      Submit local edits back to the wiki
   diff      Compare upstream cache vs working local file
   difftool  Launch meld to compare upstream cache vs working local
@@ -17,6 +18,7 @@ Subcommands:
 Usage:
   mwsync.py init
   mwsync.py add https://electowiki.org/wiki/Maine
+  mwsync.py checkout https://electowiki.org/wiki/Maine
   mwsync.py fetch Maine
   mwsync.py diff Maine
   mwsync.py merge Maine
@@ -91,6 +93,58 @@ def save_config(config: dict, path: str = DEFAULT_CONFIG_PATH) -> bool:
     except Exception as e:
         print(f"Error writing {path}: {e}", file=sys.stderr)
         return False
+
+
+def minimal_config() -> dict:
+    return {
+        "wiki": {
+            "api_base": DEFAULT_API_BASE,
+            "articles": {},
+        },
+    }
+
+
+def _parse_article_url(url: str) -> tuple[str, str, str]:
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        print(f"Error: invalid URL: {url}", file=sys.stderr)
+        sys.exit(1)
+    if "/wiki/" not in parsed.path:
+        print(f"Error: URL does not look like a /wiki/ page: {url}", file=sys.stderr)
+        sys.exit(1)
+
+    title_encoded = parsed.path.split("/wiki/", 1)[1]
+    title = urllib.parse.unquote(title_encoded).replace("_", " ")
+    key = urllib.parse.unquote(title_encoded).replace(" ", "_")
+    local = key + ".mw"
+    return key, title, local
+
+
+def _looks_like_article_url(value: str) -> bool:
+    parsed = urllib.parse.urlparse(value)
+    return bool(parsed.scheme and parsed.netloc and "/wiki/" in parsed.path)
+
+
+def _register_article_url(config: dict, config_path: str, url: str,
+                          allow_existing: bool = False) -> tuple[str, dict, bool]:
+    key, title, local = _parse_article_url(url)
+    wiki = config.setdefault("wiki", {})
+    articles = wiki.setdefault("articles", {})
+
+    if key in articles:
+        if allow_existing:
+            return key, articles[key], False
+        print(f"Error: article '{key}' is already registered in {config_path}.", file=sys.stderr)
+        sys.exit(1)
+
+    articles[key] = {
+        "title": title,
+        "url": url,
+        "local": local,
+    }
+    if not save_config(config, config_path):
+        sys.exit(1)
+    return key, articles[key], True
 
 
 def resolve_article_entry(config: dict, key: str) -> tuple[str, dict]:
@@ -709,51 +763,39 @@ def run_init(args, config_path: str) -> None:
     if os.path.exists(config_path):
         print(f"Error: config file already exists: {config_path}", file=sys.stderr)
         sys.exit(1)
-    config = {
-        "wiki": {
-            "api_base": DEFAULT_API_BASE,
-            "articles": {},
-        },
-    }
+    config = minimal_config()
     if not save_config(config, config_path):
         sys.exit(1)
     print(f"Created {config_path}", file=sys.stderr)
 
 
 def run_add(args, config: dict, config_path: str) -> None:
-    url = args.url
-    parsed = urllib.parse.urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
-        print(f"Error: invalid URL: {url}", file=sys.stderr)
-        sys.exit(1)
-    if "/wiki/" not in parsed.path:
-        print(f"Error: URL does not look like a /wiki/ page: {url}", file=sys.stderr)
-        sys.exit(1)
+    key, art, _created = _register_article_url(config, config_path, args.url)
+    print(f"Registered '{key}'", file=sys.stderr)
+    print(f"  title: {art.get('title', key)}", file=sys.stderr)
+    print(f"  local: {art.get('local', key + '.mw')}", file=sys.stderr)
+    print(f"Run: mwsync.py fetch {key}", file=sys.stderr)
 
-    # Derive title and key from URL path
-    title_encoded = parsed.path.split("/wiki/", 1)[1]
-    title = urllib.parse.unquote(title_encoded).replace("_", " ")
-    key = urllib.parse.unquote(title_encoded).replace(" ", "_")
-    local = key + ".mw"
 
-    wiki = config.setdefault("wiki", {})
-    articles = wiki.setdefault("articles", {})
+def run_checkout(args, config: dict, config_path: str) -> None:
+    target = args.target
+    depth = max(1, int(getattr(args, "depth", DEFAULT_HISTORY_DEPTH) or 1))
 
-    if key in articles:
-        print(f"Error: article '{key}' is already registered in {config_path}.", file=sys.stderr)
-        sys.exit(1)
+    if _looks_like_article_url(target):
+        key, art, created = _register_article_url(
+            config, config_path, target, allow_existing=True,
+        )
+        if created:
+            print(f"# Registered '{key}'", file=sys.stderr)
+        else:
+            print(f"# Article '{key}' already registered", file=sys.stderr)
+    else:
+        key, art = resolve_article_entry(config, target)
 
-    articles[key] = {
-        "title": title,
-        "url": url,
-        "local": local,
-    }
-
-    if save_config(config, config_path):
-        print(f"Registered '{key}'", file=sys.stderr)
-        print(f"  title: {title}", file=sys.stderr)
-        print(f"  local: {local}", file=sys.stderr)
-        print(f"Run: mwsync.py fetch {key}", file=sys.stderr)
+    fetch_args = argparse.Namespace(article=key, dry_run=False, depth=depth)
+    run_fetch(fetch_args, config, config_path)
+    merge_args = argparse.Namespace(article=key)
+    run_merge(merge_args, config, config_path)
 
 
 def run_fetch(args, config: dict, config_path: str) -> None:
@@ -763,14 +805,13 @@ def run_fetch(args, config: dict, config_path: str) -> None:
     local = art.get("local", key + ".mw")
     api_base = get_api_base(config)
     dry_run = getattr(args, "dry_run", False)
-    force = getattr(args, "force", False)
     depth = max(1, int(getattr(args, "depth", DEFAULT_HISTORY_DEPTH) or 1))
 
     if dry_run:
         print(f"# Fetch plan for: {key}", file=sys.stderr)
         print(f"#   Title:    {title}", file=sys.stderr)
         print(f"#   API:      {api_base}", file=sys.stderr)
-        print(f"#   Local:    {local}", file=sys.stderr)
+        print(f"#   Local:    {local} (unchanged)", file=sys.stderr)
         print(f"#   Cache:    {_cache_dir(key)}", file=sys.stderr)
         print(f"#   Depth:    {depth} metadata revision(s)", file=sys.stderr)
         prev = art.get("upstream_revid")
@@ -788,21 +829,6 @@ def run_fetch(args, config: dict, config_path: str) -> None:
     revid = result["revid"]
     wikitext = result["wikitext"]
     print(f"# Got revid {revid} ({len(wikitext)} chars)", file=sys.stderr)
-    current_base = _read_ref(key, "base")
-    local_matches_upstream = os.path.exists(local) and _file_content_matches(local, wikitext)
-    should_update_working = (
-        force
-        or not os.path.exists(local)
-        or (current_base != int(revid) and not local_matches_upstream)
-    )
-
-    if should_update_working and os.path.exists(local) and not force:
-        modified = _git_is_modified(local)
-        if modified:
-            print(f"Error: '{local}' has uncommitted changes.", file=sys.stderr)
-            print("Commit or stash your changes, or use --force to overwrite.",
-                  file=sys.stderr)
-            sys.exit(1)
 
     if not _cache_revision(key, art, result, api_base):
         sys.exit(1)
@@ -818,40 +844,9 @@ def run_fetch(args, config: dict, config_path: str) -> None:
     if not _write_ref(key, "upstream", int(revid)):
         sys.exit(1)
     print(f"# Cached revision {_revision_body_path(key, revid)}", file=sys.stderr)
-
-    if should_update_working:
-        if not _atomic_write(local, wikitext):
-            sys.exit(1)
-        print(f"# Wrote {local}", file=sys.stderr)
-        if not _write_ref(key, "base", int(revid)):
-            sys.exit(1)
-        print(f"# Updated refs/upstream and refs/base to {revid}", file=sys.stderr)
-    else:
-        if current_base != int(revid):
-            if not _write_ref(key, "base", int(revid)):
-                sys.exit(1)
-            print(f"# Adopted existing {local} as refs/base {revid}", file=sys.stderr)
-        print(f"# Left {local} unchanged; refs/base already at {revid}", file=sys.stderr)
-
-    # Update config metadata
-    wiki = config.setdefault("wiki", {})
-    articles = wiki.setdefault("articles", {})
-    art = articles.setdefault(key, {})
-    art["upstream_revid"] = revid
-    art["upstream_timestamp"] = result["timestamp"]
-    art["upstream_editor"] = result["user"]
-    art["upstream_summary"] = result["comment"]
-    art["upstream_sha1"] = result["sha1"]
-    save_config(config, config_path)
-    print(f"# Updated upstream_revid={revid} in {config_path}", file=sys.stderr)
-
-    # Suggested commit message
-    comment = result["comment"].replace("\n", " ").strip()
-    print("\nSuggested commit message:", file=sys.stderr)
-    print(f"  Synced '{key}' with revid {revid}", file=sys.stderr)
-    print(f"  {art.get('url', '')}", file=sys.stderr)
-    if comment:
-        print(f"  wiki comment: '{comment}'", file=sys.stderr)
+    print(f"# Updated refs/upstream to {revid}", file=sys.stderr)
+    print(f"# Left {local} unchanged; run 'mwsync.py merge {key}' to update it.",
+          file=sys.stderr)
 
 
 def run_push(args, config: dict, config_path: str) -> None:
@@ -1033,11 +1028,6 @@ def run_merge(args, config: dict, config_path: str) -> None:
     local = art.get("local", key + ".mw")
     api_base = get_api_base(config)
 
-    if not os.path.exists(local):
-        print(f"Error: local file not found: {local}", file=sys.stderr)
-        print(f"Run 'mwsync.py fetch {key}' first.", file=sys.stderr)
-        sys.exit(1)
-
     upstream_revid = _read_ref(key, "upstream")
     if upstream_revid is None:
         print(f"Error: no upstream revision cached for '{key}'.", file=sys.stderr)
@@ -1047,6 +1037,15 @@ def run_merge(args, config: dict, config_path: str) -> None:
     base_revid = _read_ref(key, "base")
     upstream_path = _ensure_cached_body(key, art, upstream_revid, api_base)
     upstream_text = _read_text(upstream_path)
+
+    if not os.path.exists(local):
+        if not _atomic_write(local, upstream_text):
+            sys.exit(1)
+        if not _write_ref(key, "base", upstream_revid):
+            sys.exit(1)
+        print(f"# Checked out {local} at upstream revid {upstream_revid}", file=sys.stderr)
+        print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
+        return
 
     if base_revid is None:
         if _file_content_matches(local, upstream_text):
@@ -1163,12 +1162,21 @@ def run_status(args, config: dict, config_path: str) -> None:
 
     for key, art in items:
         local = art.get("local", key + ".mw")
-        revid = art.get("upstream_revid", "")
         upstream_ref = _read_ref(key, "upstream")
         base_ref = _read_ref(key, "base")
         last_pushed_ref = _read_ref(key, "last-pushed")
-        ts = art.get("upstream_timestamp", "")
-        editor = art.get("upstream_editor", "")
+        history = _read_history(key)
+        latest = {}
+        if upstream_ref is not None:
+            matches = [entry for entry in history
+                       if int(entry.get("revid") or 0) == int(upstream_ref)]
+            if matches:
+                latest = matches[-1]
+        elif history:
+            latest = history[-1]
+        revid = art.get("upstream_revid", "") or upstream_ref or ""
+        ts = art.get("upstream_timestamp", "") or latest.get("timestamp", "")
+        editor = art.get("upstream_editor", "") or latest.get("user", "")
         pushed_revid = art.get("last_pushed_revid", "")
         pushed_at = art.get("last_pushed_at", "")
 
@@ -1231,15 +1239,22 @@ def main() -> None:
     p_add = sub.add_parser("add", help="Register a new article by URL")
     p_add.add_argument("url", metavar="URL", help="Full wiki page URL")
 
+    # checkout
+    p_checkout = sub.add_parser("checkout",
+                                help="Register, fetch, and merge an article")
+    p_checkout.add_argument("target", metavar="URL_OR_ARTICLE",
+                            help="Full wiki page URL or registered article key")
+    p_checkout.add_argument("--depth", type=int, default=DEFAULT_HISTORY_DEPTH,
+                            help=(f"Fetch metadata for the newest N revisions "
+                                  f"(default: {DEFAULT_HISTORY_DEPTH})"))
+
     # fetch
-    p_fetch = sub.add_parser("fetch", help="Pull current wikitext from wiki to local .mw file")
+    p_fetch = sub.add_parser("fetch", help="Pull current wikitext and metadata into _cache")
     p_fetch.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
     p_fetch.add_argument("--dry-run", action="store_true", help="Preview without writing")
     p_fetch.add_argument("--depth", type=int, default=DEFAULT_HISTORY_DEPTH,
                          help=(f"Fetch metadata for the newest N revisions "
                                f"(default: {DEFAULT_HISTORY_DEPTH})"))
-    p_fetch.add_argument("--force", action="store_true",
-                         help="Overwrite local file even if uncommitted changes exist")
 
     # push
     p_push = sub.add_parser("push", help="Submit local edits back to the wiki")
@@ -1289,10 +1304,17 @@ def main() -> None:
         run_init(args, config_path)
         return
 
-    config = load_config(config_path)
+    if (args.subcommand == "checkout"
+            and not os.path.exists(config_path)
+            and _looks_like_article_url(args.target)):
+        config = minimal_config()
+    else:
+        config = load_config(config_path)
 
     if args.subcommand == "add":
         run_add(args, config, config_path)
+    elif args.subcommand == "checkout":
+        run_checkout(args, config, config_path)
     elif args.subcommand == "fetch":
         run_fetch(args, config, config_path)
     elif args.subcommand == "push":
