@@ -179,6 +179,81 @@ def _fetch_page(title: str, api_base: str = DEFAULT_API_BASE) -> dict:
     }
 
 
+def _fetch_revision_metadata(title: str, api_base: str, limit: int) -> list[dict]:
+    """Fetch newest revision metadata without revision bodies."""
+    if limit <= 0:
+        return []
+
+    revisions = []
+    continuation = {}
+    while len(revisions) < limit:
+        batch_limit = min(limit - len(revisions), 500)
+        params = {
+            "action": "query",
+            "format": "json",
+            "prop": "revisions",
+            "rvprop": "ids|timestamp|user|comment|sha1|size",
+            "rvlimit": str(batch_limit),
+            "titles": title,
+            "formatversion": "2",
+        }
+        params.update(continuation)
+        url = api_base + "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        pages = data.get("query", {}).get("pages", [])
+        if not pages:
+            raise ValueError(f"No pages found for title '{title}'")
+        page = pages[0]
+        if page.get("missing"):
+            raise ValueError(f"Page '{title}' does not exist on wiki")
+        revisions.extend(page.get("revisions", []))
+
+        continuation = data.get("continue", {})
+        if not continuation:
+            break
+
+    return revisions[:limit]
+
+
+def _fetch_revision_by_revid(revid: int, api_base: str) -> dict:
+    """Fetch one revision body and metadata by MediaWiki revid."""
+    params = {
+        "action": "query",
+        "format": "json",
+        "prop": "revisions",
+        "rvprop": "content|ids|timestamp|user|comment|sha1|size",
+        "revids": str(int(revid)),
+        "formatversion": "2",
+    }
+    url = api_base + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    pages = data.get("query", {}).get("pages", [])
+    if not pages:
+        raise ValueError(f"No page found for revid {revid}")
+    revs = pages[0].get("revisions", [])
+    if not revs:
+        raise ValueError(f"No revision found for revid {revid}")
+    rev = revs[0]
+    return {
+        "wikitext": rev.get("content", ""),
+        "revid": rev.get("revid", revid),
+        "parentid": rev.get("parentid", 0),
+        "timestamp": rev.get("timestamp", ""),
+        "user": rev.get("user", ""),
+        "comment": rev.get("comment", ""),
+        "sha1": rev.get("sha1", ""),
+        "size": rev.get("size", 0),
+        "contentmodel": rev.get("contentmodel", ""),
+        "contentformat": rev.get("contentformat", ""),
+    }
+
+
 def _atomic_write(path: str, content: str) -> bool:
     """Atomically write text content to path. Returns True on success."""
     dir_path = os.path.dirname(os.path.abspath(path))
@@ -417,7 +492,8 @@ def _write_history(key: str, entries: list[dict]) -> bool:
     for entry in entries:
         revid = entry.get("revid")
         if revid is not None:
-            seen[int(revid)] = entry
+            rid = int(revid)
+            seen[rid] = {**seen.get(rid, {}), **entry}
     ordered = sorted(seen.values(), key=lambda e: (e.get("timestamp", ""), int(e["revid"])))
     content = "".join(json.dumps(e, ensure_ascii=False, sort_keys=True) + "\n"
                       for e in ordered)
@@ -426,7 +502,7 @@ def _write_history(key: str, entries: list[dict]) -> bool:
 
 def _revision_record(key: str, art: dict, result: dict, api_base: str) -> dict:
     revid = int(result["revid"])
-    return {
+    record = {
         "revid": revid,
         "parentid": int(result.get("parentid") or 0),
         "timestamp": result.get("timestamp", ""),
@@ -438,12 +514,22 @@ def _revision_record(key: str, art: dict, result: dict, api_base: str) -> dict:
         "article_key": key,
         "url": art.get("url", ""),
         "api_base": api_base,
-        "body": f"{revid}.mw",
         "meta": f"{revid}.json",
         "fetched_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "contentmodel": result.get("contentmodel", ""),
         "contentformat": result.get("contentformat", ""),
     }
+    if "wikitext" in result:
+        record["body"] = f"{revid}.mw"
+    return record
+
+
+def _history_entry(record: dict) -> dict:
+    keys = (
+        "revid", "parentid", "timestamp", "user", "comment", "sha1", "size",
+        "body", "meta",
+    )
+    return {k: record[k] for k in keys if k in record}
 
 
 def _cache_revision(key: str, art: dict, result: dict, api_base: str) -> bool:
@@ -480,10 +566,17 @@ def _cache_revision(key: str, art: dict, result: dict, api_base: str) -> bool:
             return False
 
     history = _read_history(key)
-    history.append({k: record[k] for k in (
-        "revid", "parentid", "timestamp", "user", "comment", "sha1", "size",
-        "body", "meta",
-    )})
+    history.append(_history_entry(record))
+    return _write_history(key, history)
+
+
+def _cache_revision_metadata(key: str, art: dict, rev: dict, api_base: str) -> bool:
+    record = _revision_record(key, art, rev, api_base)
+    meta_path = _revision_meta_path(key, record["revid"])
+    if not os.path.exists(meta_path) and not _write_json(meta_path, record):
+        return False
+    history = _read_history(key)
+    history.append(_history_entry(record))
     return _write_history(key, history)
 
 
@@ -541,6 +634,21 @@ def _cached_body_or_die(key: str, revid: int) -> str:
         print(f"Fetch that revision before using it: mwsync.py fetch {key}", file=sys.stderr)
         sys.exit(1)
     return path
+
+
+def _ensure_cached_body(key: str, art: dict, revid: int, api_base: str) -> str:
+    path = _revision_body_path(key, revid)
+    if os.path.exists(path):
+        return path
+    print(f"# Fetching body for revid {revid}...", file=sys.stderr)
+    try:
+        result = _fetch_revision_by_revid(revid, api_base)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    if not _cache_revision(key, art, result, api_base):
+        sys.exit(1)
+    return _cached_body_or_die(key, revid)
 
 
 def _git_is_modified(path: str) -> bool | None:
@@ -620,6 +728,7 @@ def run_fetch(args, config: dict, config_path: str) -> None:
     api_base = get_api_base(config)
     dry_run = getattr(args, "dry_run", False)
     force = getattr(args, "force", False)
+    depth = max(1, int(getattr(args, "depth", 1) or 1))
 
     if dry_run:
         print(f"# Fetch plan for: {key}", file=sys.stderr)
@@ -627,6 +736,7 @@ def run_fetch(args, config: dict, config_path: str) -> None:
         print(f"#   API:      {api_base}", file=sys.stderr)
         print(f"#   Local:    {local}", file=sys.stderr)
         print(f"#   Cache:    {_cache_dir(key)}", file=sys.stderr)
+        print(f"#   Depth:    {depth} metadata revision(s)", file=sys.stderr)
         prev = art.get("upstream_revid")
         if prev:
             print(f"#   Current upstream_revid: {prev}", file=sys.stderr)
@@ -654,6 +764,15 @@ def run_fetch(args, config: dict, config_path: str) -> None:
 
     if not _cache_revision(key, art, result, api_base):
         sys.exit(1)
+    if depth > 1:
+        print(f"# Fetching metadata for newest {depth} revisions...", file=sys.stderr)
+        try:
+            for rev in _fetch_revision_metadata(title, api_base, depth):
+                if not _cache_revision_metadata(key, art, rev, api_base):
+                    sys.exit(1)
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
     if not _write_ref(key, "upstream", int(revid)):
         sys.exit(1)
     print(f"# Cached revision {_revision_body_path(key, revid)}", file=sys.stderr)
@@ -885,8 +1004,9 @@ def run_show(args, config: dict, config_path: str) -> None:
     article, revspec = spec.split("@", 1)
     key, art = resolve_article_entry(config, article)
     _check_legacy_cache(key)
+    api_base = get_api_base(config)
     revid = _resolve_cached_revid(key, revspec)
-    path = _cached_body_or_die(key, revid)
+    path = _ensure_cached_body(key, art, revid, api_base)
     with open(path, "r", encoding="utf-8") as f:
         sys.stdout.write(f.read())
 
@@ -978,6 +1098,8 @@ def main() -> None:
     p_fetch = sub.add_parser("fetch", help="Pull current wikitext from wiki to local .mw file")
     p_fetch.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
     p_fetch.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    p_fetch.add_argument("--depth", type=int, default=1,
+                         help="Fetch metadata for the newest N revisions (default: 1)")
     p_fetch.add_argument("--force", action="store_true",
                          help="Overwrite local file even if uncommitted changes exist")
 
