@@ -13,14 +13,17 @@ Subcommands:
   merge     Merge fetched upstream changes into local file
   log       Show cached revision history
   show      Print cached revision text
+  fsck      Check cache refs, history, and revision files
   status    Show sync state of tracked articles
 
 Usage:
   mwsync.py init
   mwsync.py add https://electowiki.org/wiki/Maine
   mwsync.py checkout https://electowiki.org/wiki/Maine
+  mwsync.py checkout Maine@upstream^ --to scratch/Maine-old.mw
   mwsync.py fetch Maine
   mwsync.py diff Maine
+  mwsync.py diff Maine@upstream^ Maine@upstream
   mwsync.py merge Maine
   mwsync.py push Maine -m "Update Maine article"
   mwsync.py status
@@ -236,15 +239,16 @@ def _fetch_page(title: str, api_base: str = DEFAULT_API_BASE) -> dict:
     }
 
 
-def _fetch_revision_metadata(title: str, api_base: str, limit: int) -> list[dict]:
+def _fetch_revision_metadata(title: str, api_base: str, limit: int | None) -> list[dict]:
     """Fetch newest revision metadata without revision bodies."""
-    if limit <= 0:
+    if limit is not None and limit <= 0:
         return []
 
     revisions = []
     continuation = {}
-    while len(revisions) < limit:
-        batch_limit = min(limit - len(revisions), 500)
+    while limit is None or len(revisions) < limit:
+        remaining = 500 if limit is None else limit - len(revisions)
+        batch_limit = min(remaining, 500)
         params = {
             "action": "query",
             "format": "json",
@@ -272,7 +276,7 @@ def _fetch_revision_metadata(title: str, api_base: str, limit: int) -> list[dict
         if not continuation:
             break
 
-    return revisions[:limit]
+    return revisions if limit is None else revisions[:limit]
 
 
 def _fetch_revision_by_revid(revid: int, api_base: str) -> dict:
@@ -708,6 +712,39 @@ def _ensure_cached_body(key: str, art: dict, revid: int, api_base: str) -> str:
     return _cached_body_or_die(key, revid)
 
 
+def _resolve_revision_arg(config: dict, spec: str, *, fetch_missing: bool = True) -> tuple[str, str]:
+    if "@" not in spec:
+        articles = config.get("wiki", {}).get("articles", {})
+        if spec in articles:
+            local = articles[spec].get("local", spec + ".mw")
+            return local, f"{local} (local)"
+        matches = [
+            (key, art)
+            for key, art in articles.items()
+            if art.get("local", key + ".mw") == spec
+        ]
+        if len(matches) == 1:
+            key, art = matches[0]
+            local = art.get("local", key + ".mw")
+            return local, f"{local} (local)"
+        if len(matches) > 1:
+            print(f"Error: local filename '{spec}' matches multiple articles.", file=sys.stderr)
+            sys.exit(1)
+        if os.path.exists(spec):
+            return spec, spec
+        resolve_article_entry(config, spec)
+
+    article, revspec = spec.split("@", 1)
+    key, art = resolve_article_entry(config, article)
+    _check_legacy_cache(key)
+    revid = _resolve_cached_revid(key, revspec)
+    if fetch_missing:
+        path = _ensure_cached_body(key, art, revid, get_api_base(config))
+    else:
+        path = _cached_body_or_die(key, revid)
+    return path, f"{key}@{revspec} ({revid})"
+
+
 def _git_is_modified(path: str) -> bool | None:
     """Return True if file has uncommitted changes, False if clean, None if not in git."""
     try:
@@ -780,6 +817,22 @@ def run_add(args, config: dict, config_path: str) -> None:
 def run_checkout(args, config: dict, config_path: str) -> None:
     target = args.target
     depth = max(1, int(getattr(args, "depth", DEFAULT_HISTORY_DEPTH) or 1))
+    to_path = getattr(args, "to", None)
+
+    if "@" in target:
+        if not to_path:
+            print("Error: checkout ARTICLE@REV requires --to PATH.", file=sys.stderr)
+            sys.exit(1)
+        source, label = _resolve_revision_arg(config, target)
+        text = _read_text(source)
+        if not _atomic_write(to_path, text):
+            sys.exit(1)
+        print(f"# Wrote {label} to {to_path}", file=sys.stderr)
+        return
+
+    if to_path:
+        print("Error: --to is only supported with ARTICLE@REV checkout.", file=sys.stderr)
+        sys.exit(1)
 
     if _looks_like_article_url(target):
         key, art, created = _register_article_url(
@@ -805,15 +858,21 @@ def run_fetch(args, config: dict, config_path: str) -> None:
     local = art.get("local", key + ".mw")
     api_base = get_api_base(config)
     dry_run = getattr(args, "dry_run", False)
-    depth = max(1, int(getattr(args, "depth", DEFAULT_HISTORY_DEPTH) or 1))
+    all_known = getattr(args, "all_known", False)
+    with_bodies = getattr(args, "with_bodies", False)
+    depth_arg = getattr(args, "depth", DEFAULT_HISTORY_DEPTH)
+    depth = None if all_known else max(1, int(depth_arg or 1))
 
     if dry_run:
+        depth_label = "all available" if all_known else str(depth)
         print(f"# Fetch plan for: {key}", file=sys.stderr)
         print(f"#   Title:    {title}", file=sys.stderr)
         print(f"#   API:      {api_base}", file=sys.stderr)
         print(f"#   Local:    {local} (unchanged)", file=sys.stderr)
         print(f"#   Cache:    {_cache_dir(key)}", file=sys.stderr)
-        print(f"#   Depth:    {depth} metadata revision(s)", file=sys.stderr)
+        print(f"#   Depth:    {depth_label} metadata revision(s)", file=sys.stderr)
+        print(f"#   Bodies:   {'all fetched metadata revisions' if with_bodies else 'latest only'}",
+              file=sys.stderr)
         prev = art.get("upstream_revid")
         if prev:
             print(f"#   Current upstream_revid: {prev}", file=sys.stderr)
@@ -832,12 +891,17 @@ def run_fetch(args, config: dict, config_path: str) -> None:
 
     if not _cache_revision(key, art, result, api_base):
         sys.exit(1)
-    if depth > 1:
-        print(f"# Fetching metadata for newest {depth} revisions...", file=sys.stderr)
+    if all_known or depth > 1:
+        if all_known:
+            print("# Fetching metadata for all available revisions...", file=sys.stderr)
+        else:
+            print(f"# Fetching metadata for newest {depth} revisions...", file=sys.stderr)
         try:
             for rev in _fetch_revision_metadata(title, api_base, depth):
                 if not _cache_revision_metadata(key, art, rev, api_base):
                     sys.exit(1)
+                if with_bodies and int(rev.get("revid") or 0) != int(revid):
+                    _ensure_cached_body(key, art, int(rev["revid"]), api_base)
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
@@ -987,7 +1051,9 @@ def run_push(args, config: dict, config_path: str) -> None:
 
 
 def run_diff(args, config: dict, config_path: str) -> None:
-    key, art = resolve_article_entry(config, args.article)
+    left_arg = args.left
+    right_arg = args.right
+    key, art = resolve_article_entry(config, left_arg.split("@", 1)[0])
     _check_legacy_cache(key)
     local = art.get("local", key + ".mw")
 
@@ -1006,10 +1072,18 @@ def run_diff(args, config: dict, config_path: str) -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    revid = _resolve_cached_revid(key, "upstream")
-    snapshot = _cached_body_or_die(key, revid)
+    if right_arg is None:
+        left = f"{key}@upstream"
+        right = local
+    else:
+        left = left_arg
+        right = right_arg
 
-    subprocess.run(["git", "diff", "--no-index", snapshot, local])
+    left_path, _left_label = _resolve_revision_arg(config, left)
+    right_path, _right_label = _resolve_revision_arg(config, right)
+    res = subprocess.run(["git", "diff", "--no-index", left_path, right_path])
+    if res.returncode not in (0, 1):
+        sys.exit(res.returncode)
 
 
 def run_difftool(args, config: dict, config_path: str) -> None:
@@ -1147,6 +1221,117 @@ def run_show(args, config: dict, config_path: str) -> None:
         sys.stdout.write(f.read())
 
 
+def _fsck_article(key: str, art: dict) -> int:
+    issues = 0
+    if _legacy_cache_exists(key):
+        print(f"{key}: legacy cache detected: {_server_snapshot_path(key)}")
+        issues += 1
+
+    history = _read_history(key)
+    seen_revids = set()
+    previous_key = None
+    for entry in history:
+        raw_revid = entry.get("revid")
+        try:
+            revid = int(raw_revid)
+        except (TypeError, ValueError):
+            print(f"{key}: invalid history revid: {raw_revid!r}")
+            issues += 1
+            continue
+
+        if revid in seen_revids:
+            print(f"{key}: duplicate history revid: {revid}")
+            issues += 1
+        seen_revids.add(revid)
+
+        sort_key = (entry.get("timestamp", ""), revid)
+        if previous_key and sort_key < previous_key:
+            print(f"{key}: history is not chronological near revid {revid}")
+            issues += 1
+        previous_key = sort_key
+
+        meta_name = entry.get("meta")
+        if meta_name:
+            meta_path = os.path.join(_cache_dir(key), meta_name)
+            if not os.path.exists(meta_path):
+                print(f"{key}: missing metadata sidecar for revid {revid}: {meta_path}")
+                issues += 1
+            else:
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    if int(meta.get("revid") or 0) != revid:
+                        print(f"{key}: metadata revid mismatch in {meta_path}")
+                        issues += 1
+                    if entry.get("sha1") and meta.get("sha1") and entry["sha1"] != meta["sha1"]:
+                        print(f"{key}: sha1 mismatch between history and {meta_path}")
+                        issues += 1
+                except Exception as e:
+                    print(f"{key}: cannot read metadata sidecar {meta_path}: {e}")
+                    issues += 1
+
+        body_name = entry.get("body")
+        if body_name:
+            body_path = os.path.join(_cache_dir(key), body_name)
+            if not os.path.exists(body_path):
+                print(f"{key}: missing cached body for revid {revid}: {body_path}")
+                issues += 1
+
+    for ref in ("upstream", "base", "last-pushed"):
+        ref_path = _ref_path(key, ref)
+        if not os.path.exists(ref_path):
+            continue
+        try:
+            with open(ref_path, "r", encoding="utf-8") as f:
+                revid = int(f.read().strip())
+        except Exception as e:
+            print(f"{key}: invalid refs/{ref}: {e}")
+            issues += 1
+            continue
+        if history and revid not in seen_revids:
+            print(f"{key}: refs/{ref} points outside history: {revid}")
+            issues += 1
+        if ref in ("upstream", "base") and not os.path.exists(_revision_body_path(key, revid)):
+            print(f"{key}: refs/{ref} body is missing: {_revision_body_path(key, revid)}")
+            issues += 1
+
+    upstream_path = _ref_path(key, "upstream")
+    if history and os.path.exists(upstream_path):
+        try:
+            with open(upstream_path, "r", encoding="utf-8") as f:
+                upstream_ref = int(f.read().strip())
+            if int(history[-1]["revid"]) != int(upstream_ref):
+                print(f"{key}: refs/upstream ({upstream_ref}) does not match latest history "
+                      f"({history[-1]['revid']})")
+                issues += 1
+        except Exception:
+            pass
+
+    if issues == 0:
+        print(f"{key}: ok")
+    return issues
+
+
+def run_fsck(args, config: dict, config_path: str) -> None:
+    articles = config.get("wiki", {}).get("articles", {})
+    if not articles:
+        print("No articles registered.")
+        return
+
+    if getattr(args, "article", None):
+        key, art = resolve_article_entry(config, args.article)
+        items = [(key, art)]
+    else:
+        items = list(articles.items())
+
+    issues = 0
+    for key, art in items:
+        issues += _fsck_article(key, art)
+    if issues:
+        print(f"fsck found {issues} issue(s).", file=sys.stderr)
+        sys.exit(1)
+
+
 def run_status(args, config: dict, config_path: str) -> None:
     articles = config.get("wiki", {}).get("articles", {})
     if not articles:
@@ -1242,11 +1427,13 @@ def main() -> None:
     # checkout
     p_checkout = sub.add_parser("checkout",
                                 help="Register, fetch, and merge an article")
-    p_checkout.add_argument("target", metavar="URL_OR_ARTICLE",
-                            help="Full wiki page URL or registered article key")
+    p_checkout.add_argument("target", metavar="URL_OR_ARTICLE_OR_REV",
+                            help="Full wiki page URL, registered article key, or ARTICLE@REV")
     p_checkout.add_argument("--depth", type=int, default=DEFAULT_HISTORY_DEPTH,
                             help=(f"Fetch metadata for the newest N revisions "
                                   f"(default: {DEFAULT_HISTORY_DEPTH})"))
+    p_checkout.add_argument("--to", metavar="PATH",
+                            help="Write ARTICLE@REV to PATH without changing refs")
 
     # fetch
     p_fetch = sub.add_parser("fetch", help="Pull current wikitext and metadata into _cache")
@@ -1255,6 +1442,10 @@ def main() -> None:
     p_fetch.add_argument("--depth", type=int, default=DEFAULT_HISTORY_DEPTH,
                          help=(f"Fetch metadata for the newest N revisions "
                                f"(default: {DEFAULT_HISTORY_DEPTH})"))
+    p_fetch.add_argument("--all-known", action="store_true",
+                         help="Fetch metadata for all available revisions")
+    p_fetch.add_argument("--with-bodies", action="store_true",
+                         help="Also fetch bodies for revisions in the metadata window")
 
     # push
     p_push = sub.add_parser("push", help="Submit local edits back to the wiki")
@@ -1265,8 +1456,11 @@ def main() -> None:
     p_push.add_argument("-m", "--message", help="Edit summary (skips editor prompt)")
 
     # diff
-    p_diff = sub.add_parser("diff", help="Compare upstream cache vs working local file")
-    p_diff.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
+    p_diff = sub.add_parser("diff", help="Compare cached revisions and local files")
+    p_diff.add_argument("left", metavar="LEFT",
+                        help="Article key/local file, or ARTICLE@REV")
+    p_diff.add_argument("right", metavar="RIGHT", nargs="?",
+                        help="Optional article key/local file, or ARTICLE@REV")
     p_diff.add_argument("--remote", action="store_true",
                         help="Re-fetch upstream cache before diffing")
 
@@ -1287,6 +1481,11 @@ def main() -> None:
     p_show = sub.add_parser("show", help="Print cached revision text")
     p_show.add_argument("revision", metavar="ARTICLE@REV",
                         help="Revision expression, e.g. New_York@upstream")
+
+    # fsck
+    p_fsck = sub.add_parser("fsck", help="Check cache refs, history, and revision files")
+    p_fsck.add_argument("article", metavar="ARTICLE", nargs="?",
+                        help="Article key (omit to check all)")
 
     # status
     p_status = sub.add_parser("status", help="Show sync state of tracked articles")
@@ -1329,6 +1528,8 @@ def main() -> None:
         run_log(args, config, config_path)
     elif args.subcommand == "show":
         run_show(args, config, config_path)
+    elif args.subcommand == "fsck":
+        run_fsck(args, config, config_path)
     elif args.subcommand == "status":
         run_status(args, config, config_path)
 

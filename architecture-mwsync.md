@@ -75,11 +75,15 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `add` parses a `/wiki/` URL, derives the page title and article key, then inserts a new article entry into `mwsync.yaml`. It does not fetch page content.
 
-`fetch` resolves the article, refuses to overwrite an uncommitted local file unless `--force` is used, fetches the current server revision, writes `_cache/<Article_Key>/<revid>.mw`, `_cache/<Article_Key>/<revid>.json`, `history.jsonl`, and `refs/upstream`, writes the local `.mw` file, then updates upstream metadata in `mwsync.yaml` and initializes `refs/base`. It records metadata for the newest 50 revisions by default without downloading every old revision body; `--depth N` changes that metadata window.
+`checkout` is the bootstrap convenience command. With a URL, it registers the article if needed, fetches upstream cache state, and merges the fetched upstream revision into the local `.mw` file. With `ARTICLE@REV --to PATH`, it writes that cached or fetchable revision body to a separate path without changing refs.
+
+`fetch` resolves the article, fetches the current server revision, writes `_cache/<Article_Key>/<revid>.mw`, `_cache/<Article_Key>/<revid>.json`, `history.jsonl`, and `refs/upstream`, then leaves the local `.mw` file unchanged. It records metadata for the newest 50 revisions by default without downloading every old revision body; `--depth N` changes that metadata window, `--all-known` walks all available revision metadata, and `--with-bodies` fetches bodies for the selected metadata window.
+
+`merge` reconciles the local working file with fetched upstream state. It uses `refs/base` as the common ancestor, `refs/upstream` as the remote side, and the local `.mw` file as the local side. A clean merge or fast-forward updates `refs/base`; a conflict writes conflict markers and leaves `refs/base` unchanged.
 
 `push` resolves the article, reads the local file, obtains an edit summary from `-m/--message` or `$VISUAL`/`$EDITOR`, logs in with `MWSYNC_MW_USER` and `MWSYNC_MW_PASSWORD`, submits the edit, records push metadata, updates `refs/last-pushed`, then re-fetches the page to resync the local file, cache, `refs/upstream`, and `refs/base`.
 
-`diff` compares `New_York@upstream` with the local file using `git diff --no-index`. With `--remote`, it first refreshes the upstream cache without rewriting the local working copy.
+`diff` compares cached revisions and local files using `git diff --no-index`. `diff New_York` compares `New_York@upstream` with the local working file. `diff New_York@upstream^ New_York@upstream` compares two cached revision expressions. With `--remote`, it first refreshes the upstream cache without rewriting the local working copy.
 
 `difftool` launches `meld` against `New_York@upstream` and the local file.
 
@@ -89,17 +93,19 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `status` prints tracked article state, including local path, git cleanliness, upstream revision metadata, refs, and last pushed revision.
 
+`fsck` checks cache consistency for one article or all registered articles. It reports legacy cache files, malformed refs, missing revision bodies or sidecars, non-chronological history entries, and ref/history mismatches. It does not repair files implicitly.
+
 ## Error Handling and Safety
 
 The script is CLI-oriented: most user-facing failures print to stderr and call `sys.exit(1)`. This keeps command behavior predictable but means internal functions are not pure library APIs.
 
 The main safety checks are:
 
-- `fetch` checks `git status --porcelain -- <local>` before overwriting local content.
+- `fetch` does not overwrite local content; `merge` is responsible for changing the working `.mw` file.
 - `push` requires an upstream revision unless `--new` is specified.
 - `push` uses `baserevid` so MediaWiki can detect edit conflicts.
 - Legacy `_cache/server--<Article_Key>.mw` files are detected and produce a clear migration/reset error.
-- `diff`, `difftool`, and `show` require a cached revision body and tell the user to run `fetch` when missing.
+- `show`, `diff`, and revision checkout fetch missing old revision bodies on demand when the history metadata identifies the requested revid.
 
 ## External Dependencies
 
