@@ -1,80 +1,180 @@
-ledecopy.py is a tool that copies ONLY THE LEDE from an enwiki
-article, and then creates an mwsync-compatible local copy of an
-article ready to push to electowiki.  It does not require
-authentication on either enwiki nor on electowiki.  It puts a pointer to enwiki at the top of the new article (using
-https://electowiki.org/wiki/Template:Wikipedia) and at the bottom of the article (using
-https://electowiki.org/wiki/Template:Fromwikipedia), and notes the
-exact revid from enwiki that is copied to electowiki.  It also adds
-all of the categories from enwiki to electowiki.
+# ledecopy.py v0.01 Specification
 
-Future work
+`ledecopy.py` copies only the lede from an English Wikipedia article and creates an
+`mwsync.py`-compatible local draft that is ready to push to Electowiki. It does
+not require authentication on enwiki or Electowiki. The first version is
+intentionally narrow: enwiki and Electowiki may be hardcoded, but the code should
+be structured so later versions can add `--fromwiki`, `--towiki`, or config-based
+wiki selection.
 
-Future work may involve creating category mappings between electowiki and enwiki, so that it's possible to be smart about category names on electowiki.  It is often not appropriate to copy all of the category names from Wikipedia, and it could be that electowiki category names or categorization schemes differ from enwiki names and schemes.
+## Command
 
-FAQ
+Initial CLI:
 
-Questions and answers for implementors and users of `ledecopy.py`:
+```bash
+ledecopy.py "New York"
+```
 
-1. What should the CLI look like?
-   - `ledecopy.py --fromwiki=enwiki --towiki=electowiki "New York"`
+The argument is an enwiki page title. URL input and title-renaming can be added
+later. For v0.01, the enwiki title determines the Electowiki title, article key,
+and local filename:
 
-It's okay not to rename the article in the first version, and also it's also okay not to implement --fromwiki and --towiki yet.  We can hardcode fromwiki=enwiki and towiki=electowiki, though please make it easy for a developer to eventually add the option to set the wiki on the CLI and/or configuration eventually.
+```text
+title: New York
+key: New_York
+local: New_York.mw
+```
 
-2. How should the target electowiki article name be chosen?
-   Should the enwiki title always determine the electowiki title,
-   article key, and local filename, or should `--title`, `--key`, or
-   `--local` overrides exist?
-In v0.01, the enwiki title will determine the electowiki name.
+If the local `.mw` file already exists, the command must fail unless `--force` is
+provided.
 
-3. How exactly should "only the lede" be detected?
-   Is the lede everything before the first `== Heading ==`, or should
-   redirects, comments, hatnotes, infoboxes, short descriptions,
-   maintenance templates, and other pre-heading material be handled
-   specially?
-The lede is all of the visible wikitext prior to the first section.  infoboxes and hatnotes and maintenance templates should be stripped.  It doesn't have to be perfect, it just has to be close enough.
+## Source Fetch
 
-4. Which templates should be copied, stripped, or transformed?
-   In particular, what should happen to infoboxes, navboxes,
-   maintenance templates, citation templates, short descriptions, and
-   Wikipedia-specific templates?
-They should generally be stripped, but please be careful not to strip out templates that are important to the lede text.
+Use the MediaWiki Action API. Fetch the enwiki page's current wikitext and exact
+revision metadata, including at least:
 
-5. How should references be handled?
-   If the copied lede contains `<ref>` tags, should `ledecopy.py` add a
-   references section or `{{reflist}}`? Should named refs whose
-   definitions are outside the lede be detected?
+```text
+title
+revid
+timestamp
+user
+comment
+```
 
-Yes, ledecopy.py should add a "==References==" and "<refereneces/>" or "{{reflist}}".
+The copied enwiki `revid` must be included in the generated attribution.
 
-6. Which categories should be copied?
-   Should hidden categories, maintenance categories, tracking
-   categories, stub categories, and Wikipedia administrative categories
-   be excluded? Should categories be copied verbatim for now?
+## Electowiki Target Check
 
-I'm not sure.  Just copy all of the visible categories for v0.01.
+Before writing the local draft, check whether the target Electowiki article
+already exists. If it exists, fail by default and instruct the user to add/fetch
+the article from Electowiki with `mwsync.py` first.
 
-7. What exact attribution wikitext should be generated?
-  - top `{{Wikipedia}}` : just put the title in.
-  - bottom `{{Fromwikipedia}}`  : put the title and revid in.
+`--force` may override this and still write the local draft, but it should print a
+clear warning that the target already exists and the draft may overwrite existing
+Electowiki content.
 
-8. How should `ledecopy.py` integrate with `mwsync.py` state?
-   Should it only create a local `.mw` file, or should it also
-   create/update `mwsync.yaml` so the article is immediately ready for `mwsync.py push`?
+## Lede Extraction
 
-it should edit mwsync.yaml so the article is immediately ready for push
+The lede is the source wikitext before the first level-2 section heading:
 
-9. What should happen if the local `.mw` file already exists?
-   Should the tool refuse to overwrite, require `--force`, write a
-   backup, or merge somehow?
+```text
+== Heading ==
+```
 
-It should require --force if it exists already.  For that matter, even if the article exists on electowiki, but not locally, that should require --force.
+For v0.01, "close enough" extraction is acceptable, but the implementation should:
 
-10. Should the tool check whether the target electowiki article already exists before writing local output?  If it exists, should that be an error, a warning, or should the tool still prepare a local overwrite candidate?
+- Remove redirects.
+- Remove HTML comments.
+- Strip `{{short description}}`.
+- Strip common hatnote templates.
+- Strip infobox templates.
+- Strip obvious maintenance templates.
+- Preserve citation templates and inline formatting that are part of readable
+  lede prose.
 
-It should result in an error that instructs the user to add the article from electowiki first.
+Template stripping does not need to be perfect. Prefer conservative removal of
+well-known non-prose templates over broad removal of all templates.
 
-11. Which API endpoints should be used?
-    The action API works well for this, I think.
+## References
 
-12. What should count as a successful run?
-    Running and reporting what was changed, and how it was successful.
+If the extracted lede contains `<ref>` tags, append:
+
+```wikitext
+== References ==
+<references/>
+```
+
+Named references whose definitions live outside the lede may be missed in v0.01.
+That is acceptable if the output clearly reports that references were copied and
+may need review.
+
+## Categories
+
+For v0.01, copy categories found in the fetched enwiki source using literal
+`[[Category:...]]` links. Hidden, maintenance, tracking, and administrative
+categories do not need special handling yet.
+
+Future work may add category mappings between Electowiki and enwiki, because
+Electowiki category names and categorization schemes may differ from Wikipedia.
+
+## Attribution
+
+Add an Electowiki `{{Wikipedia}}` template at the top of the generated article:
+
+```wikitext
+{{Wikipedia|New York}}
+```
+
+Add an Electowiki `{{Fromwikipedia}}` template at the bottom, before categories:
+
+```wikitext
+{{Fromwikipedia|New York|oldid=123456789}}
+```
+
+If the actual Electowiki template parameter names differ, update this spec before
+implementation or keep the parameter construction isolated so it is easy to
+change.
+
+## Output Shape
+
+Generated local wikitext should use this order:
+
+```wikitext
+{{Wikipedia|Title}}
+
+<cleaned lede text>
+
+== References ==
+<references/>
+
+{{Fromwikipedia|Title|oldid=ENWIKI_REVID}}
+
+[[Category:...]]
+[[Category:...]]
+```
+
+Omit the references section if there are no `<ref>` tags in the copied lede.
+
+## mwsync Integration
+
+`ledecopy.py` should create or update `mwsync.yaml` so the article is ready for
+`mwsync.py push --new`.
+
+For a new article, write at least:
+
+```yaml
+wiki:
+  api_base: https://electowiki.org/w/api.php
+  articles:
+    New_York:
+      title: New York
+      url: https://electowiki.org/wiki/New_York
+      local: New_York.mw
+```
+
+Do not set `upstream_revid` for a new Electowiki article candidate. The page has
+not been fetched from Electowiki yet.
+
+After success, print the next command:
+
+```bash
+mwsync.py push --new New_York -m "Import lede from [[wikipedia:New York]]"
+```
+
+## Success Criteria
+
+A successful run should:
+
+- Write the local `.mw` draft.
+- Create or update `mwsync.yaml`.
+- Report the enwiki title and copied revid.
+- Report whether categories and references were included.
+- Print the recommended `mwsync.py push --new` command.
+
+Minimum smoke tests should cover:
+
+- A normal page with a simple lede.
+- A page with `<ref>` tags.
+- A page with categories.
+- An existing local file requiring `--force`.
+- An existing Electowiki target requiring either failure or explicit `--force`.
