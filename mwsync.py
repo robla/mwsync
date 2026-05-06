@@ -3,14 +3,18 @@
 mwsync.py — Per-article local ↔ MediaWiki sync tool.
 
 Subcommands:
+  init      Create a minimal mwsync.yaml
   add       Register a new article by URL
   fetch     Pull current wikitext from wiki to local .mw file
   push      Submit local edits back to the wiki
-  diff      Compare server snapshot vs working local file
-  difftool  Launch meld to compare server snapshot vs working local
+  diff      Compare upstream cache vs working local file
+  difftool  Launch meld to compare upstream cache vs working local
+  log       Show cached revision history
+  show      Print cached revision text
   status    Show sync state of tracked articles
 
 Usage:
+  mwsync.py init
   mwsync.py add https://electowiki.org/wiki/Maine
   mwsync.py fetch Maine
   mwsync.py diff Maine
@@ -132,13 +136,14 @@ def get_api_base(config: dict) -> str:
 def _fetch_page(title: str, api_base: str = DEFAULT_API_BASE) -> dict:
     """Fetch page wikitext and revision metadata from MediaWiki API.
 
-    Returns dict with keys: wikitext, revid, timestamp, user, comment, sha1
+    Returns dict with keys: wikitext, revid, parentid, timestamp, user,
+    comment, sha1, size, contentmodel, contentformat
     """
     params = {
         "action": "query",
         "format": "json",
         "prop": "revisions",
-        "rvprop": "content|ids|timestamp|user|comment|sha1",
+        "rvprop": "content|ids|timestamp|user|comment|sha1|size",
         "titles": title,
         "formatversion": "2",
     }
@@ -163,10 +168,14 @@ def _fetch_page(title: str, api_base: str = DEFAULT_API_BASE) -> dict:
     return {
         "wikitext": rev.get("content", ""),
         "revid": rev.get("revid", 0),
+        "parentid": rev.get("parentid", 0),
         "timestamp": rev.get("timestamp", ""),
         "user": rev.get("user", ""),
         "comment": rev.get("comment", ""),
         "sha1": rev.get("sha1", ""),
+        "size": rev.get("size", 0),
+        "contentmodel": rev.get("contentmodel", ""),
+        "contentformat": rev.get("contentformat", ""),
     }
 
 
@@ -319,6 +328,221 @@ def _server_snapshot_path(key: str) -> str:
     return os.path.join("_cache", f"server--{key}.mw")
 
 
+def _cache_dir(key: str) -> str:
+    return os.path.join("_cache", key)
+
+
+def _history_path(key: str) -> str:
+    return os.path.join(_cache_dir(key), "history.jsonl")
+
+
+def _revision_body_path(key: str, revid: int | str) -> str:
+    return os.path.join(_cache_dir(key), f"{revid}.mw")
+
+
+def _revision_meta_path(key: str, revid: int | str) -> str:
+    return os.path.join(_cache_dir(key), f"{revid}.json")
+
+
+def _ref_path(key: str, ref: str) -> str:
+    return os.path.join(_cache_dir(key), "refs", ref)
+
+
+def _legacy_cache_exists(key: str) -> bool:
+    return os.path.exists(_server_snapshot_path(key)) and not os.path.exists(_history_path(key))
+
+
+def _check_legacy_cache(key: str) -> None:
+    legacy = _server_snapshot_path(key)
+    if not _legacy_cache_exists(key):
+        return
+    print(f"Error: legacy cache detected: {legacy}", file=sys.stderr)
+    print(
+        f"This version expects {_history_path(key)} and revid-named files.",
+        file=sys.stderr,
+    )
+    print("Remove the legacy snapshot and fetch again, or run a migration tool.",
+          file=sys.stderr)
+    sys.exit(1)
+
+
+def _write_json(path: str, data: dict) -> bool:
+    content = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    return _atomic_write(path, content)
+
+
+def _read_ref(key: str, ref: str) -> int | None:
+    path = _ref_path(key, ref)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+    except FileNotFoundError:
+        return None
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"Error: invalid ref value in {path}: {raw}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _write_ref(key: str, ref: str, revid: int) -> bool:
+    return _atomic_write(_ref_path(key, ref), f"{int(revid)}\n")
+
+
+def _read_history(key: str) -> list[dict]:
+    path = _history_path(key)
+    entries = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for lineno, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError as e:
+                    print(f"Error: invalid JSON in {path}:{lineno}: {e}", file=sys.stderr)
+                    sys.exit(1)
+                if isinstance(item, dict):
+                    entries.append(item)
+    except FileNotFoundError:
+        return []
+    return entries
+
+
+def _write_history(key: str, entries: list[dict]) -> bool:
+    seen = {}
+    for entry in entries:
+        revid = entry.get("revid")
+        if revid is not None:
+            seen[int(revid)] = entry
+    ordered = sorted(seen.values(), key=lambda e: (e.get("timestamp", ""), int(e["revid"])))
+    content = "".join(json.dumps(e, ensure_ascii=False, sort_keys=True) + "\n"
+                      for e in ordered)
+    return _atomic_write(_history_path(key), content)
+
+
+def _revision_record(key: str, art: dict, result: dict, api_base: str) -> dict:
+    revid = int(result["revid"])
+    return {
+        "revid": revid,
+        "parentid": int(result.get("parentid") or 0),
+        "timestamp": result.get("timestamp", ""),
+        "user": result.get("user", ""),
+        "comment": result.get("comment", ""),
+        "sha1": result.get("sha1", ""),
+        "size": int(result.get("size") or len(result.get("wikitext", ""))),
+        "title": art.get("title", key),
+        "article_key": key,
+        "url": art.get("url", ""),
+        "api_base": api_base,
+        "body": f"{revid}.mw",
+        "meta": f"{revid}.json",
+        "fetched_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "contentmodel": result.get("contentmodel", ""),
+        "contentformat": result.get("contentformat", ""),
+    }
+
+
+def _cache_revision(key: str, art: dict, result: dict, api_base: str) -> bool:
+    revid = int(result["revid"])
+    body_path = _revision_body_path(key, revid)
+    meta_path = _revision_meta_path(key, revid)
+    record = _revision_record(key, art, result, api_base)
+
+    if os.path.exists(body_path):
+        existing_meta = {}
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                existing_meta = json.load(f)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Warning: could not read {meta_path}: {e}", file=sys.stderr)
+        if existing_meta.get("sha1") and existing_meta.get("sha1") != record.get("sha1"):
+            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            conflict = os.path.join(_cache_dir(key), f"{revid}.refetch-{stamp}.mw")
+            if not _atomic_write(conflict, result["wikitext"]):
+                return False
+            print(
+                f"Warning: cached revision {revid} metadata differs; wrote {conflict}",
+                file=sys.stderr,
+            )
+            return False
+        elif not existing_meta and not _write_json(meta_path, record):
+            return False
+    else:
+        if not _atomic_write(body_path, result["wikitext"]):
+            return False
+        if not _write_json(meta_path, record):
+            return False
+
+    history = _read_history(key)
+    history.append({k: record[k] for k in (
+        "revid", "parentid", "timestamp", "user", "comment", "sha1", "size",
+        "body", "meta",
+    )})
+    return _write_history(key, history)
+
+
+def _resolve_cached_revid(key: str, spec: str | None = None) -> int:
+    if spec in (None, "", "upstream"):
+        revid = _read_ref(key, "upstream")
+        if revid is not None:
+            return revid
+        history = _read_history(key)
+        if history:
+            return int(history[-1]["revid"])
+        print(f"Error: no upstream revision cached for '{key}'. Run 'mwsync.py fetch {key}'.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    if spec.isdigit():
+        return int(spec)
+
+    base = spec
+    offset = 0
+    if "~" in spec:
+        base, raw_offset = spec.rsplit("~", 1)
+        try:
+            offset = int(raw_offset)
+        except ValueError:
+            print(f"Error: invalid revision expression: {spec}", file=sys.stderr)
+            sys.exit(1)
+    elif spec.endswith("^"):
+        base = spec[:-1]
+        offset = 1
+
+    revid = _resolve_cached_revid(key, base)
+    if offset == 0:
+        return revid
+
+    history = _read_history(key)
+    revids = [int(entry["revid"]) for entry in history]
+    try:
+        idx = revids.index(revid)
+    except ValueError:
+        print(f"Error: revision {revid} is not in {_history_path(key)}", file=sys.stderr)
+        sys.exit(1)
+    target = idx - offset
+    if target < 0:
+        print(f"Error: revision expression '{spec}' is older than cached history.",
+              file=sys.stderr)
+        sys.exit(1)
+    return revids[target]
+
+
+def _cached_body_or_die(key: str, revid: int) -> str:
+    path = _revision_body_path(key, revid)
+    if not os.path.exists(path):
+        print(f"Error: cached body not found: {path}", file=sys.stderr)
+        print(f"Fetch that revision before using it: mwsync.py fetch {key}", file=sys.stderr)
+        sys.exit(1)
+    return path
+
+
 def _git_is_modified(path: str) -> bool | None:
     """Return True if file has uncommitted changes, False if clean, None if not in git."""
     try:
@@ -336,6 +560,21 @@ def _git_is_modified(path: str) -> bool | None:
 # ---------------------------------------------------------------------------
 # Subcommand runners
 # ---------------------------------------------------------------------------
+
+def run_init(args, config_path: str) -> None:
+    if os.path.exists(config_path):
+        print(f"Error: config file already exists: {config_path}", file=sys.stderr)
+        sys.exit(1)
+    config = {
+        "wiki": {
+            "api_base": DEFAULT_API_BASE,
+            "articles": {},
+        },
+    }
+    if not save_config(config, config_path):
+        sys.exit(1)
+    print(f"Created {config_path}", file=sys.stderr)
+
 
 def run_add(args, config: dict, config_path: str) -> None:
     url = args.url
@@ -375,6 +614,7 @@ def run_add(args, config: dict, config_path: str) -> None:
 
 def run_fetch(args, config: dict, config_path: str) -> None:
     key, art = resolve_article_entry(config, args.article)
+    _check_legacy_cache(key)
     title = art.get("title", key)
     local = art.get("local", key + ".mw")
     api_base = get_api_base(config)
@@ -386,7 +626,7 @@ def run_fetch(args, config: dict, config_path: str) -> None:
         print(f"#   Title:    {title}", file=sys.stderr)
         print(f"#   API:      {api_base}", file=sys.stderr)
         print(f"#   Local:    {local}", file=sys.stderr)
-        print(f"#   Snapshot: {_server_snapshot_path(key)}", file=sys.stderr)
+        print(f"#   Cache:    {_cache_dir(key)}", file=sys.stderr)
         prev = art.get("upstream_revid")
         if prev:
             print(f"#   Current upstream_revid: {prev}", file=sys.stderr)
@@ -412,14 +652,18 @@ def run_fetch(args, config: dict, config_path: str) -> None:
     wikitext = result["wikitext"]
     print(f"# Got revid {revid} ({len(wikitext)} chars)", file=sys.stderr)
 
+    if not _cache_revision(key, art, result, api_base):
+        sys.exit(1)
+    if not _write_ref(key, "upstream", int(revid)):
+        sys.exit(1)
+    print(f"# Cached revision {_revision_body_path(key, revid)}", file=sys.stderr)
+
     if not _atomic_write(local, wikitext):
         sys.exit(1)
     print(f"# Wrote {local}", file=sys.stderr)
-
-    snapshot = _server_snapshot_path(key)
-    if not _atomic_write(snapshot, wikitext):
+    if not _write_ref(key, "base", int(revid)):
         sys.exit(1)
-    print(f"# Wrote server snapshot {snapshot}", file=sys.stderr)
+    print(f"# Updated refs/upstream and refs/base to {revid}", file=sys.stderr)
 
     # Update config metadata
     wiki = config.setdefault("wiki", {})
@@ -444,10 +688,11 @@ def run_fetch(args, config: dict, config_path: str) -> None:
 
 def run_push(args, config: dict, config_path: str) -> None:
     key, art = resolve_article_entry(config, args.article)
+    _check_legacy_cache(key)
     title = art.get("title", key)
     local = art.get("local", key + ".mw")
     api_base = get_api_base(config)
-    baserevid = art.get("upstream_revid", 0)
+    baserevid = _read_ref(key, "base") or art.get("upstream_revid", 0)
     dry_run = getattr(args, "dry_run", False)
     message = getattr(args, "message", None)
     create_new = getattr(args, "new", False)
@@ -552,14 +797,21 @@ def run_push(args, config: dict, config_path: str) -> None:
     art = articles.setdefault(key, {})
     art["last_pushed_revid"] = new_revid
     art["last_pushed_at"] = now_utc
+    if not _write_ref(key, "last-pushed", int(new_revid)):
+        sys.exit(1)
     save_config(config, config_path)
 
-    # Auto-fetch to resync upstream_revid with the revision we just created
-    print("# Re-fetching to sync server snapshot...", file=sys.stderr)
+    # Auto-fetch to resync upstream refs with the revision we just created.
+    print("# Re-fetching to sync upstream cache...", file=sys.stderr)
     try:
         result = _fetch_page(title, api_base)
+        if not _cache_revision(key, art, result, api_base):
+            sys.exit(1)
+        if not _write_ref(key, "upstream", int(result["revid"])):
+            sys.exit(1)
+        if not _write_ref(key, "base", int(result["revid"])):
+            sys.exit(1)
         _atomic_write(local, result["wikitext"])
-        _atomic_write(_server_snapshot_path(key), result["wikitext"])
         art["upstream_revid"] = result["revid"]
         art["upstream_timestamp"] = result["timestamp"]
         art["upstream_editor"] = result["user"]
@@ -573,40 +825,70 @@ def run_push(args, config: dict, config_path: str) -> None:
 
 def run_diff(args, config: dict, config_path: str) -> None:
     key, art = resolve_article_entry(config, args.article)
+    _check_legacy_cache(key)
     local = art.get("local", key + ".mw")
-    snapshot = _server_snapshot_path(key)
 
     if getattr(args, "remote", False):
         title = art.get("title", key)
         api_base = get_api_base(config)
-        print(f"# Re-fetching server snapshot for '{key}'...", file=sys.stderr)
+        print(f"# Re-fetching upstream cache for '{key}'...", file=sys.stderr)
         try:
             result = _fetch_page(title, api_base)
-            _atomic_write(snapshot, result["wikitext"])
+            if not _cache_revision(key, art, result, api_base):
+                sys.exit(1)
+            if not _write_ref(key, "upstream", int(result["revid"])):
+                sys.exit(1)
             print(f"# Got revid {result['revid']}", file=sys.stderr)
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    if not os.path.exists(snapshot):
-        print(f"Error: no server snapshot found at {snapshot}.", file=sys.stderr)
-        print(f"Run 'mwsync.py fetch {key}' first.", file=sys.stderr)
-        sys.exit(1)
+    revid = _resolve_cached_revid(key, "upstream")
+    snapshot = _cached_body_or_die(key, revid)
 
     subprocess.run(["git", "diff", "--no-index", snapshot, local])
 
 
 def run_difftool(args, config: dict, config_path: str) -> None:
     key, art = resolve_article_entry(config, args.article)
+    _check_legacy_cache(key)
     local = art.get("local", key + ".mw")
-    snapshot = _server_snapshot_path(key)
-
-    if not os.path.exists(snapshot):
-        print(f"Error: no server snapshot found at {snapshot}.", file=sys.stderr)
-        print(f"Run 'mwsync.py fetch {key}' first.", file=sys.stderr)
-        sys.exit(1)
+    revid = _resolve_cached_revid(key, "upstream")
+    snapshot = _cached_body_or_die(key, revid)
 
     subprocess.run(["meld", snapshot, local])
+
+
+def run_log(args, config: dict, config_path: str) -> None:
+    key, art = resolve_article_entry(config, args.article)
+    _check_legacy_cache(key)
+    history = _read_history(key)
+    if not history:
+        print(f"No cached history for '{key}'. Run 'mwsync.py fetch {key}'.")
+        return
+    for entry in reversed(history):
+        revid = entry.get("revid", "")
+        ts = entry.get("timestamp", "")
+        user = entry.get("user", "")
+        comment = entry.get("comment", "")
+        print(f"{revid}  {ts}  {user}")
+        if comment:
+            print(f"  {comment}")
+
+
+def run_show(args, config: dict, config_path: str) -> None:
+    spec = args.revision
+    if "@" not in spec:
+        print("Error: show expects ARTICLE@REV, for example New_York@upstream.",
+              file=sys.stderr)
+        sys.exit(1)
+    article, revspec = spec.split("@", 1)
+    key, art = resolve_article_entry(config, article)
+    _check_legacy_cache(key)
+    revid = _resolve_cached_revid(key, revspec)
+    path = _cached_body_or_die(key, revid)
+    with open(path, "r", encoding="utf-8") as f:
+        sys.stdout.write(f.read())
 
 
 def run_status(args, config: dict, config_path: str) -> None:
@@ -625,6 +907,9 @@ def run_status(args, config: dict, config_path: str) -> None:
     for key, art in items:
         local = art.get("local", key + ".mw")
         revid = art.get("upstream_revid", "")
+        upstream_ref = _read_ref(key, "upstream")
+        base_ref = _read_ref(key, "base")
+        last_pushed_ref = _read_ref(key, "last-pushed")
         ts = art.get("upstream_timestamp", "")
         editor = art.get("upstream_editor", "")
         pushed_revid = art.get("last_pushed_revid", "")
@@ -650,6 +935,12 @@ def run_status(args, config: dict, config_path: str) -> None:
             print(f"  upstream_revid:  {rev_info}")
         else:
             print("  upstream_revid:  (not fetched)")
+        if upstream_ref:
+            print(f"  refs/upstream:   {upstream_ref}")
+        if base_ref:
+            print(f"  refs/base:       {base_ref}")
+        if last_pushed_ref:
+            print(f"  refs/last-pushed:{last_pushed_ref}")
         if pushed_revid:
             print(f"  last_pushed:     {pushed_revid}  ({pushed_at})")
         else:
@@ -676,6 +967,9 @@ def main() -> None:
     )
     sub = ap.add_subparsers(dest="subcommand", help="Available subcommands")
 
+    # init
+    sub.add_parser("init", help="Create a minimal mwsync.yaml")
+
     # add
     p_add = sub.add_parser("add", help="Register a new article by URL")
     p_add.add_argument("url", metavar="URL", help="Full wiki page URL")
@@ -696,15 +990,24 @@ def main() -> None:
     p_push.add_argument("-m", "--message", help="Edit summary (skips editor prompt)")
 
     # diff
-    p_diff = sub.add_parser("diff", help="Compare server snapshot vs working local file")
+    p_diff = sub.add_parser("diff", help="Compare upstream cache vs working local file")
     p_diff.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
     p_diff.add_argument("--remote", action="store_true",
-                        help="Re-fetch server snapshot before diffing")
+                        help="Re-fetch upstream cache before diffing")
 
     # difftool
     p_difftool = sub.add_parser("difftool",
-                                help="Launch meld to compare server snapshot vs local")
+                                help="Launch meld to compare upstream cache vs local")
     p_difftool.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
+
+    # log
+    p_log = sub.add_parser("log", help="Show cached revision history")
+    p_log.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
+
+    # show
+    p_show = sub.add_parser("show", help="Print cached revision text")
+    p_show.add_argument("revision", metavar="ARTICLE@REV",
+                        help="Revision expression, e.g. New_York@upstream")
 
     # status
     p_status = sub.add_parser("status", help="Show sync state of tracked articles")
@@ -718,6 +1021,10 @@ def main() -> None:
         sys.exit(0)
 
     config_path = args.config
+    if args.subcommand == "init":
+        run_init(args, config_path)
+        return
+
     config = load_config(config_path)
 
     if args.subcommand == "add":
@@ -730,6 +1037,10 @@ def main() -> None:
         run_diff(args, config, config_path)
     elif args.subcommand == "difftool":
         run_difftool(args, config, config_path)
+    elif args.subcommand == "log":
+        run_log(args, config, config_path)
+    elif args.subcommand == "show":
+        run_show(args, config, config_path)
     elif args.subcommand == "status":
         run_status(args, config, config_path)
 

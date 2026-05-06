@@ -1,6 +1,6 @@
 # mwsync.py Architecture
 
-`mwsync.py` is a single-file Python CLI for syncing individual MediaWiki articles with local `.mw` files. It is designed around a small amount of YAML state, a cached copy of the last fetched server revision, and direct MediaWiki API calls using the Python standard library.
+`mwsync.py` is a single-file Python CLI for syncing individual MediaWiki articles with local `.mw` files. It is designed around a small amount of YAML state, a per-article flat-file revision cache, and direct MediaWiki API calls using the Python standard library.
 
 ## Runtime Model
 
@@ -31,15 +31,22 @@ Each article has three important identities:
 
 `resolve_article_entry()` normalizes user input. A command argument may be either the canonical article key or the configured local filename. The function returns both the canonical key and the article entry so downstream code can build cache paths consistently.
 
-## Local Files
+## Local Files and Cache
 
-For a registered article, the local working copy lives at the entry's `local` path. Server snapshots live under `_cache/` with the naming pattern:
+For a registered article, the local working copy lives at the entry's `local` path. Cached upstream state lives under one `_cache/<Article_Key>/` directory per article:
 
 ```text
-_cache/server--<article-key>.mw
+_cache/<Article_Key>/history.jsonl
+_cache/<Article_Key>/refs/upstream
+_cache/<Article_Key>/refs/base
+_cache/<Article_Key>/refs/last-pushed
+_cache/<Article_Key>/<revid>.mw
+_cache/<Article_Key>/<revid>.json
 ```
 
-The local file is intended for user edits. The snapshot is the last known upstream text and is used by `diff` and `difftool` as the comparison base. Writes use `_atomic_write()`, which writes to a temporary file in the target directory and then replaces the destination.
+The local file is intended for user edits. Revid-named `.mw` files are cached upstream revision bodies; matching `.json` sidecars store revision metadata. `history.jsonl` is the chronological manifest, while `refs/upstream`, `refs/base`, and `refs/last-pushed` hold small sync-state pointers. Writes use `_atomic_write()`, which writes to a temporary file in the target directory and then replaces the destination.
+
+The older `_cache/server--<Article_Key>.mw` layout is treated as legacy. Current code detects that file and exits with a migration/reset message instead of reading it as normal state.
 
 ## Config Helpers
 
@@ -68,15 +75,19 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `add` parses a `/wiki/` URL, derives the page title and article key, then inserts a new article entry into `mwsync.yaml`. It does not fetch page content.
 
-`fetch` resolves the article, refuses to overwrite an uncommitted local file unless `--force` is used, fetches the current server revision, writes both the local `.mw` file and `_cache` snapshot, then updates upstream metadata in `mwsync.yaml`.
+`fetch` resolves the article, refuses to overwrite an uncommitted local file unless `--force` is used, fetches the current server revision, writes `_cache/<Article_Key>/<revid>.mw`, `_cache/<Article_Key>/<revid>.json`, `history.jsonl`, and `refs/upstream`, writes the local `.mw` file, then updates upstream metadata in `mwsync.yaml` and initializes `refs/base`.
 
-`push` resolves the article, reads the local file, obtains an edit summary from `-m/--message` or `$VISUAL`/`$EDITOR`, logs in with `MWSYNC_MW_USER` and `MWSYNC_MW_PASSWORD`, submits the edit, records push metadata, then re-fetches the page to resync the local file and server snapshot.
+`push` resolves the article, reads the local file, obtains an edit summary from `-m/--message` or `$VISUAL`/`$EDITOR`, logs in with `MWSYNC_MW_USER` and `MWSYNC_MW_PASSWORD`, submits the edit, records push metadata, updates `refs/last-pushed`, then re-fetches the page to resync the local file, cache, `refs/upstream`, and `refs/base`.
 
-`diff` compares the cached server snapshot with the local file using `git diff --no-index`. With `--remote`, it first refreshes the server snapshot without rewriting the local working copy.
+`diff` compares `New_York@upstream` with the local file using `git diff --no-index`. With `--remote`, it first refreshes the upstream cache without rewriting the local working copy.
 
-`difftool` launches `meld` against the cached server snapshot and the local file.
+`difftool` launches `meld` against `New_York@upstream` and the local file.
 
-`status` prints tracked article state, including local path, git cleanliness, upstream revision metadata, and last pushed revision.
+`log` prints cached revision history from `history.jsonl`.
+
+`show` prints cached revision text for expressions such as `New_York@upstream`, `New_York@upstream^`, or `New_York@19778`.
+
+`status` prints tracked article state, including local path, git cleanliness, upstream revision metadata, refs, and last pushed revision.
 
 ## Error Handling and Safety
 
@@ -87,7 +98,8 @@ The main safety checks are:
 - `fetch` checks `git status --porcelain -- <local>` before overwriting local content.
 - `push` requires an upstream revision unless `--new` is specified.
 - `push` uses `baserevid` so MediaWiki can detect edit conflicts.
-- `diff` and `difftool` require an existing server snapshot and tell the user to run `fetch` when missing.
+- Legacy `_cache/server--<Article_Key>.mw` files are detected and produce a clear migration/reset error.
+- `diff`, `difftool`, and `show` require a cached revision body and tell the user to run `fetch` when missing.
 
 ## External Dependencies
 
