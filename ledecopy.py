@@ -363,6 +363,77 @@ def _prompt_category_action(name: str, sortkey: str | None,
         print("  unrecognized choice; valid options: m, d, K, k, s")
 
 
+def _category_cache_status(name: str,
+                           canonical_pages: set[str] | None,
+                           used_categories: set[str] | None) -> str:
+    if canonical_pages is None:
+        return "cache missing"
+    if used_categories is not None and name in used_categories:
+        return "used on Electowiki but no category page"
+    return "absent from Electowiki cache"
+
+
+def _category_plan_lines(source_links: list[tuple[str, str | None]],
+                         catmap: dict[str, object],
+                         cache: tuple[set[str], set[str], dict[str, str]] | None,
+                         is_tty: bool) -> list[str]:
+    """Describe source-category handling before interactive prompts begin."""
+    if cache is None:
+        canonical_pages = used_categories = None
+        redirects: dict[str, str] = {}
+    else:
+        canonical_pages, used_categories, redirects = cache
+
+    rows = []
+    unresolved: set[str] = set()
+    for raw_name, sortkey in source_links:
+        normalized = catmgr.normalize_category_name(raw_name)
+        if not normalized:
+            continue
+
+        sortkey_note = f" | sortkey={sortkey!r}" if sortkey else ""
+        if normalized in catmap:
+            value = catmap[normalized]
+            if value is None:
+                disposition = "drop (catmap.yaml)"
+            else:
+                value_str = str(value)
+                resolved, via_redir = _resolve_redirect(value_str, redirects)
+                if value_str == normalized and not via_redir:
+                    disposition = "keep (catmap.yaml)"
+                elif via_redir:
+                    disposition = (f"use {resolved} "
+                                   f"(catmap.yaml via Electowiki redirect)")
+                else:
+                    disposition = f"use {value_str} (catmap.yaml)"
+        elif normalized in redirects:
+            resolved, _via_redir = _resolve_redirect(normalized, redirects)
+            disposition = f"use {resolved} (Electowiki redirect)"
+        elif canonical_pages is not None and normalized in canonical_pages:
+            disposition = "keep (Electowiki category page)"
+        else:
+            cache_status = _category_cache_status(
+                normalized, canonical_pages, used_categories)
+            if is_tty:
+                disposition = f"ask ({cache_status})"
+                unresolved.add(normalized)
+            else:
+                disposition = f"drop; review-needed ({cache_status})"
+
+        rows.append(f"  - {normalized}{sortkey_note}: {disposition}")
+
+    if not rows:
+        return ["Source categories: none."]
+
+    lines = [f"Source categories ({len(rows)}):"]
+    lines.extend(rows)
+    if is_tty and unresolved:
+        suffix = "" if len(unresolved) == 1 else "s"
+        lines.append(f"Interactive category decisions needed: "
+                     f"{len(unresolved)} unique category name{suffix}.")
+    return lines
+
+
 def _resolve_categories(source_links: list[tuple[str, str | None]],
                         catmap: dict[str, object],
                         cache: tuple[set[str], set[str], dict[str, str]] | None,
@@ -445,16 +516,12 @@ def _resolve_categories(source_links: list[tuple[str, str | None]],
             continue
 
         # 4. Determine cache status hint for prompt or report.
-        if canonical_pages is None:
-            if not cache_warned:
-                print("Category cache not found; run catmgr.py fetch for "
-                      "better suggestions.", file=sys.stderr)
-                cache_warned = True
-            cache_status = "cache missing"
-        elif used_categories is not None and normalized in used_categories:
-            cache_status = "used on Electowiki but no category page"
-        else:
-            cache_status = "absent from Electowiki cache"
+        if canonical_pages is None and not cache_warned:
+            print("Category cache not found; run catmgr.py fetch for "
+                  "better suggestions.", file=sys.stderr)
+            cache_warned = True
+        cache_status = _category_cache_status(
+            normalized, canonical_pages, used_categories)
 
         # 5. Non-TTY: drop and report, do not prompt.
         if not is_tty:
@@ -651,6 +718,8 @@ def main() -> None:
     catmap = _load_catmap()
     cache = _load_category_cache()
     is_tty = sys.stdin.isatty()
+    for line in _category_plan_lines(source_links, catmap, cache, is_tty):
+        print(line)
     resolved_categories, outcomes, new_entries = _resolve_categories(
         source_links, catmap, cache, is_tty)
 
