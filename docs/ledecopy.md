@@ -22,11 +22,13 @@ key: New_York
 local: New_York.mw
 ```
 
-Before doing any work, the command must fail if either of the following is
+Before doing any work, the command must fail if any of the following is
 true:
 
 - The local `.mw` file already exists.
 - The article key is already registered in `mwsync.yaml`.
+- The fetched enwiki source is a redirect (instruct the user to use the
+  redirect target title instead).
 
 There is no override flag. Fix the conflict before re-running.
 
@@ -61,7 +63,6 @@ The lede is the source wikitext before the first level-2 section heading:
 
 Close-enough extraction is acceptable, but the implementation should:
 
-- Remove redirects.
 - Strip `{{short description}}`.
 - Strip common hatnote templates.
 - Strip infobox templates.
@@ -222,7 +223,8 @@ Smoke tests should cover:
 
 Future work may add:
 
-- `--fromwiki` and `--towiki` CLI options, or equivalent config-driven wiki
+- Redirect resolution for enwiki titles that are redirects.
+- --fromwiki and --towiki CLI options, or equivalent config-driven wiki
   selection.
 - URL input in addition to page-title input.
 - Target title/key/local filename overrides for cases where the Electowiki page
