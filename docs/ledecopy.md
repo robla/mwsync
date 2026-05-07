@@ -1,23 +1,20 @@
-# ledecopy.py v0.01 Specification
+# ledecopy.py Specification
 
-`ledecopy.py` copies only the lede from an English Wikipedia article and creates an
-`mwsync.py`-compatible local draft that is ready to push to Electowiki. It does
-not require authentication on enwiki or Electowiki. The first version is
-intentionally narrow: enwiki and Electowiki may be hardcoded, but the code should
-be structured so later versions can add `--fromwiki`, `--towiki`, or config-based
-wiki selection.
+`ledecopy.py` copies only the lede from an English Wikipedia article and
+creates an `mwsync.py`-compatible local draft that is ready to push to
+Electowiki. It does not require authentication on enwiki or Electowiki.
+enwiki and Electowiki are hardcoded.
 
 ## Command
 
-Initial CLI:
+CLI:
 
 ```bash
 ledecopy.py "New York"
 ```
 
-The argument is an enwiki page title. URL input and title-renaming can be added
-later. For v0.01, the enwiki title determines the Electowiki title, article key,
-and local filename:
+The argument is an enwiki page title. The enwiki title determines the
+Electowiki title, article key, and local filename:
 
 ```text
 title: New York
@@ -25,13 +22,18 @@ key: New_York
 local: New_York.mw
 ```
 
-If the local `.mw` file already exists, the command must fail unless `--force` is
-provided.
+Before doing any work, the command must fail if either of the following is
+true:
+
+- The local `.mw` file already exists.
+- The article key is already registered in `mwsync.yaml`.
+
+There is no override flag. Fix the conflict before re-running.
 
 ## Source Fetch
 
-Use the MediaWiki Action API. Fetch the enwiki page's current wikitext and exact
-revision metadata, including at least:
+Use the MediaWiki Action API. Fetch the enwiki page's current wikitext and
+exact revision metadata, including at least:
 
 ```text
 title
@@ -45,13 +47,9 @@ The copied enwiki `revid` must be included in the generated attribution.
 
 ## Electowiki Target Check
 
-Before writing the local draft, check whether the target Electowiki article
-already exists. If it exists, fail by default and instruct the user to add/fetch
-the article from Electowiki with `mwsync.py` first.
-
-`--force` may override this and still write the local draft, but it should print a
-clear warning that the target already exists and the draft may overwrite existing
-Electowiki content.
+Before writing the local draft, query Electowiki for the target article. If
+the article exists, fail and instruct the user to add/fetch it from
+Electowiki with `mwsync.py` first. There is no override flag.
 
 ## Lede Extraction
 
@@ -61,7 +59,7 @@ The lede is the source wikitext before the first level-2 section heading:
 == Heading ==
 ```
 
-For v0.01, "close enough" extraction is acceptable, but the implementation should:
+Close-enough extraction is acceptable, but the implementation should:
 
 - Remove redirects.
 - Remove HTML comments.
@@ -75,6 +73,24 @@ For v0.01, "close enough" extraction is acceptable, but the implementation shoul
 Template stripping does not need to be perfect. Prefer conservative removal of
 well-known non-prose templates over broad removal of all templates.
 
+### Order of Operations
+
+The lede split is sensitive to processing order. Apply steps in this order:
+
+1. Remove HTML comments from the full source.
+2. Strip top-of-page non-prose templates (short description, hatnotes,
+   maintenance, infoboxes) using brace-matched removal so nested templates
+   do not break extraction.
+3. Find the first line-start level-2 heading (`== Heading ==` at column zero).
+   Everything before that heading is the lede candidate. If no level-2
+   heading exists, the entire cleaned source is the lede.
+4. Extract `[[Category:...]]` links from the full original source (after
+   comment removal), not just the lede. Categories normally live at the
+   bottom of the article.
+
+Splitting before stripping infoboxes is unsafe: infobox bodies and inline
+tables can contain `==` patterns that look like headings.
+
 ## References
 
 If the extracted lede contains `<ref>` tags, append:
@@ -84,18 +100,18 @@ If the extracted lede contains `<ref>` tags, append:
 <references/>
 ```
 
-Named references whose definitions live outside the lede may be missed in v0.01.
-That is acceptable if the output clearly reports that references were copied and
-may need review.
+Named references whose definitions live outside the lede may be missed. That
+is acceptable as long as the run summary reports that references were copied
+and may need review.
 
 ## Categories
 
-For v0.01, copy categories found in the fetched enwiki source using literal
+Copy categories found in the fetched enwiki source using literal
 `[[Category:...]]` links. Hidden, maintenance, tracking, and administrative
-categories do not need special handling yet.
+categories do not need special handling.
 
-Future work may add category mappings between Electowiki and enwiki, because
-Electowiki category names and categorization schemes may differ from Wikipedia.
+Do not copy interlanguage links such as `[[fr:...]]` or `[[de:...]]`. Drop
+them silently.
 
 ## Attribution
 
@@ -111,9 +127,8 @@ Add an Electowiki `{{Fromwikipedia}}` template at the bottom, before categories:
 {{Fromwikipedia|New York|oldid=123456789}}
 ```
 
-If the actual Electowiki template parameter names differ, update this spec before
-implementation or keep the parameter construction isolated so it is easy to
-change.
+Keep the parameter construction for both templates isolated so it is easy to
+adjust if Electowiki template parameter names differ from what is shown here.
 
 ## Output Shape
 
@@ -137,8 +152,12 @@ Omit the references section if there are no `<ref>` tags in the copied lede.
 
 ## mwsync Integration
 
-`ledecopy.py` should create or update `mwsync.yaml` so the article is ready for
-`mwsync.py push --new`.
+`ledecopy.py` should write the article entry into `mwsync.yaml` so the
+article is ready for `mwsync.py push --new`. If `mwsync.yaml` does not yet
+exist in the working directory, create one with the same minimal shape that
+`mwsync.py init` produces, then add the article entry. If the file exists,
+preserve its other articles and insert the new entry alongside them. The
+pre-flight check ensures the article key is not already present.
 
 For a new article, write at least:
 
@@ -152,8 +171,8 @@ wiki:
       local: New_York.mw
 ```
 
-Do not set `upstream_revid` for a new Electowiki article candidate. The page has
-not been fetched from Electowiki yet.
+Do not set `upstream_revid` for a new Electowiki article candidate. The page
+has not been fetched from Electowiki yet.
 
 After success, print the next command:
 
@@ -161,12 +180,30 @@ After success, print the next command:
 mwsync.py push --new New_York -m "Import lede from [[wikipedia:New York]]"
 ```
 
+## Implementation Notes
+
+### Code Reuse from mwsync.py
+
+`ledecopy.py` should reuse helpers from `mwsync.py` rather than reimplement
+them. At minimum: `load_config` and `save_config` for `mwsync.yaml`
+round-tripping, `_parse_article_name` for deriving the article key/title/local
+filename consistently with `mwsync.py add`, `_atomic_write` for both the local
+`.mw` draft and `mwsync.yaml`, and `minimal_config` for bootstrapping a
+missing `mwsync.yaml`. Importing from `mwsync.py` is acceptable; the two
+scripts are sister tools that share state.
+
+### HTTP
+
+Set a User-Agent header on every API request, matching the convention in
+`mwsync.py` (`USER_AGENT`). Wikimedia expects identifiable user agents and
+may rate-limit or block anonymous unidentified clients.
+
 ## Success Criteria
 
 A successful run should:
 
 - Write the local `.mw` draft.
-- Create or update `mwsync.yaml`.
+- Create or extend `mwsync.yaml`.
 - Report the enwiki title and copied revid.
 - Report whether categories and references were included.
 - Print the recommended `mwsync.py push --new` command.
@@ -176,5 +213,6 @@ Minimum smoke tests should cover:
 - A normal page with a simple lede.
 - A page with `<ref>` tags.
 - A page with categories.
-- An existing local file requiring `--force`.
-- An existing Electowiki target requiring either failure or explicit `--force`.
+- An existing local file (must fail).
+- An article key already registered in `mwsync.yaml` (must fail).
+- An existing Electowiki target page (must fail).
