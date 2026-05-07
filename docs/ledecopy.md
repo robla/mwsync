@@ -62,7 +62,6 @@ The lede is the source wikitext before the first level-2 section heading:
 Close-enough extraction is acceptable, but the implementation should:
 
 - Remove redirects.
-- Remove HTML comments.
 - Strip `{{short description}}`.
 - Strip common hatnote templates.
 - Strip infobox templates.
@@ -77,19 +76,21 @@ well-known non-prose templates over broad removal of all templates.
 
 The lede split is sensitive to processing order. Apply steps in this order:
 
-1. Remove HTML comments from the full source.
-2. Strip top-of-page non-prose templates (short description, hatnotes,
+1. Strip top-of-page non-prose templates (short description, hatnotes,
    maintenance, infoboxes) using brace-matched removal so nested templates
    do not break extraction.
-3. Find the first line-start level-2 heading (`== Heading ==` at column zero).
+2. Find the first line-start level-2 heading (`== Heading ==` at column zero).
    Everything before that heading is the lede candidate. If no level-2
    heading exists, the entire cleaned source is the lede.
-4. Extract `[[Category:...]]` links from the full original source (after
-   comment removal), not just the lede. Categories normally live at the
-   bottom of the article.
+3. Extract `[[Category:...]]` links from the full original source, not just the
+   lede. Categories normally live at the bottom of the article.
 
 Splitting before stripping infoboxes is unsafe: infobox bodies and inline
 tables can contain `==` patterns that look like headings.
+
+`ledecopy.py` does not need to remove HTML comments as a separate cleanup step.
+Comments that are outside the copied lede are naturally excluded by the lede
+split. Comments inside the retained lede may remain for manual review.
 
 ## References
 
@@ -185,12 +186,12 @@ mwsync.py push --new New_York -m "Import lede from [[wikipedia:New York]]"
 ### Code Reuse from mwsync.py
 
 `ledecopy.py` should reuse helpers from `mwsync.py` rather than reimplement
-them. At minimum: `load_config` and `save_config` for `mwsync.yaml`
-round-tripping, `_parse_article_name` for deriving the article key/title/local
-filename consistently with `mwsync.py add`, `_atomic_write` for both the local
-`.mw` draft and `mwsync.yaml`, and `minimal_config` for bootstrapping a
-missing `mwsync.yaml`. Importing from `mwsync.py` is acceptable; the two
-scripts are sister tools that share state.
+them. Shared helpers should include `load_config` and `save_config` for
+`mwsync.yaml` round-tripping, `_parse_article_name` for deriving the article
+key/title/local filename consistently with `mwsync.py add`, `_atomic_write` for
+both the local `.mw` draft and `mwsync.yaml`, and `minimal_config` for
+bootstrapping a missing `mwsync.yaml`. Importing from `mwsync.py` is acceptable;
+the two scripts are sister tools that share state.
 
 ### HTTP
 
@@ -208,7 +209,7 @@ A successful run should:
 - Report whether categories and references were included.
 - Print the recommended `mwsync.py push --new` command.
 
-Minimum smoke tests should cover:
+Smoke tests should cover:
 
 - A normal page with a simple lede.
 - A page with `<ref>` tags.
@@ -216,3 +217,25 @@ Minimum smoke tests should cover:
 - An existing local file (must fail).
 - An article key already registered in `mwsync.yaml` (must fail).
 - An existing Electowiki target page (must fail).
+
+## Future Directions
+
+Future work may add:
+
+- `--fromwiki` and `--towiki` CLI options, or equivalent config-driven wiki
+  selection.
+- URL input in addition to page-title input.
+- Target title/key/local filename overrides for cases where the Electowiki page
+  name should differ from the enwiki page name.
+- `--force` or another explicit override flow for advanced users who knowingly
+  want to overwrite a local draft or prepare changes for an existing Electowiki
+  page.
+- Category mapping between enwiki and Electowiki categories.
+- Filtering for hidden, maintenance, tracking, stub, and administrative
+  categories.
+- Better reference handling, including named references whose definitions are
+  outside the lede.
+- More sophisticated template handling, possibly using a real wikitext parser
+  instead of a small top-of-page template stripper.
+- Optional cleanup of comments and other invisible wikitext when it is clearly
+  safe.
