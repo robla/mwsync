@@ -749,7 +749,8 @@ def main() -> None:
     print()
     print("Next:")
     print(f"  mwsync.py push --new {key} "
-          f"-m \"Import lede from [[wikipedia:{title}]]\"")
+          f"-m \"Import lede from [[wikipedia:{title}]] "
+          f"(oldid={page['revid']})\"")
 
 
 if __name__ == "__main__":
