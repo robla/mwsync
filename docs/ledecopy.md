@@ -133,14 +133,17 @@ If `_cache/categories/` exists, `ledecopy.py` should use it as an optional
 Electowiki category index. That cache is target-wiki state, not human mapping
 state, and may eventually be maintained by `catmgr.py`.
 
-For each normalized enwiki category:
+For each normalized enwiki category not already resolved by `catmap.yaml`:
 
-- If the same category exists as an Electowiki category page, keep it by default.
-- If the same category is used on Electowiki but has no category page, keep it
-  only after warning that it is used but undocumented.
-- If the category is absent from the cache, treat it as unknown.
-- If the cache is missing, continue without failing and report that
-  `catmgr.py fetch` would enable better category review.
+- If the same category exists as an Electowiki category page, keep it without
+  prompting and do not write a `catmap.yaml` entry — the cache hit serves as
+  an implicit keep.
+- If the same category is used on Electowiki but has no category page, prompt
+  the user with that fact surfaced. Do not silently keep undocumented
+  categories.
+- If the category is absent from the cache, prompt the user.
+- If the cache is missing, prompt the user as in the absent case and report
+  once per run that `catmgr.py fetch` would enable better suggestions.
 
 Hidden categories should be cached and flagged by future cache tooling. When
 that flag is available, hidden/tracking categories should default toward being
@@ -164,14 +167,23 @@ mappings:
 
 Meaning:
 
-- String value: map the enwiki category to this Electowiki category.
-- `null`: drop the enwiki category.
-- Missing key plus same-name Electowiki category exists: keep as-is.
-- Missing key plus unknown category: ask the user or drop-and-report, depending
-  on mode.
+- String value: rename — emit `[[Category:<value>]]` instead of the source.
+- `null`: drop — do not emit the category.
+- Value equal to key (explicit keep): emit unchanged. Stored so the prompt
+  does not recur on later imports.
+- Missing key, same-name Electowiki category exists in cache: implicit keep —
+  emit unchanged, no `catmap.yaml` entry written.
+- Missing key, unknown to cache (or cache missing): prompt the user (TTY) or
+  drop-and-report (non-interactive).
 
-Avoid writing explicit keep entries for same-name categories that already exist
-on Electowiki. The cache can handle that implicit keep case.
+Implicit keep (cache hit) does not need a `catmap.yaml` entry — the cache
+already answers "this name is fine on Electowiki". Write an explicit-keep
+entry only when the user chose `keep and save` for a category the cache could
+not confirm. Without the recorded decision, the prompt would recur on every
+subsequent import.
+
+If `catmap.yaml` does not yet exist, treat it as an empty mappings file and
+create it on the first recorded decision.
 
 ### Interactive Category Decisions
 
@@ -181,7 +193,7 @@ when running on a terminal:
 
 ```text
 Category not known on Electowiki: California gubernatorial elections
-[m] map and save  [d] drop and save  [k] keep once  [s] skip once
+[m] map and save  [d] drop and save  [K] keep and save  [k] keep once  [s] skip once
 ```
 
 Interactive actions:
@@ -189,12 +201,21 @@ Interactive actions:
 - `map and save`: ask for the Electowiki category name and write a string
   mapping to `catmap.yaml`.
 - `drop and save`: write `null` to `catmap.yaml`.
+- `keep and save`: write an explicit-keep entry (key equal to value) to
+  `catmap.yaml` so this category is not prompted on later imports. Use this
+  when the cache cannot confirm the category but the user knows the name is
+  correct.
 - `keep once`: emit the category for this draft but do not write a mapping.
 - `skip once`: omit the category for this draft but do not write a mapping.
 
-If stdin is not interactive, use drop-and-report for unknown categories. The run
-summary should list every category that was kept, mapped, dropped, skipped, or
-left for review.
+Recorded decisions (`map`, `drop`, `keep` with save) should be written to
+`catmap.yaml` immediately as they are made, not batched until end-of-run, so
+that an interrupted prompt session preserves the decisions already entered.
+
+Detect interactivity with `sys.stdin.isatty()`. If stdin is not interactive,
+do not prompt; use drop-and-report for unknown categories. The run summary
+should list every category and the action that was taken (kept, mapped,
+dropped, skipped, or review-needed).
 
 ## Attribution
 
@@ -281,14 +302,29 @@ Set a User-Agent header on every API request, matching the convention in
 `mwsync.py` (`USER_AGENT`). Wikimedia expects identifiable user agents and
 may rate-limit or block anonymous unidentified clients.
 
+### catmap.yaml I/O
+
+Use the same atomic-write pattern that `mwsync.py` uses for `mwsync.yaml`
+(temp file in the target directory, then `os.replace()`). Write `catmap.yaml`
+after each recorded category decision rather than once at the end of the run,
+so that decisions persist if the user interrupts a long prompt session.
+
+Reuse `mwsync.py` config helpers where the shape allows, or write a small
+mirror that takes `mappings: {…}` round-tripping through PyYAML with
+`sort_keys=False` (or sorted explicitly by normalized key) and
+`default_flow_style=False`, matching the readability of `mwsync.yaml`.
+
 ## Success Criteria
 
 A successful run should:
 
 - Write the local `.mw` draft.
 - Create or extend `mwsync.yaml`.
+- Create or extend `catmap.yaml` if any recorded category decisions were made.
 - Report the enwiki title and copied revid.
-- Report whether categories and references were included.
+- Report category outcomes (kept / mapped / dropped / skipped / review-needed)
+  and the count of new `catmap.yaml` entries written.
+- Report whether references were copied.
 - Print the recommended `mwsync.py push --new` command.
 
 Smoke tests should cover:
@@ -296,6 +332,13 @@ Smoke tests should cover:
 - A normal page with a simple lede.
 - A page with `<ref>` tags.
 - A page with categories.
+- A page with categories where some are pre-mapped in `catmap.yaml` and some
+  are not (interactive run prompts only for the unmapped ones; pre-mapped
+  decisions apply silently).
+- A first run in a directory where `catmap.yaml` does not yet exist (created
+  on the first recorded decision).
+- A non-TTY run with unknown categories (drops them, lists in summary, does
+  not prompt).
 - An existing local file (must fail).
 - An article key already registered in `mwsync.yaml` (must fail).
 - An existing Electowiki target page (must fail).
