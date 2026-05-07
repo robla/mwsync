@@ -108,12 +108,93 @@ and may need review.
 
 ## Categories
 
-Copy categories found in the fetched enwiki source using literal
-`[[Category:...]]` links. Hidden, maintenance, tracking, and administrative
-categories do not need special handling.
+Extract categories found in the fetched enwiki source using literal
+`[[Category:...]]` links.
 
 Do not copy interlanguage links such as `[[fr:...]]` or `[[de:...]]`. Drop
 them silently.
+
+### Category Normalization
+
+Normalize category names before lookup or prompting:
+
+- Strip the `Category:` namespace prefix if present.
+- Treat underscores and spaces equivalently.
+- Trim surrounding whitespace.
+- Apply MediaWiki-style first-letter capitalization.
+
+Use the normalized form for `catmap.yaml` keys and for checking the local
+Electowiki category cache. This is important because otherwise repeated imports
+may miss mappings due to trivial title spelling differences.
+
+### Category Cache
+
+If `_cache/categories/` exists, `ledecopy.py` should use it as an optional
+Electowiki category index. That cache is target-wiki state, not human mapping
+state, and may eventually be maintained by `catmgr.py`.
+
+For each normalized enwiki category:
+
+- If the same category exists as an Electowiki category page, keep it by default.
+- If the same category is used on Electowiki but has no category page, keep it
+  only after warning that it is used but undocumented.
+- If the category is absent from the cache, treat it as unknown.
+- If the cache is missing, continue without failing and report that
+  `catmgr.py fetch` would enable better category review.
+
+Hidden categories should be cached and flagged by future cache tooling. When
+that flag is available, hidden/tracking categories should default toward being
+dropped rather than kept.
+
+### catmap.yaml
+
+Durable human category decisions should live in:
+
+```text
+catmap.yaml
+```
+
+Use a flat mapping for the common cases:
+
+```yaml
+mappings:
+  "California gubernatorial elections": "California"
+  "Eric Swalwell": null
+```
+
+Meaning:
+
+- String value: map the enwiki category to this Electowiki category.
+- `null`: drop the enwiki category.
+- Missing key plus same-name Electowiki category exists: keep as-is.
+- Missing key plus unknown category: ask the user or drop-and-report, depending
+  on mode.
+
+Avoid writing explicit keep entries for same-name categories that already exist
+on Electowiki. The cache can handle that implicit keep case.
+
+### Interactive Category Decisions
+
+When `ledecopy.py` encounters a category that is not resolved by `catmap.yaml`
+or by an implicit same-name cache match, it should use a crude interactive prompt
+when running on a terminal:
+
+```text
+Category not known on Electowiki: California gubernatorial elections
+[m] map and save  [d] drop and save  [k] keep once  [s] skip once
+```
+
+Interactive actions:
+
+- `map and save`: ask for the Electowiki category name and write a string
+  mapping to `catmap.yaml`.
+- `drop and save`: write `null` to `catmap.yaml`.
+- `keep once`: emit the category for this draft but do not write a mapping.
+- `skip once`: omit the category for this draft but do not write a mapping.
+
+If stdin is not interactive, use drop-and-report for unknown categories. The run
+summary should list every category that was kept, mapped, dropped, skipped, or
+left for review.
 
 ## Attribution
 
@@ -232,8 +313,11 @@ Future work may add:
 - `--force` or another explicit override flow for advanced users who knowingly
   want to overwrite a local draft or prepare changes for an existing Electowiki
   page.
-- Category mapping between enwiki and Electowiki categories.
-- Filtering for hidden, maintenance, tracking, stub, and administrative
+- A dedicated `catmgr.py` or `catmap.py` command for auditing and editing
+  `catmap.yaml`.
+- Batch review of categories referenced by local `.mw` drafts but not yet
+  represented in `catmap.yaml`.
+- Better filtering for hidden, maintenance, tracking, stub, and administrative
   categories.
 - Better reference handling, including named references whose definitions are
   outside the lede.
