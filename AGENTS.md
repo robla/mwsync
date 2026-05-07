@@ -5,6 +5,7 @@ This repository is a small Python CLI toolkit for Electowiki/MediaWiki workflows
 
 - `mwsync.py`: main sync CLI for local `.mw` working files and MediaWiki pages.
 - `ledecopy.py`: creates an mwsync-compatible Electowiki draft from an enwiki lede.
+- `catmgr.py`: fetches and inspects the target wiki category cache.
 - `docs/`: design notes and specs, including `architecture-mwsync.md`,
   `roadmap.md`, `legacy.md`, `ledecopy.md`, and `catmgr.md`.
 - `cruft/`: old exploratory documents that are not current mainline guidance.
@@ -29,6 +30,7 @@ Use Python 3 directly; there is no build system.
 - `python3 -m py_compile mwsync.py ledecopy.py`: syntax check both scripts.
 - `python3 mwsync.py --help`: show mwsync subcommands.
 - `python3 ledecopy.py --help`: show ledecopy usage.
+- `python3 catmgr.py --help`: show category cache commands.
 - `python3 mwsync.py init`: create a minimal `mwsync.yaml`.
 - `python3 mwsync.py add Maine`: register an article by page name.
 - `python3 mwsync.py checkout Maine`: register, fetch, and merge into `Maine.mw`.
@@ -37,6 +39,7 @@ Use Python 3 directly; there is no build system.
 - `python3 mwsync.py diff Maine@upstream^ Maine@upstream`: compare cached revisions.
 - `python3 mwsync.py fsck`: check cache refs, history, and revision files.
 - `python3 ledecopy.py "New York"`: create a new Electowiki draft from the enwiki lede.
+- `python3 catmgr.py fetch`: refresh `_cache/categories/` from the configured target wiki.
 
 `fetch` is intentionally git-like: it does not rewrite the local working file.
 Use `merge` or `checkout` when the local `.mw` should change.

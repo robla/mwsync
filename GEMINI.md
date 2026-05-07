@@ -7,24 +7,29 @@
 - **Core Technology:** Python 3 (standard library + `PyYAML`).
 - **Tools:**
     - `mwsync.py`: Main tool for syncing articles between local and MediaWiki.
-    - `ledecopy.py`: Helper tool for importing English Wikipedia ledes into Electowiki drafts.
+    - `ledecopy.py`: Helper tool for importing English Wikipedia ledes into Electowiki drafts. Also handles interactive category mapping (`catmap.yaml`).
+    - `catmgr.py`: (Proposed) Helper for caching and inspecting the target wiki's category system.
 - **Architecture:** 
     - Single-file CLI scripts that share logic (ledecopy imports from mwsync).
     - Configuration stored in `mwsync.yaml`.
     - Per-article revision cache in `_cache/<Article_Key>/`.
+    - Category cache in `_cache/categories/` (managed by `catmgr.py`).
+    - Durable category mappings in `catmap.yaml` (managed by `ledecopy.py`).
     - Uses MediaWiki Action API (`w/api.php`).
 - **Key Concepts:**
     - **Three Identities:** Article Key (canonical), Page Title (API), and Local Filename (usually `<Article_Key>.mw`).
     - **Cache Layout:** `history.jsonl` manifest, revid-named `.mw` bodies and `.json` sidecars, and state pointers in `refs/` (`upstream`, `base`, `last-pushed`).
-    - **Atomic Operations:** Uses `_atomic_write()` (temp file + `os.replace`) for all config and cache updates.
+    - **Category Management:** `catmgr.py` provides the refreshable cache (`_cache/categories/`); `ledecopy.py` uses this cache to prompt for mapping decisions stored in `catmap.yaml`.
 
 ## Directory Structure
 
 - `mwsync.py`, `ledecopy.py`: Core CLI tools.
+- `catmgr.py`: (Proposed) Category management tool.
+- `catmap.yaml`: Per-category mapping decisions (rename, drop, keep).
 - `docs/`: Documentation including architecture specs, roadmap, and tool-specific docs.
 - `cruft/`: Legacy or experimental notes (e.g., `roadmap-git.md`).
 - `feb2026`: Symlink to a date-specific workspace/folder.
-- `_cache/`: Local revision cache for synced articles (created at runtime).
+- `_cache/`: Local revision and category cache (created at runtime).
 
 ## Building and Running
 
