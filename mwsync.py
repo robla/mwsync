@@ -835,6 +835,44 @@ def _run_merge_file(local: str, base: str, upstream: str) -> tuple[int, str, str
     return res.returncode, res.stdout, res.stderr
 
 
+def _update_upstream_config(config: dict, key: str, result: dict) -> None:
+    wiki = config.setdefault("wiki", {})
+    articles = wiki.setdefault("articles", {})
+    art = articles.setdefault(key, {})
+    art["upstream_revid"] = result["revid"]
+    art["upstream_timestamp"] = result["timestamp"]
+    art["upstream_editor"] = result["user"]
+    art["upstream_summary"] = result["comment"]
+    art["upstream_sha1"] = result["sha1"]
+
+
+def _update_upstream_config_from_cache(config: dict, key: str, revid: int) -> bool:
+    meta_path = _revision_meta_path(key, revid)
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception as e:
+        print(f"Error reading cached metadata {meta_path}: {e}", file=sys.stderr)
+        return False
+    _update_upstream_config(config, key, {
+        "revid": int(meta.get("revid") or revid),
+        "timestamp": meta.get("timestamp", ""),
+        "user": meta.get("user", ""),
+        "comment": meta.get("comment", ""),
+        "sha1": meta.get("sha1", ""),
+    })
+    return True
+
+
+def _write_base_and_upstream_config(config: dict, config_path: str, key: str,
+                                    revid: int) -> bool:
+    if not _write_ref(key, "base", revid):
+        return False
+    if not _update_upstream_config_from_cache(config, key, revid):
+        return False
+    return save_config(config, config_path)
+
+
 # ---------------------------------------------------------------------------
 # Subcommand runners
 # ---------------------------------------------------------------------------
@@ -1083,11 +1121,7 @@ def run_push(args, config: dict, config_path: str) -> None:
         if not _write_ref(key, "base", int(result["revid"])):
             sys.exit(1)
         _atomic_write(local, result["wikitext"])
-        art["upstream_revid"] = result["revid"]
-        art["upstream_timestamp"] = result["timestamp"]
-        art["upstream_editor"] = result["user"]
-        art["upstream_summary"] = result["comment"]
-        art["upstream_sha1"] = result["sha1"]
+        _update_upstream_config(config, key, result)
         save_config(config, config_path)
         print(f"# Synced upstream_revid={result['revid']}", file=sys.stderr)
     except Exception as e:
@@ -1159,17 +1193,20 @@ def run_merge(args, config: dict, config_path: str) -> None:
     if not os.path.exists(local):
         if not _atomic_write(local, upstream_text):
             sys.exit(1)
-        if not _write_ref(key, "base", upstream_revid):
+        if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
             sys.exit(1)
         print(f"# Checked out {local} at upstream revid {upstream_revid}", file=sys.stderr)
         print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
+        print(f"# Updated upstream_revid={upstream_revid} in {config_path}", file=sys.stderr)
         return
 
     if base_revid is None:
         if _file_content_matches(local, upstream_text):
-            if not _write_ref(key, "base", upstream_revid):
+            if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
                 sys.exit(1)
             print(f"# Adopted existing {local} as refs/base {upstream_revid}", file=sys.stderr)
+            print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
+                  file=sys.stderr)
             return
         print(f"Error: no base revision cached for '{key}'.", file=sys.stderr)
         print(f"Run 'mwsync.py fetch {key}' before making local edits.", file=sys.stderr)
@@ -1183,28 +1220,31 @@ def run_merge(args, config: dict, config_path: str) -> None:
         return
 
     if _file_content_matches(local, upstream_text):
-        if not _write_ref(key, "base", upstream_revid):
+        if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
             sys.exit(1)
         print(f"# Local file already matches upstream revid {upstream_revid}", file=sys.stderr)
         print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
+        print(f"# Updated upstream_revid={upstream_revid} in {config_path}", file=sys.stderr)
         return
 
     if _file_content_matches(local, base_text):
         if not _atomic_write(local, upstream_text):
             sys.exit(1)
-        if not _write_ref(key, "base", upstream_revid):
+        if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
             sys.exit(1)
         print(f"# Fast-forwarded {local} from {base_revid} to {upstream_revid}", file=sys.stderr)
+        print(f"# Updated upstream_revid={upstream_revid} in {config_path}", file=sys.stderr)
         return
 
     code, merged_text, merge_stderr = _run_merge_file(local, base_path, upstream_path)
     if code == 0:
         if not _atomic_write(local, merged_text):
             sys.exit(1)
-        if not _write_ref(key, "base", upstream_revid):
+        if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
             sys.exit(1)
         print(f"# Merged upstream revid {upstream_revid} into {local}", file=sys.stderr)
         print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
+        print(f"# Updated upstream_revid={upstream_revid} in {config_path}", file=sys.stderr)
         return
 
     if code == 1:

@@ -107,6 +107,13 @@ def _strip_top_templates(source: str) -> str:
             cursor += 1
         if cursor >= n:
             break
+        if source.startswith("<!--", cursor):
+            comment_end = source.find("-->", cursor + 4)
+            if comment_end < 0:
+                cursor = ws_start
+                break
+            cursor = comment_end + 3
+            continue
         if cursor + 1 < n and source[cursor] == "{" and source[cursor + 1] == "{":
             end = _find_matching_brace_end(source, cursor)
             if end < 0:
