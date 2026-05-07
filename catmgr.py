@@ -41,7 +41,13 @@ def _api_get(api_base: str, params: dict) -> dict:
     url = api_base + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": mwsync.USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        data = json.loads(resp.read().decode("utf-8"))
+    if "error" in data:
+        error = data["error"]
+        code = error.get("code", "unknown")
+        info = error.get("info", "unknown API error")
+        raise ValueError(f"MediaWiki API error ({code}): {info}")
+    return data
 
 
 def _fetch_allcategories(api_base: str) -> list[dict]:
@@ -75,16 +81,18 @@ def _fetch_allcategories(api_base: str) -> list[dict]:
     return sorted(rows, key=lambda item: item["name"].lower())
 
 
-def _fetch_category_pages(api_base: str) -> list[dict]:
+def _fetch_category_page_batch(api_base: str, filterredir: str) -> list[dict]:
     rows = []
     continuation = {}
     while True:
         params = {
             "action": "query",
             "format": "json",
+            "formatversion": "2",
             "list": "allpages",
             "apnamespace": "14",
             "aplimit": "max",
+            "apfilterredir": filterredir,
         }
         params.update(continuation)
         data = _api_get(api_base, params)
@@ -97,12 +105,63 @@ def _fetch_category_pages(api_base: str) -> list[dict]:
                 "name": name,
                 "title": title,
                 "pageid": int(row.get("pageid") or 0),
-                "missing": "missing" in row,
             })
         continuation = data.get("continue")
         if not continuation:
             break
-    return sorted(rows, key=lambda item: item["name"].lower())
+    return rows
+
+
+def _batched(items: list[dict], size: int) -> list[list[dict]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _resolve_redirect_targets(api_base: str, redirect_rows: list[dict]) -> dict[str, str]:
+    targets = {}
+    for batch in _batched(redirect_rows, 50):
+        params = {
+            "action": "query",
+            "format": "json",
+            "formatversion": "2",
+            "prop": "info",
+            "redirects": "1",
+            "titles": "|".join(row["title"] for row in batch),
+        }
+        data = _api_get(api_base, params)
+        for row in data.get("query", {}).get("redirects", []):
+            source_name = normalize_category_name(row.get("from", ""))
+            target_name = normalize_category_name(row.get("to", ""))
+            if source_name and target_name:
+                targets[source_name] = target_name
+    return targets
+
+
+def _fetch_category_pages(api_base: str) -> list[dict]:
+    rows_by_name = {}
+
+    for row in _fetch_category_page_batch(api_base, "nonredirects"):
+        rows_by_name[row["name"]] = {
+            "name": row["name"],
+            "title": row["title"],
+            "pageid": row["pageid"],
+            "redirect": False,
+        }
+
+    redirect_rows = _fetch_category_page_batch(api_base, "redirects")
+    redirect_targets = _resolve_redirect_targets(api_base, redirect_rows)
+    for row in redirect_rows:
+        item = {
+            "name": row["name"],
+            "title": row["title"],
+            "pageid": row["pageid"],
+            "redirect": True,
+        }
+        target = redirect_targets.get(row["name"])
+        if target:
+            item["redirect_target"] = target
+        rows_by_name[row["name"]] = item
+
+    return sorted(rows_by_name.values(), key=lambda item: item["name"].lower())
 
 
 def _write_json(path: str, data: dict) -> None:
@@ -163,15 +222,21 @@ def _load_cache() -> tuple[dict, list[dict], list[dict]]:
 def run_fetch(args, config: dict) -> None:
     api_base = mwsync.get_api_base(config)
     print(f"# Fetching category table from {api_base}...", file=sys.stderr)
-    allcategories = _fetch_allcategories(api_base)
-    print(f"# Fetching category pages from {api_base}...", file=sys.stderr)
-    category_pages = _fetch_category_pages(api_base)
+    try:
+        allcategories = _fetch_allcategories(api_base)
+        print(f"# Fetching category pages from {api_base}...", file=sys.stderr)
+        category_pages = _fetch_category_pages(api_base)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     manifest = {
         "api_base": api_base,
         "fetched_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "allcategories_count": len(allcategories),
         "category_pages_count": len(category_pages),
+        "category_redirects_count": sum(1 for row in category_pages
+                                        if row.get("redirect")),
     }
 
     _write_jsonl(ALLCATEGORIES_PATH, allcategories)
@@ -189,6 +254,7 @@ def run_status(args, config: dict) -> None:
     print(f"fetched_at: {manifest.get('fetched_at', '')}")
     print(f"allcategories_count: {manifest.get('allcategories_count', 0)}")
     print(f"category_pages_count: {manifest.get('category_pages_count', 0)}")
+    print(f"category_redirects_count: {manifest.get('category_redirects_count', 0)}")
 
 
 def run_list(args, config: dict) -> None:
@@ -219,7 +285,11 @@ def run_check(args, config: dict) -> None:
     page_row = pages.get(name)
 
     print(f"Category:{name}")
-    print(f"  category page: {'yes' if page_row else 'no'}")
+    if page_row and page_row.get("redirect"):
+        target = page_row.get("redirect_target", "")
+        print(f"  category page: yes (redirect to \"{target}\")")
+    else:
+        print(f"  category page: {'yes' if page_row else 'no'}")
     print(f"  used category: {'yes' if used_row else 'no'}")
     if used_row:
         print(
