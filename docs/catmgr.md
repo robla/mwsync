@@ -3,14 +3,25 @@
 `catmgr.py` is a proposed companion tool for caching and inspecting the category
 system for the MediaWiki instance managed by the current `mwsync.yaml`.
 
-The immediate goal is not category mapping. The immediate goal is to keep a
-local, reviewable cache of Electowiki category names so tools such as
-`ledecopy.py` can tell whether an imported enwiki category already exists, is in
-use, or needs human review.
+The category subsystem in a working directory has three pieces:
+
+- `_cache/categories/` — refreshable cache of category names and usage on the
+  target wiki. Owned by `catmgr.py`.
+- `catmap.yaml` — durable per-category decisions (rename, drop, explicit keep)
+  for this working directory. Edited by `ledecopy.py` during import and read
+  back on subsequent runs so the same prompt does not recur.
+- `ledecopy.py` — the primary editor of `catmap.yaml`. When an imported
+  article has an enwiki category not yet in `catmap.yaml`, `ledecopy.py`
+  prompts the user with whatever context the cache can provide and saves
+  the answer.
+
+`catmgr.py`'s own scope is the cache piece. The `catmap.yaml` shape is also
+defined in this document because the cache and the map are designed together
+and `ledecopy.py` uses both.
 
 Each mwsync working directory corresponds to one target wiki because
-`wiki.api_base` is global for the directory. Category cache state should
-therefore live under that directory's `_cache/`.
+`wiki.api_base` is global for the directory. Cache and mapping state both live
+under that directory.
 
 ## Practicality
 
@@ -152,21 +163,34 @@ Category cache not found. Run: catmgr.py fetch
 
 ## Integration With ledecopy.py
 
-`ledecopy.py` may use `_cache/categories/` if it exists.
+`ledecopy.py` is the primary consumer and editor of category state. During an
+import, it walks the categories from the enwiki source and consults two files
+in the working directory:
 
-For each enwiki category copied into a draft:
+1. `catmap.yaml` (defined below) — durable mapping decisions.
+2. `_cache/categories/` — refreshable Electowiki category state.
 
-- If the category exists as an Electowiki category page, treat it as recognized.
-- If the category is used on Electowiki but has no category page, warn that it is
-  used but undocumented.
-- If the category is absent from both lists, report it as review-needed.
+For each enwiki category encountered:
 
-`ledecopy.py` should not require the category cache to exist. If the cache is
-missing, it can fall back to its current behavior and tell the user:
+- If `catmap.yaml` has a recorded decision (rename, drop, or explicit keep),
+  apply it without prompting.
+- Otherwise, prompt the user. The prompt should surface, at minimum, the
+  source category name, what the cache says about it (exists as a category
+  page, used but no page, absent, or cache missing), and the available
+  actions. Record the user's answer in `catmap.yaml` so the same prompt
+  does not recur on later imports.
+
+If `_cache/categories/` is missing, prompts still work but lose the
+"exists on Electowiki?" hint. Tell the user once per run:
 
 ```text
-Category cache not found; run catmgr.py fetch for better category review.
+Category cache not found; run catmgr.py fetch for better suggestions.
 ```
+
+If stdin is not a TTY, `ledecopy.py` must not prompt. It should fall back to
+a defined batch policy (drop unknown categories and list them in the run
+summary as review-needed) and exit successfully. Re-running interactively
+later picks up the unmapped names and prompts for them.
 
 ## Staleness
 
@@ -174,29 +198,44 @@ The cache should include `fetched_at`. `status` should report cache age. Later,
 commands may warn when the cache is older than a configurable threshold, but
 stale cache should not block basic local work.
 
-## Relationship To Category Mapping
+## Mapping File (catmap.yaml)
 
-Category mapping is intentionally out of scope for the first `catmgr.py` design.
-The category cache answers:
+`catmap.yaml` lives in the working directory next to `mwsync.yaml`. It records
+every per-category decision that has been made for this target wiki. The file
+is intentionally simple so it can be reviewed as a diff and edited by hand.
 
-```text
-What category names exist or are used on this target wiki?
+Shape:
+
+```yaml
+mappings:
+  "California gubernatorial elections": "California"
+  "Voting theory": "Voting theory"
+  "Eric Swalwell": null
 ```
 
-A future mapping layer can answer:
+Value semantics:
 
-```text
-What should an enwiki category become on Electowiki?
-```
+- Scalar string — rename: emit `[[Category:<value>]]` in place of the source
+  category.
+- `null` — drop: do not emit the category at all.
+- Same string as the key — explicit keep: emit unchanged. Stored even though
+  it looks redundant, so the user is not re-prompted for the same name on
+  every import.
 
-The likely future mapping file is:
+Keys are normalized the same way MediaWiki normalizes category titles:
+underscores replaced with spaces, leading and trailing whitespace trimmed,
+first letter capitalized, no `Category:` prefix. `ledecopy.py` and
+`catmgr.py check` must apply the same normalization before lookup, otherwise
+catmap entries can silently miss matching categories.
 
-```text
-catmap.yaml
-```
+Scope of ownership:
 
-That file should remain separate from `_cache/categories/` because mappings are
-human decisions, while `_cache/categories/` is refreshable wiki state.
+- `ledecopy.py` reads and writes `catmap.yaml` during import.
+- `catmgr.py` does not modify `catmap.yaml`. It may read the file in future
+  audit/review commands, but editing stays with `ledecopy.py` until a
+  dedicated mapping CLI is designed.
+- The file is separate from `_cache/categories/` because mapping decisions
+  are durable human input, while the cache is refreshable wiki state.
 
 ## Open Questions
 
@@ -206,20 +245,31 @@ human decisions, while `_cache/categories/` is refreshable wiki state.
   should redirects be resolved?
 - Should hidden categories be listed by default or hidden behind an option?
 - Should `catmgr.py check` normalize underscores, spaces, and `Category:`
-  prefixes exactly like MediaWiki title normalization?
+  prefixes exactly like MediaWiki title normalization? (`catmap.yaml` lookups
+  in `ledecopy.py` need the same normalization, so settling this affects both
+  tools.)
 - Should category cache files be committed, or should they be treated like other
   `_cache/` runtime state?
+- Should the `ledecopy.py` prompt offer a "skip / decide later" action that
+  applies the category once but does not write to `catmap.yaml`, so the user
+  can defer a hard call without committing to a recorded decision?
+- Should `ledecopy.py` allow re-prompting for an already-decided category
+  (e.g. `--re-review`), or is editing `catmap.yaml` by hand the intended way
+  to revise past decisions?
 
 ## Future Directions
 
-- `catmap.yaml` for enwiki-to-Electowiki category mapping.
-- Actions such as `keep`, `map`, `drop`, and `review`.
-- `catmgr.py set "Enwiki category" --map "Electowiki category"`.
-- Applying category mappings to local `.mw` drafts.
-- Auditing mappings whose target Electowiki category does not exist.
-- Interactive review mode for unmapped categories.
-- Batch audit of all local `.mw` files.
-- Detection of obvious Wikipedia maintenance/tracking categories.
+- A dedicated mapping CLI under `catmgr.py` (e.g. `catmgr.py map set`,
+  `catmgr.py map list`, `catmgr.py map audit`) so editing `catmap.yaml` is
+  not exclusive to `ledecopy.py`.
+- Retroactive application of `catmap.yaml` updates to existing local `.mw`
+  drafts.
+- Auditing mappings whose target Electowiki category does not exist in the
+  cache.
+- Batch audit of all local `.mw` files for unmapped categories without
+  running an import.
+- Detection of obvious Wikipedia maintenance/tracking categories so they can
+  be dropped without prompting.
 - Electowiki category creation helpers that prepare local category pages for
   review before pushing.
 - Optional use of Wikidata or interwiki links to suggest category mappings,
