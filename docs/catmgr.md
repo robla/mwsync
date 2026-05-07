@@ -71,7 +71,8 @@ _cache/categories/category-pages.jsonl
   "api_base": "https://electowiki.org/w/api.php",
   "fetched_at": "2026-05-06T00:00:00Z",
   "allcategories_count": 812,
-  "category_pages_count": 640
+  "category_pages_count": 640,
+  "category_redirects_count": 47
 }
 ```
 
@@ -81,11 +82,16 @@ _cache/categories/category-pages.jsonl
 {"name":"Voting theory","size":74,"pages":61,"files":0,"subcats":13,"hidden":false}
 ```
 
-`category-pages.jsonl` stores category namespace pages:
+`category-pages.jsonl` stores one row per category-namespace page, with
+redirect status resolved during fetch:
 
 ```json
-{"name":"Voting theory","title":"Category:Voting theory","pageid":1234,"missing":false}
+{"name":"Voting theory","title":"Category:Voting theory","pageid":1234,"redirect":false}
+{"name":"Preferential voting methods","title":"Category:Preferential voting methods","pageid":2345,"redirect":true,"redirect_target":"Ranked voting methods"}
 ```
+
+`redirect_target` is the normalized name (no `Category:` prefix) of the
+target. It is omitted when `redirect` is false.
 
 The files should be deterministic and readable:
 
@@ -110,20 +116,32 @@ format=json
 
 Follow continuation until complete.
 
-For category pages:
+For category pages, enumerate namespace 14 and resolve redirects in the same
+query by combining `generator=allpages` with `prop=info` and `redirects=1`:
 
 ```text
 action=query
-list=allpages
-apnamespace=14
-aplimit=max
+generator=allpages
+gapnamespace=14
+gaplimit=max
+prop=info
+redirects=1
 format=json
+formatversion=2
 ```
+
+The response's `query.pages` lists canonical (non-redirect) titles after
+auto-resolution; `query.redirects` lists `{from, to}` pairs for any redirect
+category pages. Persist non-redirect rows with `redirect: false`. For each
+entry in `query.redirects`, persist a row with `redirect: true` and
+`redirect_target` set to the normalized target name.
 
 Follow continuation until complete.
 
 This two-list approach avoids conflating category pages with category-table
-entries.
+entries, and the redirect resolution lets `ledecopy.py` route emitted
+categories through redirects to their canonical targets without writing a
+redirected category into the local draft.
 
 ## Proposed Commands
 
@@ -155,6 +173,14 @@ Category:Voting theory
   members: 74 total, 61 pages, 13 subcategories, 0 files
 ```
 
+For a redirect category, `check` should also print the redirect target:
+
+```text
+Category:Preferential voting methods
+  category page: yes (redirect to "Ranked voting methods")
+  used category: no
+```
+
 If the cache is missing, commands other than `fetch` should fail with:
 
 ```text
@@ -179,6 +205,15 @@ For each enwiki category encountered:
   page, used but no page, absent, or cache missing), and the available
   actions. Record the user's answer in `catmap.yaml` so the same prompt
   does not recur on later imports.
+
+When a category about to be emitted is a redirect according to the cache —
+whether the source name itself, a `catmap.yaml` rename target, or a name the
+user typed in the rename prompt — `ledecopy.py` should substitute the
+redirect target before writing the draft, and print a one-line note such as
+`"Preferential voting methods" is a redirect on Electowiki to "Ranked voting
+methods"; using "Ranked voting methods".`. Redirect substitution is
+deterministic, so it does not require a confirmation prompt; the run summary
+should list how many categories were routed via redirect.
 
 If `_cache/categories/` is missing, prompts still work but lose the
 "exists on Electowiki?" hint. Tell the user once per run:
@@ -241,8 +276,6 @@ Scope of ownership:
 
 - Should `allcategories.jsonl` include empty categories, or should there be a
   separate `--nonempty` mode using `acmin=1`?
-- Should `category-pages.jsonl` include redirects in the category namespace, and
-  should redirects be resolved?
 - Should hidden categories be listed by default or hidden behind an option?
 - Should `catmgr.py check` normalize underscores, spaces, and `Category:`
   prefixes exactly like MediaWiki title normalization? (`catmap.yaml` lookups

@@ -135,15 +135,25 @@ state, and may eventually be maintained by `catmgr.py`.
 
 For each normalized enwiki category not already resolved by `catmap.yaml`:
 
-- If the same category exists as an Electowiki category page, keep it without
-  prompting and do not write a `catmap.yaml` entry — the cache hit serves as
-  an implicit keep.
+- If the cache marks the category as a redirect, do not prompt and do not
+  implicit-keep. Substitute the redirect target on emit and record the
+  substitution in the run summary. No `catmap.yaml` entry is written; the
+  redirect itself is the routing rule and is deterministic from the cache.
+- If the same category exists as a non-redirect Electowiki category page,
+  keep it without prompting and do not write a `catmap.yaml` entry — the
+  cache hit serves as an implicit keep.
 - If the same category is used on Electowiki but has no category page, prompt
   the user with that fact surfaced. Do not silently keep undocumented
   categories.
 - If the category is absent from the cache, prompt the user.
 - If the cache is missing, prompt the user as in the absent case and report
   once per run that `catmgr.py fetch` would enable better suggestions.
+
+Redirect substitution applies anywhere ledecopy is about to emit a
+`[[Category:X]]` link — including catmap rename targets and user-typed
+rename inputs in the interactive prompt — not only at the source-extraction
+step. The rule is: if `X` is a known redirect, emit its target instead and
+print a one-line note.
 
 Hidden categories should be cached and flagged by future cache tooling. When
 that flag is available, hidden/tracking categories should default toward being
@@ -176,6 +186,13 @@ Meaning:
 - Missing key, unknown to cache (or cache missing): prompt the user (TTY) or
   drop-and-report (non-interactive).
 
+String values should point to canonical (non-redirect) Electowiki category
+names. If a value points to a known redirect, ledecopy emits the redirect
+target instead but does not rewrite the `catmap.yaml` entry; the user may
+correct the entry by hand for cleaner state. Recorded values from the
+interactive prompt are pre-substituted to the canonical target so this
+mismatch does not happen for new entries.
+
 Implicit keep (cache hit) does not need a `catmap.yaml` entry — the cache
 already answers "this name is fine on Electowiki". Write an explicit-keep
 entry only when the user chose `keep and save` for a category the cache could
@@ -199,7 +216,10 @@ Category not known on Electowiki: California gubernatorial elections
 Interactive actions:
 
 - `map and save`: ask for the Electowiki category name and write a string
-  mapping to `catmap.yaml`.
+  mapping to `catmap.yaml`. Tab completion should draw from the cache and
+  from existing rename targets in `catmap.yaml`. If the typed name is a
+  known redirect, substitute the redirect target before saving and print a
+  one-line note.
 - `drop and save`: write `null` to `catmap.yaml`.
 - `keep and save`: write an explicit-keep entry (key equal to value) to
   `catmap.yaml` so this category is not prompted on later imports. Use this
@@ -339,6 +359,9 @@ Smoke tests should cover:
   on the first recorded decision).
 - A non-TTY run with unknown categories (drops them, lists in summary, does
   not prompt).
+- A page with a source category that is a redirect on Electowiki (emitted
+  as the redirect target with a one-line note; no `catmap.yaml` entry
+  written for the redirect itself).
 - An existing local file (must fail).
 - An article key already registered in `mwsync.yaml` (must fail).
 - An existing Electowiki target page (must fail).
