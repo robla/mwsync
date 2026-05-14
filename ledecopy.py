@@ -3,6 +3,7 @@
 
 Usage:
   ledecopy.py "New York"
+  ledecopy.py --merge "Ohio"
 
 The argument is an enwiki page title. ledecopy fetches the page from English
 Wikipedia, extracts the lede (the wikitext before the first level-2 heading),
@@ -13,6 +14,13 @@ entry in mwsync.yaml. The resulting draft is ready for `mwsync.py push --new`.
 ledecopy refuses to run if the local file exists, the article key is already
 registered in mwsync.yaml, the enwiki source is a redirect, or the target
 Electowiki page already exists. There is no override flag.
+
+`--merge`/`-m` splices a fresh enwiki lede into an existing clean local
+checkout. The local body above the trailing category/interwiki block is
+preserved verbatim; the new lede + attribution chunk is inserted between
+that body and the categories; resolved enwiki categories are unioned with
+the existing local categories. mwsync.yaml and _cache/ are left untouched
+so that `mwsync.py diff` sees the splice as a normal local edit.
 
 Categories from the enwiki source are resolved through `catmap.yaml` in the
 working directory. Known mappings apply silently; unknown categories prompt
@@ -59,6 +67,13 @@ LEVEL2_HEADING_RE = re.compile(r"^==(?!=)[^\n]*?(?<!=)==\s*$", re.MULTILINE)
 CATEGORY_RE = re.compile(r"\[\[\s*[Cc]ategory\s*:[^\]\n]+\]\]")
 REF_TAG_RE = re.compile(r"<ref(?:\s|>|/)", re.IGNORECASE)
 REDIRECT_RE = re.compile(r"\s*#REDIRECT\s*\[\[([^\]]+)\]\]", re.IGNORECASE)
+
+# Patterns that recognize a "tail block" line for --merge: blank lines,
+# [[Category:...]] at column zero, [[xx:...]] interlanguage links (2-3
+# lowercase letters before the colon), and single-line {{...}} templates.
+TAIL_CATEGORY_RE = re.compile(r"^\[\[\s*[Cc]ategory\s*:[^\]\n]+\]\]\s*$")
+TAIL_LANGCODE_RE = re.compile(r"^\[\[[a-z]{2,3}:[^\]\n]+\]\]\s*$")
+TAIL_TEMPLATE_RE = re.compile(r"^\{\{[^\n]*\}\}\s*$")
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +665,92 @@ def _electowiki_article_url(key: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Merge mode: tail-block split and category merge
+# ---------------------------------------------------------------------------
+
+def _is_tail_block_line(line: str) -> bool:
+    if not line.strip():
+        return True
+    if TAIL_CATEGORY_RE.match(line):
+        return True
+    if TAIL_LANGCODE_RE.match(line):
+        return True
+    if TAIL_TEMPLATE_RE.match(line):
+        return True
+    return False
+
+
+def _split_body_and_tail(text: str) -> tuple[list[str], list[str]]:
+    """Walk backward from EOF to find the trailing tail block.
+
+    Returns (body_lines, tail_lines) where both are line strings without
+    trailing newlines. Blank lines, [[Category:...]] lines, [[xx:...]]
+    interlanguage links, and single-line {{...}} trailing templates all count
+    as tail-block lines; the walk stops at the first non-matching line.
+    """
+    lines = text.splitlines()
+    tail_start = len(lines)
+    for i in range(len(lines) - 1, -1, -1):
+        if _is_tail_block_line(lines[i]):
+            tail_start = i
+        else:
+            break
+    return lines[:tail_start], lines[tail_start:]
+
+
+def _partition_tail(tail_lines: list[str]) -> tuple[
+        list[tuple[str, str | None]], list[str]]:
+    """Split tail-block lines into (existing_categories, non_category_lines).
+
+    Categories are returned as (normalized_name, sortkey) tuples in source
+    order. Blank lines in the tail are dropped. Non-category lines
+    (interlanguage links, trailing templates) are returned verbatim so they
+    can be re-emitted below the merged category block.
+    """
+    categories: list[tuple[str, str | None]] = []
+    non_cat: list[str] = []
+    for line in tail_lines:
+        if not line.strip():
+            continue
+        if TAIL_CATEGORY_RE.match(line):
+            for raw_name, sortkey in _extract_category_links(line):
+                normalized = catmgr.normalize_category_name(raw_name)
+                if normalized:
+                    categories.append((normalized, sortkey))
+        else:
+            non_cat.append(line)
+    return categories, non_cat
+
+
+def _merge_categories(
+        existing: list[tuple[str, str | None]],
+        resolved: list[str]) -> tuple[list[str], int]:
+    """Union existing local categories with resolved enwiki categories.
+
+    Returns (merged_links, new_from_enwiki_count). Existing categories come
+    first (preserving their original order and sortkeys); any resolved
+    enwiki categories not already present (by normalized name) are appended
+    after.
+    """
+    by_name: dict[str, str] = {}
+    for name, sortkey in existing:
+        if name not in by_name:
+            by_name[name] = _format_category(name, sortkey)
+
+    new_count = 0
+    for link in resolved:
+        inner = link[2:-2]
+        _, _, payload = inner.partition(":")
+        name_part = payload.split("|", 1)[0]
+        normalized = catmgr.normalize_category_name(name_part)
+        if normalized and normalized not in by_name:
+            by_name[normalized] = link
+            new_count += 1
+
+    return list(by_name.values()), new_count
+
+
+# ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
 
@@ -666,9 +767,21 @@ def main() -> None:
                      "mwsync-compatible Electowiki draft."),
     )
     ap.add_argument("title", help='enwiki page title (e.g. "New York")')
+    ap.add_argument(
+        "--merge", "-m", action="store_true",
+        help=("splice the lede into an existing clean local checkout "
+              "instead of creating a new draft"),
+    )
     args = ap.parse_args()
 
     config_path = mwsync.DEFAULT_CONFIG_PATH
+    if args.merge:
+        run_merge(args, config_path)
+    else:
+        run_default(args, config_path)
+
+
+def run_default(args, config_path: str) -> None:
     key, title, local_filename = mwsync._parse_article_name(args.title)
 
     if os.path.exists(local_filename):
@@ -750,6 +863,192 @@ def main() -> None:
     print("Next:")
     print(f"  mwsync.py push --new {key} "
           f"-m \"Import lede from [[wikipedia:{title}]] "
+          f"(oldid={page['revid']})\"")
+
+
+def run_merge(args, config_path: str) -> None:
+    derived_key, title, derived_local = mwsync._parse_article_name(args.title)
+
+    if not os.path.exists(config_path):
+        print(f"Error: --merge requires an existing {config_path}.",
+              file=sys.stderr)
+        sys.exit(1)
+    config = mwsync.load_config(config_path)
+    articles = config.get("wiki", {}).get("articles") or {}
+    if derived_key not in articles:
+        print(f"Error: article '{derived_key}' is not registered in "
+              f"{config_path}.", file=sys.stderr)
+        print("Check it out with mwsync.py first:", file=sys.stderr)
+        print(f"  mwsync.py checkout {_electowiki_article_url(derived_key)}",
+              file=sys.stderr)
+        sys.exit(1)
+
+    entry = articles[derived_key]
+    local = entry.get("local") if isinstance(entry, dict) else None
+    if not isinstance(local, str) or not local:
+        print(f"Error: {config_path} entry for '{derived_key}' has no "
+              "'local' path.", file=sys.stderr)
+        sys.exit(1)
+    if local != derived_local:
+        print("Error: --merge requires the configured local filename to "
+              "match the key derived from the enwiki title.",
+              file=sys.stderr)
+        print(f"  configured: {local}", file=sys.stderr)
+        print(f"  derived:    {derived_local}", file=sys.stderr)
+        sys.exit(1)
+    if not os.path.exists(local):
+        print(f"Error: local file '{local}' does not exist.", file=sys.stderr)
+        sys.exit(1)
+
+    refs_dir = os.path.join("_cache", derived_key, "refs")
+    base_ref_path = os.path.join(refs_dir, "base")
+    upstream_ref_path = os.path.join(refs_dir, "upstream")
+    if not (os.path.exists(base_ref_path)
+            and os.path.exists(upstream_ref_path)):
+        print(f"Error: --merge requires '{derived_key}' to have been "
+              "fetched from Electowiki at least once.", file=sys.stderr)
+        print(f"  expected: {base_ref_path} and {upstream_ref_path}",
+              file=sys.stderr)
+        print(f"  run:  mwsync.py fetch {derived_key}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with open(base_ref_path, "r", encoding="utf-8") as f:
+            base_revid = f.read().strip()
+    except Exception as e:
+        print(f"Error: failed to read {base_ref_path}: {e}",
+              file=sys.stderr)
+        sys.exit(1)
+    if not base_revid:
+        print(f"Error: {base_ref_path} is empty.", file=sys.stderr)
+        sys.exit(1)
+
+    base_body_path = os.path.join(
+        "_cache", derived_key, f"{base_revid}.mw")
+    if not os.path.exists(base_body_path):
+        print(f"Error: cached body for refs/base ({base_revid}) is missing.",
+              file=sys.stderr)
+        print(f"  expected: {base_body_path}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with open(local, "rb") as f:
+            local_bytes = f.read()
+        with open(base_body_path, "rb") as f:
+            base_bytes = f.read()
+    except Exception as e:
+        print(f"Error: failed to read local or base body: {e}",
+              file=sys.stderr)
+        sys.exit(1)
+    if local_bytes != base_bytes:
+        print(f"Error: local file '{local}' has uncommitted edits "
+              "relative to refs/base.", file=sys.stderr)
+        print("  --merge requires a clean checkout. Inspect changes with:",
+              file=sys.stderr)
+        print(f"    mwsync.py diff {derived_key}", file=sys.stderr)
+        print("  Resolve or commit the local edits, then re-run.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    is_tty = sys.stdin.isatty()
+    if not is_tty:
+        print("Error: --merge requires an interactive terminal for "
+              "confirmation.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        page = mwsync._fetch_page(title, ENWIKI_API)
+    except Exception as e:
+        print(f"Error: failed to fetch '{title}' from enwiki: {e}",
+              file=sys.stderr)
+        sys.exit(1)
+
+    is_redirect, target = _is_redirect(page["wikitext"])
+    if is_redirect:
+        print(f"Error: '{title}' on enwiki is a redirect"
+              + (f" to '{target}'." if target else "."), file=sys.stderr)
+        if target:
+            print("Re-run with the target title:  "
+                  f"ledecopy.py --merge \"{target}\"", file=sys.stderr)
+        sys.exit(1)
+
+    cleaned = _strip_top_templates(page["wikitext"])
+    lede = _split_lede(cleaned)
+    has_refs = _has_refs(lede)
+
+    source_links = _extract_category_links(page["wikitext"])
+    catmap = _load_catmap()
+    cache = _load_category_cache()
+    for line in _category_plan_lines(source_links, catmap, cache, is_tty):
+        print(line)
+    resolved_categories, outcomes, new_entries = _resolve_categories(
+        source_links, catmap, cache, is_tty)
+
+    local_text = local_bytes.decode("utf-8")
+    body_lines, tail_lines = _split_body_and_tail(local_text)
+    existing_cats, non_cat_tail = _partition_tail(tail_lines)
+    merged_cats, new_from_enwiki = _merge_categories(
+        existing_cats, resolved_categories)
+
+    inserted_chunk = _build_output(
+        title, lede, has_refs, page["revid"], []).rstrip("\n")
+    inserted_line_count = len(inserted_chunk.splitlines())
+
+    print()
+    print(f"About to merge the lede from enwiki revision "
+          f"{page['revid']} into {local}.")
+    print(f"  Body kept: {len(body_lines)} lines above the original "
+          "category block.")
+    parts_desc = "{{Wikipedia}} + lede"
+    if has_refs:
+        parts_desc += " + references"
+    parts_desc += " + {{Fromwikipedia}}"
+    print(f"  Inserted: {parts_desc} ({inserted_line_count} lines).")
+    print(f"  Categories: {len(existing_cats)} existing + "
+          f"{new_from_enwiki} new from enwiki, "
+          f"{len(merged_cats)} in merged set.")
+    if non_cat_tail:
+        print(f"  Non-category tail items preserved: {len(non_cat_tail)} "
+              "(interlanguage links / trailing templates).")
+    try:
+        answer = input("Continue? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        print("Aborted; local file unchanged.")
+        sys.exit(1)
+    if answer not in ("y", "yes"):
+        print("Aborted; local file unchanged.")
+        sys.exit(0)
+
+    output_blocks: list[str] = []
+    body_text = "\n".join(body_lines).rstrip()
+    if body_text:
+        output_blocks.append(body_text)
+    output_blocks.append(inserted_chunk)
+    if merged_cats:
+        output_blocks.append("\n".join(merged_cats))
+    if non_cat_tail:
+        output_blocks.append("\n".join(non_cat_tail))
+    output = "\n\n".join(output_blocks) + "\n"
+
+    if not mwsync._atomic_write(local, output):
+        sys.exit(1)
+
+    print()
+    print(f"Merged lede from \"{title}\" (enwiki revision "
+          f"{page['revid']}) into {local}.")
+    for line in _category_summary_lines(outcomes, new_entries):
+        print(line)
+    if has_refs:
+        print("  References section appended; named refs defined outside "
+              "the lede may need review.")
+    else:
+        print("  No <ref> tags in lede; references section omitted.")
+    print(f"  {config_path} and _cache/ left unchanged.")
+    print()
+    print("Next:")
+    print(f"  mwsync.py push {derived_key} "
+          f"-m \"Merge lede from [[wikipedia:{title}]] "
           f"(oldid={page['revid']})\"")
 
 
