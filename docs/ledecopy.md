@@ -11,6 +11,7 @@ CLI:
 
 ```bash
 ledecopy.py "New York"
+ledecopy.py --replace "New York"
 ```
 
 The argument is an enwiki page title. The enwiki title determines the
@@ -22,15 +23,59 @@ key: New_York
 local: New_York.mw
 ```
 
-Before doing any work, the command must fail if any of the following is
-true:
+By default, `ledecopy.py` creates a new local draft for an article that does
+not already exist locally or on Electowiki. Before doing any work in default
+mode, the command must fail if any of the following is true:
 
 - The local `.mw` file already exists.
 - The article key is already registered in `mwsync.yaml`.
 - The fetched enwiki source is a redirect (instruct the user to use the
   redirect target title instead).
 
-There is no override flag. Fix the conflict before re-running.
+Use `--replace`/`-r` only for the existing-article workflow described below.
+It must not make the default new-article path less cautious.
+
+## Replace Mode for Existing Local Checkouts
+
+`--replace`/`-r` overwrites a local checked-out Electowiki article with a fresh
+lede import from enwiki. This is intended for replacing the body of an
+existing local article while still running the normal enwiki category mapping
+flow.
+
+Replace mode is valid only when the Electowiki counterpart is already checked
+out locally. That means:
+
+- The article key already exists in `mwsync.yaml`.
+- The configured local `.mw` file exists.
+- The configured local filename matches the key derived from the enwiki title,
+  unless future title-override support explicitly permits otherwise.
+
+If any of those checks fail, `--replace` must fail with a message explaining
+that the user should first run `mwsync.py add`, `mwsync.py fetch`, and
+`mwsync.py merge` or `mwsync.py checkout`.
+
+In replace mode:
+
+- Fetch the enwiki source and extract the lede normally.
+- Extract categories from the enwiki source, as in default mode.
+- Run the normal category cache and `catmap.yaml` resolution flow, including
+  interactive category Q&A when needed.
+- Prompt before overwriting the local file.
+- The prompt must list every category link that will be written into the
+  replacement file and warn that the local article body will be replaced.
+- If stdin is not interactive, fail rather than overwriting.
+
+Example confirmation text:
+
+```text
+About to overwrite Maine.mw with the lede from enwiki revision 123456789.
+Categories to write:
+  - [[Category:United States elections]]
+  - [[Category:Ranked voting methods]]
+Continue? [y/N]
+```
+
+Only `y` or `yes` should proceed.
 
 ## Source Fetch
 
@@ -51,7 +96,11 @@ The copied enwiki `revid` must be included in the generated attribution.
 
 Before writing the local draft, query Electowiki for the target article. If
 the article exists, fail and instruct the user to add/fetch it from
-Electowiki with `mwsync.py` first. There is no override flag.
+Electowiki with `mwsync.py` first.
+
+This target-exists failure applies only to default new-article mode. In
+`--replace` mode, the existing checked-out local file is the proof that the user
+is intentionally preparing an update to an existing Electowiki article.
 
 ## Lede Extraction
 
@@ -108,11 +157,17 @@ and may need review.
 
 ## Categories
 
-Extract categories found in the fetched enwiki source using literal
-`[[Category:...]]` links.
+In default new-article mode, extract categories found in the fetched enwiki
+source using literal `[[Category:...]]` links.
 
 Do not copy interlanguage links such as `[[fr:...]]` or `[[de:...]]`. Drop
 them silently.
+
+In `--replace` mode, category handling is the same as default mode: extract
+enwiki categories, resolve them through `catmap.yaml` and the Electowiki
+category cache, and append the resolved category links to the rewritten file.
+The confirmation prompt should show the final category links before the local
+file is overwritten.
 
 ### Category Normalization
 
@@ -298,10 +353,24 @@ wiki:
 Do not set `upstream_revid` for a new Electowiki article candidate. The page
 has not been fetched from Electowiki yet.
 
+In `--replace` mode, do not add a new article entry. Reuse the existing
+`mwsync.yaml` entry and overwrite only the configured local `.mw` file after
+category resolution and confirmation. Leave `upstream_*`, `last_pushed_*`, and
+cache refs unchanged; those describe the Electowiki state that the local
+checkout is based on, not the enwiki source revision used for the replacement
+text. `catmap.yaml` may be created or updated during category resolution, just
+as in default mode.
+
 After success, print the next command:
 
 ```bash
-mwsync.py push --new New_York -m "Import lede from [[wikipedia:New York]]"
+mwsync.py push --new New_York -m "Import lede from [[wikipedia:New York]] (oldid=123456789)"
+```
+
+In `--replace` mode, suggest a normal push rather than `push --new`:
+
+```bash
+mwsync.py push New_York -m "Replace lede from [[wikipedia:New York]] (oldid=123456789)"
 ```
 
 ## Implementation Notes
@@ -336,7 +405,7 @@ mirror that takes `mappings: {…}` round-tripping through PyYAML with
 
 ## Success Criteria
 
-A successful run should:
+A successful default-mode run should:
 
 - Write the local `.mw` draft.
 - Create or extend `mwsync.yaml`.
@@ -346,6 +415,17 @@ A successful run should:
   and the count of new `catmap.yaml` entries written.
 - Report whether references were copied.
 - Print the recommended `mwsync.py push --new` command.
+
+A successful `--replace` run should:
+
+- Refuse to run unless the article is already checked out locally.
+- Run normal category mapping and create or extend `catmap.yaml` if any
+  recorded category decisions were made.
+- Show the final category links before overwriting.
+- Require interactive confirmation.
+- Overwrite only the local `.mw` file.
+- Leave `mwsync.yaml` and `_cache/` unchanged.
+- Print the recommended non-`--new` `mwsync.py push` command.
 
 Smoke tests should cover:
 
@@ -365,6 +445,11 @@ Smoke tests should cover:
 - An existing local file (must fail).
 - An article key already registered in `mwsync.yaml` (must fail).
 - An existing Electowiki target page (must fail).
+- `--replace` with an article key registered in `mwsync.yaml` and a local file
+  present (must run category mapping, prompt with final categories, and
+  overwrite after `yes`).
+- `--replace` without a local checkout (must fail).
+- `--replace` in a non-interactive run (must fail before overwriting).
 
 ## Future Directions
 
@@ -376,9 +461,6 @@ Future work may add:
 - URL input in addition to page-title input.
 - Target title/key/local filename overrides for cases where the Electowiki page
   name should differ from the enwiki page name.
-- `--force` or another explicit override flow for advanced users who knowingly
-  want to overwrite a local draft or prepare changes for an existing Electowiki
-  page.
 - A dedicated `catmgr.py` or `catmap.py` command for auditing and editing
   `catmap.yaml`.
 - Batch review of categories referenced by local `.mw` drafts but not yet
