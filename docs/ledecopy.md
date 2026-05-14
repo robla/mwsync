@@ -11,7 +11,7 @@ CLI:
 
 ```bash
 ledecopy.py "New York"
-ledecopy.py --replace "New York"
+ledecopy.py --merge "Ohio"
 ```
 
 The argument is an enwiki page title. The enwiki title determines the
@@ -32,50 +32,105 @@ mode, the command must fail if any of the following is true:
 - The fetched enwiki source is a redirect (instruct the user to use the
   redirect target title instead).
 
-Use `--replace`/`-r` only for the existing-article workflow described below.
+Use `--merge`/`-m` only for the existing-article workflow described below.
 It must not make the default new-article path less cautious.
 
-## Replace Mode for Existing Local Checkouts
+## Merge Mode for Existing Local Checkouts
 
-`--replace`/`-r` overwrites a local checked-out Electowiki article with a fresh
-lede import from enwiki. This is intended for replacing the body of an
-existing local article while still running the normal enwiki category mapping
-flow.
+`--merge`/`-m` splices a fresh enwiki lede into an existing local checkout of
+an Electowiki article. The resulting working tree should look exactly like
+the user manually edited the local `.mw` file: existing Electowiki body
+content above the trailing category block is preserved verbatim, the new
+enwiki lede is inserted between that body and the trailing category block,
+and the categories are merged. The run is followed by the normal
+`mwsync.py diff` / `mwsync.py push` flow.
 
-Replace mode is valid only when the Electowiki counterpart is already checked
-out locally. That means:
+Merge mode is valid only when:
 
 - The article key already exists in `mwsync.yaml`.
 - The configured local `.mw` file exists.
 - The configured local filename matches the key derived from the enwiki title,
   unless future title-override support explicitly permits otherwise.
+- The article has been fetched from Electowiki at least once. Both
+  `_cache/<Article_Key>/refs/base` and `_cache/<Article_Key>/refs/upstream`
+  must exist. A bare `mwsync.py add` registration is not enough.
+- The local file is a clean checkout: byte-for-byte equal to the cached body
+  for `refs/base`. `--merge` must refuse to run against a dirty local copy,
+  because the resulting splice would silently entangle the user's existing
+  local edits with the new lede.
+- The fetched enwiki source is not a redirect (same constraint as default
+  mode).
 
-If any of those checks fail, `--replace` must fail with a message explaining
-that the user should first run `mwsync.py add`, `mwsync.py fetch`, and
-`mwsync.py merge` or `mwsync.py checkout`.
+If any of those checks fail, `--merge` must fail with a message identifying
+the missing precondition. For the dirty-checkout case the message should
+suggest `mwsync.py diff <key>` to inspect the local edits and tell the user
+to commit, discard, or otherwise resolve them before retrying.
 
-In replace mode:
+In merge mode:
 
 - Fetch the enwiki source and extract the lede normally.
-- Extract categories from the enwiki source, as in default mode.
+- Extract categories from the enwiki source.
 - Run the normal category cache and `catmap.yaml` resolution flow, including
-  interactive category Q&A when needed.
-- Prompt before overwriting the local file.
-- The prompt must list every category link that will be written into the
-  replacement file and warn that the local article body will be replaced.
-- If stdin is not interactive, fail rather than overwriting.
+  interactive category Q&A when needed. Redirect substitution applies, same
+  as default mode.
+- Split the local file into a body section and a trailing tail block (see
+  *Tail Block Detection* below).
+- Build the inserted chunk: `{{Wikipedia|Title}}`, the cleaned enwiki lede,
+  a `== References ==` section if the lede contains `<ref>` tags, and a
+  `{{Fromwikipedia|Title|oldid=ENWIKI_REVID}}` attribution. Categories are
+  not part of the inserted chunk; they are merged into the tail block
+  separately.
+- Merge categories: take the union of the existing local categories
+  (extracted from the tail block) and the resolved enwiki categories from
+  the catmap flow, de-duplicated by normalized name. Preserve the original
+  order of the existing local categories; append any net-new resolved
+  categories after them.
+- Prompt before writing.
+- If stdin is not interactive, fail rather than writing.
+
+The resulting file order is:
+
+```text
+<existing body section, unchanged>
+{{Wikipedia|Title}}
+<cleaned enwiki lede>
+== References ==          (only if lede has <ref> tags)
+<references/>
+{{Fromwikipedia|Title|oldid=ENWIKI_REVID}}
+<merged categories>
+<any non-category tail items (interwiki links, trailing maintenance
+ templates), preserved in their original order>
+```
 
 Example confirmation text:
 
 ```text
-About to overwrite Maine.mw with the lede from enwiki revision 123456789.
-Categories to write:
-  - [[Category:United States elections]]
-  - [[Category:Ranked voting methods]]
+About to merge the lede from enwiki revision 123456789 into Ohio.mw.
+  Body kept: 84 lines above the original category block.
+  Inserted: {{Wikipedia}} + lede + references + {{Fromwikipedia}} (22 lines).
+  Categories: 5 existing + 2 new from enwiki, 7 in merged set.
 Continue? [y/N]
 ```
 
 Only `y` or `yes` should proceed.
+
+### Tail Block Detection
+
+The tail block is the trailing region of the local file that contains
+categories and any closely-associated trailing content. Identify it by
+walking backward from end-of-file. A line counts as a tail-block line if it
+is one of:
+
+- A blank line or whitespace-only line.
+- A line starting at column zero with `[[Category:` (case-insensitive).
+- A line starting at column zero with an interlanguage link pattern —
+  heuristically `[[` followed by 2-3 lowercase ASCII letters and `:`.
+- A single-line trailing template of the form `{{...}}` on one line.
+
+The walk stops at the first line that does not match. Everything from that
+line onward to end-of-file is the tail block; everything before it is the
+body section. If the local file has no tail-block lines at all, the body is
+the entire file and the inserted chunk goes at end-of-file.
 
 ## Source Fetch
 
@@ -99,8 +154,9 @@ the article exists, fail and instruct the user to add/fetch it from
 Electowiki with `mwsync.py` first.
 
 This target-exists failure applies only to default new-article mode. In
-`--replace` mode, the existing checked-out local file is the proof that the user
-is intentionally preparing an update to an existing Electowiki article.
+`--merge` mode, the existing checked-out local file (with `refs/upstream`
+present) is the proof that the user is intentionally preparing an update to
+an existing Electowiki article.
 
 ## Lede Extraction
 
@@ -163,11 +219,13 @@ source using literal `[[Category:...]]` links.
 Do not copy interlanguage links such as `[[fr:...]]` or `[[de:...]]`. Drop
 them silently.
 
-In `--replace` mode, category handling is the same as default mode: extract
-enwiki categories, resolve them through `catmap.yaml` and the Electowiki
-category cache, and append the resolved category links to the rewritten file.
-The confirmation prompt should show the final category links before the local
-file is overwritten.
+In `--merge` mode, category resolution still runs (catmap + cache + redirect
+substitution), but the resolved enwiki categories do not replace the local
+file's existing categories. Instead, the resolved set is unioned with the
+existing local categories (extracted from the tail block) and de-duplicated
+by normalized name, preserving the original order of the existing
+categories. The confirmation prompt summarizes the merged set before the
+local file is modified.
 
 ### Category Normalization
 
@@ -353,13 +411,14 @@ wiki:
 Do not set `upstream_revid` for a new Electowiki article candidate. The page
 has not been fetched from Electowiki yet.
 
-In `--replace` mode, do not add a new article entry. Reuse the existing
-`mwsync.yaml` entry and overwrite only the configured local `.mw` file after
-category resolution and confirmation. Leave `upstream_*`, `last_pushed_*`, and
-cache refs unchanged; those describe the Electowiki state that the local
-checkout is based on, not the enwiki source revision used for the replacement
-text. `catmap.yaml` may be created or updated during category resolution, just
-as in default mode.
+In `--merge` mode, do not add a new article entry. Reuse the existing
+`mwsync.yaml` entry, modify only the local `.mw` file after category
+resolution and confirmation, and leave every file under
+`_cache/<Article_Key>/` untouched — including all of `refs/base`,
+`refs/upstream`, `refs/last-pushed`, history, and revision bodies. Those
+describe the Electowiki state the local checkout is based on, not the
+enwiki source revision used for the splice. `catmap.yaml` may be created or
+updated during category resolution, just as in default mode.
 
 After success, print the next command:
 
@@ -367,11 +426,20 @@ After success, print the next command:
 mwsync.py push --new New_York -m "Import lede from [[wikipedia:New York]] (oldid=123456789)"
 ```
 
-In `--replace` mode, suggest a normal push rather than `push --new`:
+In `--merge` mode, suggest a normal push rather than `push --new`:
 
 ```bash
-mwsync.py push New_York -m "Replace lede from [[wikipedia:New York]] (oldid=123456789)"
+mwsync.py push Ohio -m "Merge lede from [[wikipedia:Ohio]] (oldid=123456789)"
 ```
+
+The intent of `--merge` is that the resulting working tree looks exactly
+like the user manually edited the local `.mw` file against the cached
+Electowiki upstream. `refs/base` and `refs/upstream` are left untouched so
+that `mwsync.py diff <key>` cleanly shows the spliced lede and merged
+categories as a local change, and `mwsync.py push <key>` is the natural
+next step. Do not re-fetch from Electowiki and do not adjust `refs/base`
+to reflect the enwiki source — that would defeat the diff-then-push
+workflow this mode is designed for.
 
 ## Implementation Notes
 
@@ -416,14 +484,17 @@ A successful default-mode run should:
 - Report whether references were copied.
 - Print the recommended `mwsync.py push --new` command.
 
-A successful `--replace` run should:
+A successful `--merge` run should:
 
-- Refuse to run unless the article is already checked out locally.
+- Refuse to run unless the article is already checked out locally with a
+  clean working copy (local `.mw` byte-equal to the cached `refs/base`
+  body).
 - Run normal category mapping and create or extend `catmap.yaml` if any
   recorded category decisions were made.
-- Show the final category links before overwriting.
+- Show a splice preview (body kept / inserted chunk / merged category
+  counts) before writing.
 - Require interactive confirmation.
-- Overwrite only the local `.mw` file.
+- Modify only the local `.mw` file.
 - Leave `mwsync.yaml` and `_cache/` unchanged.
 - Print the recommended non-`--new` `mwsync.py push` command.
 
@@ -445,11 +516,15 @@ Smoke tests should cover:
 - An existing local file (must fail).
 - An article key already registered in `mwsync.yaml` (must fail).
 - An existing Electowiki target page (must fail).
-- `--replace` with an article key registered in `mwsync.yaml` and a local file
-  present (must run category mapping, prompt with final categories, and
-  overwrite after `yes`).
-- `--replace` without a local checkout (must fail).
-- `--replace` in a non-interactive run (must fail before overwriting).
+- `--merge` with a clean local checkout (must run category mapping, prompt
+  with splice preview, and write after `yes`).
+- `--merge` without a local checkout (must fail).
+- `--merge` against a dirty local working copy (must fail before doing
+  network work, suggesting `mwsync.py diff` to inspect the local edits).
+- `--merge` in a non-interactive run (must fail before writing).
+- `--merge` where the local file has no tail block at all (inserted chunk
+  goes at end-of-file; merged categories collapse to the resolved enwiki
+  set).
 
 ## Future Directions
 
