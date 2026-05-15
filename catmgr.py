@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Rob Lanphier and contributors
+# SPDX-License-Identifier: MIT
+# See LICENSE for details.
 """
 catmgr.py - cache and inspect target-wiki category names.
 

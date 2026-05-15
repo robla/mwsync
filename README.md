@@ -16,7 +16,9 @@ workflow to edit wiki pages in one's normal local editor, caching
 enough to allow accurate page diffs and other change inspection prior
 to pushing changes back through the MediaWiki API.
 
-`mwsync` is released under the MIT license.
+`mwsync` is released under the MIT license; see [LICENSE](LICENSE).
+Contributions are welcome; see [CONTRIBUTORS](CONTRIBUTORS) and
+[docs/contributor-guide.md](docs/contributor-guide.md) for more.
 
 ## Relationship to other MediaWiki synchronization tools
 
