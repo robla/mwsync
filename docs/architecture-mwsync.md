@@ -4,7 +4,16 @@
 
 ## Runtime Model
 
-The tool expects to run in a working directory that contains `mwsync.yaml`. That config file is the source of truth for registered articles and wiki settings. The top-level shape is:
+The tool expects to run in a working directory that contains `mwsync.yaml`.
+Each working directory is dedicated to one MediaWiki instance. The
+directory-wide `wiki.api_base` applies to every tracked article, every cache
+entry, and every helper tool that shares this checkout. Mixing articles from
+different wikis in one `mwsync.yaml` is intentionally out of scope; use a
+separate directory for each wiki, such as one checkout for Electowiki and
+another for a private wiki.
+
+`mwsync.yaml` is the source of truth for registered articles and wiki
+settings. The top-level shape is:
 
 ```yaml
 wiki:
@@ -47,6 +56,20 @@ _cache/<Article_Key>/<revid>.json
 The local file is intended for user edits. Revid-named `.mw` files are cached upstream revision bodies; matching `.json` sidecars store revision metadata. `history.jsonl` is the chronological manifest, while `refs/upstream`, `refs/base`, and `refs/last-pushed` hold small sync-state pointers. Writes use `_atomic_write()`, which writes to a temporary file in the target directory and then replaces the destination.
 
 The older `_cache/server--<Article_Key>.mw` layout is treated as legacy. Current code detects that file and exits with a migration/reset message instead of reading it as normal state.
+
+Cache subdirectories whose names start with `_` are reserved for wiki-level
+indexes rather than article checkouts. The near-term namespace plan is:
+
+```text
+_cache/<Article_Key>/        per-article revision cache
+_cache/_categories/         target-wiki category index
+_cache/_articles/           target-wiki page/article index
+```
+
+The current category helper may still use `_cache/categories/`; the intended
+future path is `_cache/_categories/` so wiki-level caches are visually distinct
+from article keys. Article keys should not begin with `_` once this convention
+is enforced.
 
 ## Config Helpers
 
