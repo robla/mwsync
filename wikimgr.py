@@ -210,14 +210,14 @@ def main() -> None:
 
     p_fetch = sub.add_parser("fetch", help="Refresh _cache/_titles")
     p_fetch.add_argument(
-        "-n", "--namespace", type=int, action="append",
+        "--namespace", type=int, action="append",
         help=("Namespace ID to fetch. Repeat for multiple namespaces "
               f"(default: {DEFAULT_NAMESPACE})."),
     )
 
     p_list = sub.add_parser("list", help="List cached titles in a namespace")
     p_list.add_argument(
-        "-n", "--namespace", type=int, default=DEFAULT_NAMESPACE,
+        "--namespace", type=int, default=DEFAULT_NAMESPACE,
         help=f"Namespace ID to list (default: {DEFAULT_NAMESPACE}).",
     )
 

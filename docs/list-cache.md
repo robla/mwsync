@@ -1,7 +1,7 @@
 # Wiki Title List Cache Design
 
-This document sketches a future wiki-level title-list cache for listing titles
-on the single target wiki represented by the current `mwsync.yaml`.
+This document describes the first `wikimgr.py` title-list cache for listing
+titles on the single target wiki represented by the current `mwsync.yaml`.
 
 Each mwsync working directory is dedicated to one wiki. The title-list cache
 therefore does not need to record multiple API bases or support mixed-wiki
@@ -24,7 +24,7 @@ Non-goals for the first version:
 
 ## Proposed Layout
 
-Use a reserved underscore directory named `_cache/_titles/`. The name is
+`wikimgr.py fetch` uses a reserved underscore directory named `_cache/_titles/`. The name is
 intentional: this cache is an index of wiki titles and title metadata, not a
 cache of page bodies or checked-out page revisions.
 
@@ -102,27 +102,40 @@ Rows should include at least:
 - `pageid`
 - `redirect`
 
-Future rows may include touched timestamps, length, protection state, or
-latest revision IDs if those prove useful for status and auditing.
+Rows are sorted case-insensitively by title and written with deterministic JSON
+object keys. Future rows may include touched timestamps, length, protection
+state, or latest revision IDs if those prove useful for status and auditing.
 
-## Initial wikimgr.py Commands
+## Implemented wikimgr.py Commands
 
-The new tool should be `wikimgr.py`, because this cache is wiki-level rather
-than article-specific. The first version should support only `fetch` and
-`list`:
+`wikimgr.py` is wiki-level rather than article-specific. The first version
+supports only `fetch` and `list`:
 
 ```bash
 wikimgr.py fetch --namespace 0
+wikimgr.py fetch --namespace 0 --namespace 10
 wikimgr.py list --namespace 0
 ```
 
 - `fetch`: refresh the title-list cache for one or more namespaces. With no
-  namespace argument, fetch namespace `0`.
+  namespace argument, fetch namespace `0`. `--namespace` may be repeated.
 - `list`: print cached titles in a namespace.
 
 Do not add a `find` command initially. `wikimgr.py list --namespace 0` can be
 piped into `grep`, `rg`, `fzf`, `sort`, or other shell tools. A `status`
 command is useful later, but it is not part of the first implementation.
+
+`list` prints titles only, one per line. It does not print `pageid`,
+`namespace`, or redirect status; callers that need metadata can read the JSONL
+cache directly. `wikimgr.py` installs normal SIGPIPE handling so pipelines such
+as `wikimgr.py list | head` exit cleanly.
+
+If a requested namespace cache is missing, `list` exits with a direct message:
+
+```text
+Title cache for namespace not found: _cache/_titles/titles_ns_00.jsonl
+Run: wikimgr.py fetch --namespace N
+```
 
 ## Relationship to Other Caches
 
