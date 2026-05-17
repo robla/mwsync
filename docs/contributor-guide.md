@@ -10,7 +10,7 @@
 - Run basic checks before submitting:
 
 ```bash
-python3 -m py_compile mwsync.py catmgr.py ledecopy.py
+python3 -m py_compile mwsync.py catmgr.py ledecopy.py wikimgr.py
 ```
 
 ## Contributor License
