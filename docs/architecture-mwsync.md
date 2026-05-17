@@ -63,7 +63,7 @@ indexes rather than article checkouts. The near-term namespace plan is:
 ```text
 _cache/<Article_Key>/        per-article revision cache
 _cache/_categories/         target-wiki category index
-_cache/_articles/           target-wiki page/article index
+_cache/_titles/             target-wiki title index
 ```
 
 The current category helper may still use `_cache/categories/`; the intended
