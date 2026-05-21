@@ -154,6 +154,10 @@ def _article_url_from_key(config: dict, key: str) -> str:
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, article_path, "", "", ""))
 
 
+def _article_url(config: dict, key: str, art: dict) -> str:
+    return art.get("url") or _article_url_from_key(config, key)
+
+
 def _looks_like_article_url(value: str) -> bool:
     parsed = urllib.parse.urlparse(value)
     return bool(parsed.scheme and parsed.netloc and "/wiki/" in parsed.path)
@@ -892,8 +896,11 @@ def run_init(args, config_path: str) -> None:
 
 def run_add(args, config: dict, config_path: str) -> None:
     key, art, _created = _register_article_target(config, config_path, args.article)
+    url = _article_url(config, key, art)
     print(f"Registered '{key}'", file=sys.stderr)
     print(f"  title: {art.get('title', key)}", file=sys.stderr)
+    if url:
+        print(f"  url:   {url}", file=sys.stderr)
     print(f"  local: {art.get('local', key + '.mw')}", file=sys.stderr)
     print(f"Run: mwsync.py fetch {key}", file=sys.stderr)
 
@@ -936,6 +943,7 @@ def run_checkout(args, config: dict, config_path: str) -> None:
     key, art = resolve_article_entry(config, key)
     local = art.get("local", key + ".mw")
     title = art.get("title", key)
+    url = _article_url(config, key, art)
     revid = (merge_info or {}).get("upstream_revid") or (fetch_info or {}).get("revid")
     action = (merge_info or {}).get("action")
     if action == "checked-out":
@@ -953,6 +961,8 @@ def run_checkout(args, config: dict, config_path: str) -> None:
         print(f"# Merged upstream revid {revid} into {local}", file=sys.stderr)
     else:
         print(f"# Checkout complete for {local} at revid {revid}", file=sys.stderr)
+    if url:
+        print(f"# URL: {url}", file=sys.stderr)
 
 
 def run_fetch(args, config: dict, config_path: str) -> dict | None:
@@ -960,6 +970,7 @@ def run_fetch(args, config: dict, config_path: str) -> dict | None:
     _check_legacy_cache(key)
     title = art.get("title", key)
     local = art.get("local", key + ".mw")
+    url = _article_url(config, key, art)
     api_base = get_api_base(config)
     dry_run = getattr(args, "dry_run", False)
     all_known = getattr(args, "all_known", False)
@@ -972,6 +983,8 @@ def run_fetch(args, config: dict, config_path: str) -> dict | None:
         depth_label = "all available" if all_known else str(depth)
         print(f"# Fetch plan for: {key}", file=sys.stderr)
         print(f"#   Title:    {title}", file=sys.stderr)
+        if url:
+            print(f"#   URL:      {url}", file=sys.stderr)
         print(f"#   API:      {api_base}", file=sys.stderr)
         print(f"#   Local:    {local} (unchanged)", file=sys.stderr)
         print(f"#   Cache:    {_cache_dir(key)}", file=sys.stderr)
@@ -985,6 +998,8 @@ def run_fetch(args, config: dict, config_path: str) -> dict | None:
 
     if not quiet:
         print(f"# Fetching '{title}' from {api_base}...", file=sys.stderr)
+        if url:
+            print(f"# URL: {url}", file=sys.stderr)
     try:
         result = _fetch_page(title, api_base)
     except Exception as e:
@@ -1025,6 +1040,7 @@ def run_fetch(args, config: dict, config_path: str) -> dict | None:
         "key": key,
         "title": title,
         "local": local,
+        "url": url,
         "revid": int(revid),
         "depth": depth,
         "all_known": all_known,
@@ -1037,6 +1053,7 @@ def run_push(args, config: dict, config_path: str) -> None:
     _check_legacy_cache(key)
     title = art.get("title", key)
     local = art.get("local", key + ".mw")
+    url = _article_url(config, key, art)
     api_base = get_api_base(config)
     baserevid = _read_ref(key, "base") or art.get("upstream_revid", 0)
     dry_run = getattr(args, "dry_run", False)
@@ -1065,6 +1082,8 @@ def run_push(args, config: dict, config_path: str) -> None:
             page_len = 0
         print(f"# Push plan for: {key}", file=sys.stderr)
         print(f"#   Title:      {title}", file=sys.stderr)
+        if url:
+            print(f"#   URL:        {url}", file=sys.stderr)
         print(f"#   API:        {api_base}", file=sys.stderr)
         print(f"#   Local:      {local} ({page_len} chars)", file=sys.stderr)
         if create_new:
@@ -1105,6 +1124,8 @@ def run_push(args, config: dict, config_path: str) -> None:
 
     print(f"# Pushing '{key}'...", file=sys.stderr)
     print(f"#   Title:      {title}", file=sys.stderr)
+    if url:
+        print(f"#   URL:        {url}", file=sys.stderr)
     print(f"#   Content:    {len(page_text)} chars", file=sys.stderr)
     if create_new:
         print("#   Mode:       CREATE NEW article", file=sys.stderr)
@@ -1136,6 +1157,8 @@ def run_push(args, config: dict, config_path: str) -> None:
         sys.exit(1)
 
     print(f"# Success! New revid: {new_revid}", file=sys.stderr)
+    if url:
+        print(f"# URL: {url}", file=sys.stderr)
 
     now_utc = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     wiki = config.setdefault("wiki", {})
@@ -1500,6 +1523,7 @@ def run_status(args, config: dict, config_path: str) -> None:
 
     for key, art in items:
         local = art.get("local", key + ".mw")
+        url = _article_url(config, key, art)
         upstream_ref = _read_ref(key, "upstream")
         base_ref = _read_ref(key, "base")
         last_pushed_ref = _read_ref(key, "last-pushed")
@@ -1528,6 +1552,8 @@ def run_status(args, config: dict, config_path: str) -> None:
 
         print(key)
         print(f"  local:           {local}  {flag}".rstrip())
+        if url:
+            print(f"  url:             {url}")
         if revid:
             rev_info = str(revid)
             if ts:
