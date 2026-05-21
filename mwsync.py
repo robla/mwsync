@@ -927,16 +927,35 @@ def run_checkout(args, config: dict, config_path: str) -> None:
         )
         if created:
             print(f"# Registered '{key}'", file=sys.stderr)
-        else:
-            print(f"# Article '{key}' already registered", file=sys.stderr)
 
-    fetch_args = argparse.Namespace(article=key, dry_run=False, depth=depth)
-    run_fetch(fetch_args, config, config_path)
-    merge_args = argparse.Namespace(article=key)
-    run_merge(merge_args, config, config_path)
+    fetch_args = argparse.Namespace(article=key, dry_run=False, depth=depth, quiet=True)
+    fetch_info = run_fetch(fetch_args, config, config_path)
+    merge_args = argparse.Namespace(article=key, quiet=True)
+    merge_info = run_merge(merge_args, config, config_path)
+
+    key, art = resolve_article_entry(config, key)
+    local = art.get("local", key + ".mw")
+    title = art.get("title", key)
+    revid = (merge_info or {}).get("upstream_revid") or (fetch_info or {}).get("revid")
+    action = (merge_info or {}).get("action")
+    if action == "checked-out":
+        print(f"# Checked out {local} from '{title}' at revid {revid}", file=sys.stderr)
+    elif action == "adopted":
+        print(f"# Adopted existing {local} as checkout of revid {revid}", file=sys.stderr)
+    elif action == "already-up-to-date":
+        print(f"# {local} already up to date at revid {revid}", file=sys.stderr)
+    elif action == "local-matches-upstream":
+        print(f"# {local} already matched upstream revid {revid}", file=sys.stderr)
+    elif action == "fast-forwarded":
+        old_revid = (merge_info or {}).get("base_revid")
+        print(f"# Updated {local} from revid {old_revid} to {revid}", file=sys.stderr)
+    elif action == "merged":
+        print(f"# Merged upstream revid {revid} into {local}", file=sys.stderr)
+    else:
+        print(f"# Checkout complete for {local} at revid {revid}", file=sys.stderr)
 
 
-def run_fetch(args, config: dict, config_path: str) -> None:
+def run_fetch(args, config: dict, config_path: str) -> dict | None:
     key, art = resolve_article_entry(config, args.article)
     _check_legacy_cache(key)
     title = art.get("title", key)
@@ -945,6 +964,7 @@ def run_fetch(args, config: dict, config_path: str) -> None:
     dry_run = getattr(args, "dry_run", False)
     all_known = getattr(args, "all_known", False)
     with_bodies = getattr(args, "with_bodies", False)
+    quiet = getattr(args, "quiet", False)
     depth_arg = getattr(args, "depth", DEFAULT_HISTORY_DEPTH)
     depth = None if all_known else max(1, int(depth_arg or 1))
 
@@ -963,7 +983,8 @@ def run_fetch(args, config: dict, config_path: str) -> None:
             print(f"#   Current upstream_revid: {prev}", file=sys.stderr)
         return
 
-    print(f"# Fetching '{title}' from {api_base}...", file=sys.stderr)
+    if not quiet:
+        print(f"# Fetching '{title}' from {api_base}...", file=sys.stderr)
     try:
         result = _fetch_page(title, api_base)
     except Exception as e:
@@ -972,15 +993,18 @@ def run_fetch(args, config: dict, config_path: str) -> None:
 
     revid = result["revid"]
     wikitext = result["wikitext"]
-    print(f"# Got revid {revid} ({len(wikitext)} chars)", file=sys.stderr)
+    if not quiet:
+        print(f"# Got revid {revid} ({len(wikitext)} chars)", file=sys.stderr)
 
     if not _cache_revision(key, art, result, api_base):
         sys.exit(1)
     if all_known or depth > 1:
         if all_known:
-            print("# Fetching metadata for all available revisions...", file=sys.stderr)
+            if not quiet:
+                print("# Fetching metadata for all available revisions...", file=sys.stderr)
         else:
-            print(f"# Fetching metadata for newest {depth} revisions...", file=sys.stderr)
+            if not quiet:
+                print(f"# Fetching metadata for newest {depth} revisions...", file=sys.stderr)
         try:
             for rev in _fetch_revision_metadata(title, api_base, depth):
                 if not _cache_revision_metadata(key, art, rev, api_base):
@@ -992,10 +1016,20 @@ def run_fetch(args, config: dict, config_path: str) -> None:
             sys.exit(1)
     if not _write_ref(key, "upstream", int(revid)):
         sys.exit(1)
-    print(f"# Cached revision {_revision_body_path(key, revid)}", file=sys.stderr)
-    print(f"# Updated refs/upstream to {revid}", file=sys.stderr)
-    print(f"# Left {local} unchanged; run 'mwsync.py merge {key}' to update it.",
-          file=sys.stderr)
+    if not quiet:
+        print(f"# Cached revision {_revision_body_path(key, revid)}", file=sys.stderr)
+        print(f"# Updated refs/upstream to {revid}", file=sys.stderr)
+        print(f"# Left {local} unchanged; run 'mwsync.py merge {key}' to update it.",
+              file=sys.stderr)
+    return {
+        "key": key,
+        "title": title,
+        "local": local,
+        "revid": int(revid),
+        "depth": depth,
+        "all_known": all_known,
+        "with_bodies": with_bodies,
+    }
 
 
 def run_push(args, config: dict, config_path: str) -> None:
@@ -1177,11 +1211,12 @@ def run_difftool(args, config: dict, config_path: str) -> None:
     subprocess.run(["meld", snapshot, local])
 
 
-def run_merge(args, config: dict, config_path: str) -> None:
+def run_merge(args, config: dict, config_path: str) -> dict | None:
     key, art = resolve_article_entry(config, args.article)
     _check_legacy_cache(key)
     local = art.get("local", key + ".mw")
     api_base = get_api_base(config)
+    quiet = getattr(args, "quiet", False)
 
     upstream_revid = _read_ref(key, "upstream")
     if upstream_revid is None:
@@ -1198,19 +1233,24 @@ def run_merge(args, config: dict, config_path: str) -> None:
             sys.exit(1)
         if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
             sys.exit(1)
-        print(f"# Checked out {local} at upstream revid {upstream_revid}", file=sys.stderr)
-        print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
-        print(f"# Updated upstream_revid={upstream_revid} in {config_path}", file=sys.stderr)
-        return
+        if not quiet:
+            print(f"# Checked out {local} at upstream revid {upstream_revid}",
+                  file=sys.stderr)
+            print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
+            print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
+                  file=sys.stderr)
+        return {"action": "checked-out", "upstream_revid": upstream_revid}
 
     if base_revid is None:
         if _file_content_matches(local, upstream_text):
             if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
                 sys.exit(1)
-            print(f"# Adopted existing {local} as refs/base {upstream_revid}", file=sys.stderr)
-            print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
-                  file=sys.stderr)
-            return
+            if not quiet:
+                print(f"# Adopted existing {local} as refs/base {upstream_revid}",
+                      file=sys.stderr)
+                print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
+                      file=sys.stderr)
+            return {"action": "adopted", "upstream_revid": upstream_revid}
         print(f"Error: no base revision cached for '{key}'.", file=sys.stderr)
         print(f"Run 'mwsync.py fetch {key}' before making local edits.", file=sys.stderr)
         sys.exit(1)
@@ -1219,25 +1259,44 @@ def run_merge(args, config: dict, config_path: str) -> None:
     base_text = _read_text(base_path)
 
     if int(base_revid) == int(upstream_revid):
-        print(f"# Already up to date at revid {upstream_revid}", file=sys.stderr)
-        return
+        if not quiet:
+            print(f"# Already up to date at revid {upstream_revid}", file=sys.stderr)
+        return {
+            "action": "already-up-to-date",
+            "base_revid": base_revid,
+            "upstream_revid": upstream_revid,
+        }
 
     if _file_content_matches(local, upstream_text):
         if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
             sys.exit(1)
-        print(f"# Local file already matches upstream revid {upstream_revid}", file=sys.stderr)
-        print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
-        print(f"# Updated upstream_revid={upstream_revid} in {config_path}", file=sys.stderr)
-        return
+        if not quiet:
+            print(f"# Local file already matches upstream revid {upstream_revid}",
+                  file=sys.stderr)
+            print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
+            print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
+                  file=sys.stderr)
+        return {
+            "action": "local-matches-upstream",
+            "base_revid": base_revid,
+            "upstream_revid": upstream_revid,
+        }
 
     if _file_content_matches(local, base_text):
         if not _atomic_write(local, upstream_text):
             sys.exit(1)
         if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
             sys.exit(1)
-        print(f"# Fast-forwarded {local} from {base_revid} to {upstream_revid}", file=sys.stderr)
-        print(f"# Updated upstream_revid={upstream_revid} in {config_path}", file=sys.stderr)
-        return
+        if not quiet:
+            print(f"# Fast-forwarded {local} from {base_revid} to {upstream_revid}",
+                  file=sys.stderr)
+            print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
+                  file=sys.stderr)
+        return {
+            "action": "fast-forwarded",
+            "base_revid": base_revid,
+            "upstream_revid": upstream_revid,
+        }
 
     code, merged_text, merge_stderr = _run_merge_file(local, base_path, upstream_path)
     if code == 0:
@@ -1245,10 +1304,17 @@ def run_merge(args, config: dict, config_path: str) -> None:
             sys.exit(1)
         if not _write_base_and_upstream_config(config, config_path, key, upstream_revid):
             sys.exit(1)
-        print(f"# Merged upstream revid {upstream_revid} into {local}", file=sys.stderr)
-        print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
-        print(f"# Updated upstream_revid={upstream_revid} in {config_path}", file=sys.stderr)
-        return
+        if not quiet:
+            print(f"# Merged upstream revid {upstream_revid} into {local}",
+                  file=sys.stderr)
+            print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
+            print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
+                  file=sys.stderr)
+        return {
+            "action": "merged",
+            "base_revid": base_revid,
+            "upstream_revid": upstream_revid,
+        }
 
     if code == 1:
         if not _atomic_write(local, merged_text):
