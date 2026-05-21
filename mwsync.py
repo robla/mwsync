@@ -43,6 +43,7 @@ import datetime as dt
 import http.cookiejar
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -70,7 +71,9 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> dict:
         sys.exit(1)
     if not os.path.exists(path):
         print(f"Error: config file not found: {path}", file=sys.stderr)
-        print("Create a mwsync.yaml or run mwsync.py from a directory that has one.", file=sys.stderr)
+        print("Run 'mwsync.py init' first, or run mwsync.py from a directory "
+              "that has already been initialized.",
+              file=sys.stderr)
         sys.exit(1)
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -154,6 +157,37 @@ def _article_url_from_key(config: dict, key: str) -> str:
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, article_path, "", "", ""))
 
 
+def _article_url_prefix(config: dict) -> tuple[str, str, str] | None:
+    parsed = urllib.parse.urlparse(get_api_base(config))
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    path = parsed.path
+    if path.endswith("/w/api.php"):
+        prefix = path[:-len("/w/api.php")] + "/wiki/"
+    elif path.endswith("/api.php"):
+        prefix = path[:-len("/api.php")] + "/wiki/"
+    else:
+        prefix = "/wiki/"
+    return parsed.scheme, parsed.netloc, prefix
+
+
+def _validate_article_url_matches_wiki(config: dict, url: str) -> None:
+    expected = _article_url_prefix(config)
+    if expected is None:
+        return
+    expected_scheme, expected_netloc, expected_prefix = expected
+    parsed = urllib.parse.urlparse(url)
+    if (parsed.scheme != expected_scheme
+            or parsed.netloc != expected_netloc
+            or not parsed.path.startswith(expected_prefix)):
+        expected_example = urllib.parse.urlunparse(
+            (expected_scheme, expected_netloc, expected_prefix + "Page_Title", "", "", "")
+        )
+        print(f"Error: URL is not from the configured wiki: {url}", file=sys.stderr)
+        print(f"Configured wiki expects URLs like: {expected_example}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _article_url(config: dict, key: str, art: dict) -> str:
     return art.get("url") or _article_url_from_key(config, key)
 
@@ -186,8 +220,10 @@ def find_article_entry(config: dict, key: str) -> tuple[str, dict] | None:
 
 
 def _register_article_target(config: dict, config_path: str, target: str,
-                             allow_existing: bool = False) -> tuple[str, dict, bool]:
+                             allow_existing: bool = False,
+                             save: bool = True) -> tuple[str, dict, bool]:
     if _looks_like_article_url(target):
+        _validate_article_url_matches_wiki(config, target)
         key, title, local = _parse_article_url(target)
         url = target
     else:
@@ -208,7 +244,7 @@ def _register_article_target(config: dict, config_path: str, target: str,
         "url": url,
         "local": local,
     }
-    if not save_config(config, config_path):
+    if save and not save_config(config, config_path):
         sys.exit(1)
     return key, articles[key], True
 
@@ -577,6 +613,24 @@ def _write_ref(key: str, ref: str, revid: int) -> bool:
     return _atomic_write(_ref_path(key, ref), f"{int(revid)}\n")
 
 
+def _read_optional_text(path: str) -> str | None:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def _restore_optional_text(path: str, content: str | None) -> None:
+    if content is None:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        return
+    _atomic_write(path, content)
+
+
 def _read_history(key: str) -> list[dict]:
     path = _history_path(key)
     entries = []
@@ -598,7 +652,7 @@ def _read_history(key: str) -> list[dict]:
     return entries
 
 
-def _write_history(key: str, entries: list[dict]) -> bool:
+def _history_content(entries: list[dict]) -> str:
     seen = {}
     for entry in entries:
         revid = entry.get("revid")
@@ -606,9 +660,12 @@ def _write_history(key: str, entries: list[dict]) -> bool:
             rid = int(revid)
             seen[rid] = {**seen.get(rid, {}), **entry}
     ordered = sorted(seen.values(), key=lambda e: (e.get("timestamp", ""), int(e["revid"])))
-    content = "".join(json.dumps(e, ensure_ascii=False, sort_keys=True) + "\n"
-                      for e in ordered)
-    return _atomic_write(_history_path(key), content)
+    return "".join(json.dumps(e, ensure_ascii=False, sort_keys=True) + "\n"
+                   for e in ordered)
+
+
+def _write_history(key: str, entries: list[dict]) -> bool:
+    return _atomic_write(_history_path(key), _history_content(entries))
 
 
 def _revision_record(key: str, art: dict, result: dict, api_base: str) -> dict:
@@ -689,6 +746,114 @@ def _cache_revision_metadata(key: str, art: dict, rev: dict, api_base: str) -> b
     history = _read_history(key)
     history.append(_history_entry(record))
     return _write_history(key, history)
+
+
+def _cache_fetch_transaction(key: str, art: dict, api_base: str,
+                             latest_result: dict,
+                             metadata_revs: list[dict],
+                             body_results: list[dict]) -> bool:
+    cache_dir = _cache_dir(key)
+    cache_existed = os.path.exists(cache_dir)
+    os.makedirs(cache_dir, exist_ok=True)
+    staging = tempfile.mkdtemp(prefix=".fetch-", dir=cache_dir)
+    promoted_paths: list[str] = []
+    old_history = _read_optional_text(_history_path(key))
+
+    staged_files: list[tuple[str, str]] = []
+    history_entries: list[dict] = []
+
+    def stage_text(name: str, content: str) -> None:
+        path = os.path.join(staging, name)
+        if not _atomic_write(path, content):
+            raise RuntimeError(f"failed to stage {name}")
+        staged_files.append((path, os.path.join(cache_dir, name)))
+
+    def stage_json(name: str, data: dict) -> None:
+        text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        stage_text(name, text)
+
+    def add_record(result: dict) -> None:
+        record = _revision_record(key, art, result, api_base)
+        revid = int(record["revid"])
+        meta_name = f"{revid}.json"
+        body_name = f"{revid}.mw"
+        meta_path = _revision_meta_path(key, revid)
+        body_path = _revision_body_path(key, revid)
+
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    existing_meta = json.load(f)
+            except Exception as e:
+                raise RuntimeError(f"could not read {meta_path}: {e}") from e
+            if (existing_meta.get("sha1") and record.get("sha1")
+                    and existing_meta.get("sha1") != record.get("sha1")):
+                raise RuntimeError(f"cached revision {revid} metadata differs")
+        else:
+            stage_json(meta_name, record)
+
+        if "wikitext" in result:
+            if os.path.exists(body_path):
+                pass
+            else:
+                stage_text(body_name, result["wikitext"])
+
+        history_entries.append(_history_entry(record))
+
+    try:
+        add_record(latest_result)
+        for rev in metadata_revs:
+            add_record(rev)
+        for result in body_results:
+            add_record(result)
+
+        latest_revid = int(latest_result["revid"])
+        staged_targets = {target for _source, target in staged_files}
+        if (_revision_body_path(key, latest_revid) not in staged_targets
+                and not os.path.exists(_revision_body_path(key, latest_revid))):
+            raise RuntimeError(f"latest body missing for revid {latest_revid}")
+        if (_revision_meta_path(key, latest_revid) not in staged_targets
+                and not os.path.exists(_revision_meta_path(key, latest_revid))):
+            raise RuntimeError(f"latest metadata missing for revid {latest_revid}")
+
+        new_history = _read_history(key) + history_entries
+        history_text = _history_content(new_history)
+
+        for source, target in staged_files:
+            if os.path.exists(target):
+                continue
+            os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
+            os.replace(source, target)
+            promoted_paths.append(target)
+
+        if not _atomic_write(_history_path(key), history_text):
+            raise RuntimeError(f"failed to write {_history_path(key)}")
+        if not _write_ref(key, "upstream", latest_revid):
+            raise RuntimeError(f"failed to write {_ref_path(key, 'upstream')}")
+        return True
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        _restore_optional_text(_history_path(key), old_history)
+        for path in reversed(promoted_paths):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+        if not cache_existed:
+            try:
+                shutil.rmtree(cache_dir)
+            except OSError:
+                pass
+            try:
+                os.rmdir("_cache")
+            except OSError:
+                pass
+        return False
+    finally:
+        try:
+            shutil.rmtree(staging)
+        except OSError:
+            pass
 
 
 def _resolve_cached_revid(key: str, spec: str | None = None) -> int:
@@ -928,12 +1093,61 @@ def run_checkout(args, config: dict, config_path: str) -> None:
     found = None if _looks_like_article_url(target) else find_article_entry(config, target)
     if found:
         key, art = found
+        created = False
     else:
+        cache_existed = None
         key, art, created = _register_article_target(
-            config, config_path, target, allow_existing=True,
+            config, config_path, target, allow_existing=True, save=False,
         )
         if created:
-            print(f"# Registered '{key}'", file=sys.stderr)
+            local = art.get("local", key + ".mw")
+            if os.path.exists(local):
+                print(f"Error: local file already exists: {local}", file=sys.stderr)
+                print("Move it aside or register the article explicitly before checkout.",
+                      file=sys.stderr)
+                sys.exit(1)
+            cache_existed = os.path.exists(_cache_dir(key))
+
+    if created:
+        fetch_args = argparse.Namespace(article=key, dry_run=False, depth=depth, quiet=True)
+        fetch_info = run_fetch(fetch_args, config, config_path)
+        upstream_revid = int((fetch_info or {}).get("revid") or 0)
+        local = art.get("local", key + ".mw")
+        try:
+            upstream_text = _read_text(_cached_body_or_die(key, upstream_revid))
+            if not _write_ref(key, "base", upstream_revid):
+                raise RuntimeError(f"failed to write {_ref_path(key, 'base')}")
+            if not _atomic_write(local, upstream_text):
+                raise RuntimeError(f"failed to write {local}")
+            if not _update_upstream_config_from_cache(config, key, upstream_revid):
+                raise RuntimeError(f"failed to update upstream metadata for {key}")
+            if not save_config(config, config_path):
+                raise RuntimeError(f"failed to save {config_path}")
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            try:
+                os.unlink(local)
+            except FileNotFoundError:
+                pass
+            if cache_existed is False:
+                try:
+                    shutil.rmtree(_cache_dir(key))
+                except OSError:
+                    pass
+                try:
+                    os.rmdir("_cache")
+                except OSError:
+                    pass
+            sys.exit(1)
+
+        title = art.get("title", key)
+        url = _article_url(config, key, art)
+        print(f"# Registered '{key}'", file=sys.stderr)
+        print(f"# Checked out {local} from '{title}' at revid {upstream_revid}",
+              file=sys.stderr)
+        if url:
+            print(f"# URL: {url}", file=sys.stderr)
+        return
 
     fetch_args = argparse.Namespace(article=key, dry_run=False, depth=depth, quiet=True)
     fetch_info = run_fetch(fetch_args, config, config_path)
@@ -1011,8 +1225,8 @@ def run_fetch(args, config: dict, config_path: str) -> dict | None:
     if not quiet:
         print(f"# Got revid {revid} ({len(wikitext)} chars)", file=sys.stderr)
 
-    if not _cache_revision(key, art, result, api_base):
-        sys.exit(1)
+    metadata_revs: list[dict] = []
+    body_results: list[dict] = []
     if all_known or depth > 1:
         if all_known:
             if not quiet:
@@ -1021,15 +1235,20 @@ def run_fetch(args, config: dict, config_path: str) -> dict | None:
             if not quiet:
                 print(f"# Fetching metadata for newest {depth} revisions...", file=sys.stderr)
         try:
-            for rev in _fetch_revision_metadata(title, api_base, depth):
-                if not _cache_revision_metadata(key, art, rev, api_base):
-                    sys.exit(1)
+            metadata_revs = _fetch_revision_metadata(title, api_base, depth)
+            for rev in metadata_revs:
                 if with_bodies and int(rev.get("revid") or 0) != int(revid):
-                    _ensure_cached_body(key, art, int(rev["revid"]), api_base)
+                    old_revid = int(rev["revid"])
+                    if not os.path.exists(_revision_body_path(key, old_revid)):
+                        if not quiet:
+                            print(f"# Fetching body for revid {old_revid}...",
+                                  file=sys.stderr)
+                        body_results.append(_fetch_revision_by_revid(old_revid, api_base))
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
-    if not _write_ref(key, "upstream", int(revid)):
+    if not _cache_fetch_transaction(key, art, api_base, result,
+                                    metadata_revs, body_results):
         sys.exit(1)
     if not quiet:
         print(f"# Cached revision {_revision_body_path(key, revid)}", file=sys.stderr)
@@ -1174,9 +1393,7 @@ def run_push(args, config: dict, config_path: str) -> None:
     print("# Re-fetching to sync upstream cache...", file=sys.stderr)
     try:
         result = _fetch_page(title, api_base)
-        if not _cache_revision(key, art, result, api_base):
-            sys.exit(1)
-        if not _write_ref(key, "upstream", int(result["revid"])):
+        if not _cache_fetch_transaction(key, art, api_base, result, [], []):
             sys.exit(1)
         if not _write_ref(key, "base", int(result["revid"])):
             sys.exit(1)
@@ -1201,9 +1418,7 @@ def run_diff(args, config: dict, config_path: str) -> None:
         print(f"# Re-fetching upstream cache for '{key}'...", file=sys.stderr)
         try:
             result = _fetch_page(title, api_base)
-            if not _cache_revision(key, art, result, api_base):
-                sys.exit(1)
-            if not _write_ref(key, "upstream", int(result["revid"])):
+            if not _cache_fetch_transaction(key, art, api_base, result, [], []):
                 sys.exit(1)
             print(f"# Got revid {result['revid']}", file=sys.stderr)
         except Exception as e:
@@ -1683,12 +1898,7 @@ def main() -> None:
         run_init(args, config_path)
         return
 
-    if (args.subcommand == "checkout"
-            and not os.path.exists(config_path)
-            and "@" not in args.target):
-        config = minimal_config()
-    else:
-        config = load_config(config_path)
+    config = load_config(config_path)
 
     if args.subcommand == "add":
         run_add(args, config, config_path)

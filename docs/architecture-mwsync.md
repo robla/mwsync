@@ -40,6 +40,21 @@ Each article has three important identities:
 
 `resolve_article_entry()` normalizes user input. A command argument may be either the canonical article key or the configured local filename. The function returns both the canonical key and the article entry so downstream code can build cache paths consistently.
 
+`init` should be the only normal command that creates `mwsync.yaml`. Other
+subcommands should require an existing config file and fail clearly if the user
+is in the wrong directory. This is intentionally stricter than older behavior
+where `checkout` could bootstrap a missing config: it prevents accidentally
+creating `mwsync.yaml`, `_cache/`, and `.mw` files in an unintended directory.
+If a later workflow needs implicit initialization, it should be opt-in and
+explicitly named, not a side effect of a normal checkout or fetch.
+
+Because the working directory is dedicated to one wiki, URL inputs must also
+match the configured wiki. For example, in a directory whose `wiki.api_base` is
+`https://electowiki.org/w/api.php`, `mwsync.py checkout
+https://en.wikipedia.org/wiki/Non-negative_responsiveness` should fail with a
+clear "wrong wiki" error. It should not silently reinterpret the enwiki URL's
+title as `https://electowiki.org/wiki/Non-negative_responsiveness`.
+
 ## Local Files and Cache
 
 For a registered article, the local working copy lives at the entry's `local` path. Cached upstream state lives under one `_cache/<Article_Key>/` directory per article:
@@ -73,7 +88,7 @@ is enforced.
 
 ## Config Helpers
 
-`load_config()` loads `mwsync.yaml` with `PyYAML` and exits with a direct CLI error if the file is missing or invalid. `save_config()` writes YAML atomically using a temporary file and `os.replace()`. `get_api_base()` reads `wiki.api_base`, falling back to the Electowiki API URL.
+`load_config()` loads `mwsync.yaml` with `PyYAML` and exits with a direct CLI error if the file is missing or invalid. Normal subcommands should not call `minimal_config()` as a fallback; `minimal_config()` is for `init` and tests. `save_config()` writes YAML atomically using a temporary file and `os.replace()`. `get_api_base()` reads `wiki.api_base`, falling back to the Electowiki API URL.
 
 These helpers deliberately terminate on unrecoverable CLI configuration errors rather than raising exceptions for the command layer to catch.
 
@@ -96,11 +111,11 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `main()` defines the CLI with `argparse`, loads config once, and dispatches to one `run_*` handler.
 
-`add` accepts either a `/wiki/` URL or a page name/title. URLs derive the page title, article key, local filename, and stored URL from the URL path. Names derive `title`, `Article_Key`, and `Article_Key.mw` locally, then derive a best-effort page URL from the directory-wide `wiki.api_base`. It does not fetch page content.
+`add` accepts either a `/wiki/` URL or a page name/title. URLs derive the page title, article key, local filename, and stored URL from the URL path, but only after validating that the URL belongs to the configured wiki. Names derive `title`, `Article_Key`, and `Article_Key.mw` locally, then derive a best-effort page URL from the directory-wide `wiki.api_base`. It does not fetch page content.
 
-`checkout` is the bootstrap convenience command. With a URL or page name, it registers the article if needed, fetches upstream cache state, and merges the fetched upstream revision into the local `.mw` file. With `ARTICLE@REV --to PATH`, it writes that cached or fetchable revision body to a separate path without changing refs.
+`checkout` is the convenience command for adding a page to an already-initialized working directory. With a URL or page name, it registers the article if needed, fetches upstream cache state, and merges the fetched upstream revision into the local `.mw` file. It must not create `mwsync.yaml`; users should run `mwsync.py init` first. With `ARTICLE@REV --to PATH`, it writes that cached or fetchable revision body to a separate path without changing refs.
 
-`fetch` resolves the article, fetches the current server revision, writes `_cache/<Article_Key>/<revid>.mw`, `_cache/<Article_Key>/<revid>.json`, `history.jsonl`, and `refs/upstream`, then leaves both the local `.mw` file and `mwsync.yaml` unchanged. It records metadata for the newest 50 revisions by default without downloading every old revision body; `--depth N` changes that metadata window, `--all-known` walks all available revision metadata, and `--with-bodies` fetches bodies for the selected metadata window.
+`fetch` resolves the article, fetches the current server revision, writes `_cache/<Article_Key>/<revid>.mw`, `_cache/<Article_Key>/<revid>.json`, `history.jsonl`, and `refs/upstream`, then leaves both the local `.mw` file and `mwsync.yaml` unchanged. It records metadata for the newest 50 revisions by default without downloading every old revision body; `--depth N` changes that metadata window, `--all-known` walks all available revision metadata, and `--with-bodies` fetches bodies for the selected metadata window. Fetch should be transactional at the article-cache level: a failed network call, metadata fetch, body fetch, or validation step should not leave new refs or partially updated manifests pointing at incomplete data.
 
 `merge` reconciles the local working file with fetched upstream state. It uses `refs/base` as the common ancestor, `refs/upstream` as the remote side, and the local `.mw` file as the local side. A clean merge or fast-forward updates `refs/base` and records the local file's upstream base in `mwsync.yaml` using the legacy `upstream_revid`, `upstream_timestamp`, `upstream_editor`, `upstream_summary`, and `upstream_sha1` fields. A conflict writes conflict markers and leaves `refs/base` and those YAML fields unchanged.
 
@@ -124,11 +139,64 @@ The script is CLI-oriented: most user-facing failures print to stderr and call `
 
 The main safety checks are:
 
+- Subcommands other than `init` require an existing `mwsync.yaml`; they should
+  not silently create a new working directory state.
 - `fetch` does not overwrite local content; `merge` is responsible for changing the working `.mw` file.
 - `push` requires an upstream revision unless `--new` is specified.
 - `push` uses `baserevid` so MediaWiki can detect edit conflicts.
 - Legacy `_cache/server--<Article_Key>.mw` files are detected and produce a clear migration/reset error.
 - `show`, `diff`, and revision checkout fetch missing old revision bodies on demand when the history metadata identifies the requested revid.
+
+## Transactional Writes
+
+Commands that update multiple files should avoid visible partial state and
+should clean up temporary artifacts on failure. The goal is not database-grade
+rollback, but a simple rule: if a command reports failure, later commands
+should not see a half-completed checkout, an unexpected new article entry, or a
+ref that points to data that was not fully cached.
+
+`fetch` should stage all new per-article cache state before updating live refs:
+
+1. Fetch the current page body and requested metadata from the API.
+2. Write new body and metadata files into a per-command staging directory, not
+   directly into the live `_cache/<Article_Key>/` directory.
+3. Build the new `history.jsonl` content in memory, including any metadata
+   window requested by `--depth`, `--all-known`, or `--with-bodies`.
+4. Validate that every ref target that will be written has a matching body and
+   metadata sidecar where required.
+5. Promote staged revid-named body and metadata files into the live cache with
+   atomic renames. Existing matching immutable files may be reused.
+6. Atomically replace `history.jsonl`.
+7. Atomically update `refs/upstream` last.
+
+If a failure occurs before the final ref update, the command should remove its
+staging directory and must not update `history.jsonl` or `refs/upstream`.
+Existing live cache files may remain, but a failed `fetch` should not introduce
+new live cache files, refs, or manifests.
+
+`checkout` should also stage work before committing user-visible state:
+
+- It must require an existing `mwsync.yaml`.
+- It may add the article entry to a staged config object, but should not save
+  that config until the fetch and local-file write are ready to commit.
+- It should avoid writing the local `.mw` file until the required upstream body
+  and metadata are cached and validated.
+- For a brand-new checkout, cache files and the local `.mw` content should be
+  prepared in staging paths first. The final commit should promote staged cache
+  files, write refs, write the local `.mw` file atomically, and save
+  `mwsync.yaml`. If any final step fails, the command should attempt best-effort
+  cleanup of files it created in that transaction and avoid claiming success.
+- For an already-registered article, it should not rewrite registration
+  metadata unless the operation completes.
+
+`merge` may still write conflict markers into the local file on a real merge
+conflict; that is an intentional user-visible result rather than a partial
+failure. It should not advance `refs/base` or update `upstream_*` fields until
+the merge succeeds cleanly.
+
+`push` already depends on MediaWiki-side atomic edit semantics. Local
+post-push resync should follow the same cache discipline as `fetch`: update
+cache bodies and metadata first, then refs and config.
 
 ## External Dependencies
 
