@@ -32,7 +32,11 @@ wiki:
 - `title` is the canonical MediaWiki title used for API calls (e.g. `Talk:Software`).
 - `namespace` is the numeric namespace ID, such as `0` for main, `1` for Talk,
   `10` for Template, and `14` for Category.
-- `namespace_name` is the localized/canonical namespace prefix (e.g. `Talk`).
+- `namespace_name` is the primary namespace prefix for this wiki, used for
+  generated keys and local paths (e.g. `Talk`). Prefer the namespace map's
+  local/display name because it matches canonical page titles returned by the
+  wiki; fall back to the generic canonical name or `ns_<id>` only when no local
+  name is available. Do not store aliases.
 - `dbkey` is the MediaWiki database-key form of the page title *excluding* the
   namespace prefix, with spaces normalized to underscores (e.g. `Software`).
   This mirrors MediaWiki's `page_namespace` plus `page_title` model; the full
@@ -49,14 +53,15 @@ For *new* entries created by `add` or `checkout`, the key is derived as:
 - Main namespace: the page dbkey (e.g. `Software`).
 - Other namespaces: `<NamespaceName>__<dbkey>` joined by a double underscore
   (e.g. `Talk__Software`, `Template__Election_methods`,
-  `Category__Ranked_voting_methods`). `NamespaceName` is the canonical name
-  from the wiki's namespace map — not aliases or localized variants — so keys
-  stay stable across `siteinfo` refreshes.
+  `Category__Ranked_voting_methods`). `NamespaceName` is the stored
+  `namespace_name`, derived from the wiki's primary namespace map entry — not
+  aliases — so generated keys stay readable and deterministic for that wiki.
 
 For main-namespace articles, `namespace`, `namespace_name`, and `dbkey` may be
 omitted. The resolver treats a missing `namespace` as `0` and derives the
 `dbkey` from `title`. This keeps simple existing entries (e.g.
-`Software: {title: Software, local: Software.mw}`) untouched.
+`Software: {title: Software, local: Software.mw}`) untouched. This main-
+namespace derivation is normal behavior, not a legacy fallback.
 
 The stored `url` for non-main-namespace articles should be built from the
 canonical `title`, preserving the `:` between namespace prefix and page name
@@ -81,9 +86,10 @@ structurally distinct from main-namespace articles.
 
 Main-namespace pages should continue to live at the top level by default.
 Non-main namespaces should use `<Namespace>/<Page_Title>.mw`. The namespace
-directory should use the canonical namespace name from the target wiki, with
-spaces normalized to underscores (e.g. `Project_talk` for namespace 5), and a
-safe fallback such as `ns_01` if the namespace has no stable name.
+directory should use the stored `namespace_name`, with spaces normalized to
+underscores (e.g. `Project_talk` or a wiki-specific project-talk name for
+namespace 5), and a safe fallback such as `ns_01` if the namespace has no
+stable name.
 
 ## Alternatives
 
@@ -148,10 +154,10 @@ resolution — typically the first `add`/`checkout` of any target, or any
 resolution of a colon-bearing argument that does not match an existing key or
 `local` path. Once fetched it is reused for subsequent invocations. The cache
 is treated as stale when its `api_base` does not match the configured
-`api_base`; in that case it is re-fetched and overwritten. `fetched_at` is
-informational only — there is no time-based TTL in v0.01. If the live fetch
+`api_base`; in that case it is re-fetched and overwritten. If the live fetch
 fails (network error, unexpected response), commands fall back to the
-hard-coded English namespace table rather than aborting.
+hard-coded English namespace table rather than aborting. `fetched_at` is
+informational only; there is no time-based TTL in the initial implementation.
 
 ## Command Behavior
 
@@ -176,10 +182,11 @@ should resolve it using the following steps:
    - Normalize the title proper to a DB key by trimming whitespace, collapsing
      spaces/underscores, and converting spaces to underscores.
    - Search for a registered article whose `namespace` and `dbkey` match the
-     parsed namespace ID and DB key. Transitionally, entries without
-     `namespace` or `dbkey` fall back to comparing canonical `title` values
-     until they are migrated by `mwsync.py migrate` (see Migration via
-     mwsync.py migrate).
+     parsed namespace ID and DB key. Entries without explicit `namespace` or
+     `dbkey` are first normalized as main-namespace entries by deriving
+     `namespace: 0` and a DB key from `title`. As a transitional fallback for
+     older non-main entries, compare canonical `title` values until they are
+     migrated by `mwsync.py migrate` (see Migration via mwsync.py migrate).
 
 If exactly one registered article matches, use it. If multiple match, exit with
 an ambiguity error listing the candidate keys. If none match, treat it as a new
@@ -227,12 +234,11 @@ The work is split across two commands so the diagnostic stays safe and
 the destructive one is explicit:
 
 - [`fsck`](fsck.md) detects legacy entries — missing
-  `namespace`/`namespace_name`/`dbkey`, colon-bearing keys
-  (e.g. `Talk:Software`), and flat `local` paths for non-main-namespace
-  pages — alongside its existing cache integrity checks. It does not
-  fix them.
+  namespace metadata on non-main entries, colon-bearing keys (e.g.
+  `Talk:Software`), and flat `local` paths for non-main-namespace pages —
+  alongside its existing cache integrity checks. It does not fix them.
 - [`migrate`](migrate.md) does the actual fixing. Safe metadata-only
-  migrations (adding `namespace`, `namespace_name`, `dbkey` to entries
+  migrations (adding `namespace`, `namespace_name`, `dbkey` to non-main entries
   whose `title` resolves cleanly via the namespace map) apply without
   prompting. Risky migrations that touch files on disk — renaming
   literal-colon keys (`Talk:Software` → `Talk__Software`) with the
@@ -247,7 +253,8 @@ subcommand encounters a legacy-shape working directory, its error
 message should point the user at `mwsync.py migrate` rather than
 attempt a quiet in-place fix.
 
-The resolver's fallback for legacy entries (Lookup Resolution Algorithm
-step 3) exists only to give users time to run `migrate`. A later release
-may drop the fallback once migration is widespread; new features should
-not be designed assuming the legacy shape keeps working.
+The resolver's title-comparison fallback for older non-main entries (Lookup
+Resolution Algorithm step 3) exists only to give users time to run `migrate`.
+A later release may drop that fallback once migration is widespread; new
+features should not be designed assuming the legacy non-main shape keeps
+working. Main-namespace derivation from `title` remains normal behavior.

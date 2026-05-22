@@ -125,8 +125,12 @@ above are unchanged, as is the CLI surface (no new flags on `fsck`).
 
 For each registered article, fsck additionally reports:
 
-- **Missing namespace metadata** — entry has no `namespace`, `dbkey`, or
-  `namespace_name` field. Reported as
+- **Missing namespace metadata** — entry appears to be a non-main-namespace
+  page but lacks `namespace`, `dbkey`, or `namespace_name`. An entry appears
+  non-main when its `title` parses with a recognized non-main namespace prefix,
+  or when a colon-bearing key parses that way. Main-namespace entries may omit
+  these fields; `fsck` should derive `namespace: 0` and `dbkey` from `title`
+  the same way the resolver does. Non-main omissions are reported as
   `<key>: missing namespace metadata (title=<title>)`.
 - **Literal-colon key** — entry's key in `wiki.articles` contains `:`
   (e.g. an old `Talk:Software` registration). Reported as
@@ -153,8 +157,9 @@ ask the user to delete and re-fetch. See [legacy.md](legacy.md).
 ### Interaction with the resolver fallback
 
 The Lookup Resolution Algorithm in [namespaces.md](namespaces.md) keeps
-a transitional fallback to `title` comparison for entries without
-`namespace`/`dbkey`. `mwsync.py migrate` is the mechanism that removes
+a transitional fallback to `title` comparison for older non-main entries
+without `namespace`/`dbkey`. `mwsync.py migrate` is the mechanism that removes
 the need for that fallback in a given working directory. New features
-should not rely on the fallback continuing to exist; it may be dropped
-in a later release once `migrate` is in wide use.
+should not rely on the non-main fallback continuing to exist; it may be dropped
+in a later release once `migrate` is in wide use. Deriving main-namespace
+metadata from `title` remains normal behavior.

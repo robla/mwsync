@@ -39,10 +39,11 @@ Migrations are split by risk.
 
 Pure metadata additions that do not touch files on disk:
 
-- Add `namespace`, `namespace_name`, and `dbkey` to entries whose `title`
-  resolves cleanly through the cached namespace map (see
+- Add `namespace`, `namespace_name`, and `dbkey` to non-main entries whose
+  `title` resolves cleanly through the cached namespace map (see
   [namespaces.md](namespaces.md) — *Namespace Metadata Source*).
-  Main-namespace pages stay omitted, per the spec.
+  Main-namespace pages may keep these fields omitted, per the spec; the
+  resolver and `fsck` derive `namespace: 0` and `dbkey` from `title`.
 
 One line per migrated entry is printed:
 
@@ -113,9 +114,9 @@ only command that rewrites `mwsync.yaml` entries or moves working
 files into their namespace-aware locations.
 
 The Lookup Resolution Algorithm in [namespaces.md](namespaces.md)
-keeps a transitional fallback so commands continue to work in a
-working directory that has not been migrated yet. `migrate` is the
-mechanism that removes the need for that fallback in a given working
-directory. The fallback may be dropped in a later release once
-`migrate` is in wide use; new features should not be designed assuming
-the legacy shape keeps working.
+keeps a transitional fallback so older non-main entries continue to work in a
+working directory that has not been migrated yet. `migrate` is the mechanism
+that removes the need for that fallback in a given working directory. The
+non-main fallback may be dropped in a later release once `migrate` is in wide
+use; new features should not be designed assuming the legacy non-main shape
+keeps working. Main-namespace derivation from `title` is not legacy behavior.
