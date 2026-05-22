@@ -16,7 +16,7 @@ including `make`, interpret colons specially, so that default is not robust.
 
 ## Separate Title, Key, and Local Path
 
-`mwsync.yaml` should distinguish three concepts:
+`mwsync.yaml` should distinguish these concepts:
 
 ```yaml
 wiki:
@@ -25,15 +25,15 @@ wiki:
       title: Talk:Software
       namespace: 1
       namespace_name: Talk
-      dbkey: Talk:Software
+      dbkey: Software
       local: Talk/Software.mw
 ```
 
-- `title` is the canonical MediaWiki title used for API calls.
+- `title` is the canonical MediaWiki title used for API calls (e.g. `Talk:Software`).
 - `namespace` is the numeric namespace ID, such as `0` for main, `1` for Talk,
   `10` for Template, and `14` for Category.
-- `namespace_name` is the localized namespace label when one exists.
-- `dbkey` is the MediaWiki title form with spaces normalized to underscores.
+- `namespace_name` is the localized/canonical namespace prefix (e.g. `Talk`).
+- `dbkey` is the page title *excluding* the namespace prefix, with spaces normalized to underscores (e.g. `Software`).
 - `local` is the editable working-copy path.
 
 The article key under `wiki.articles` should remain a stable internal
@@ -59,7 +59,8 @@ structurally distinct from main-namespace articles.
 
 Main-namespace pages should continue to live at the top level by default.
 Non-main namespaces should use `<Namespace>/<Page_Title>.mw`. The namespace
-directory should use the canonical namespace name from the target wiki, with a
+directory should use the canonical namespace name from the target wiki, with
+spaces normalized to underscores (e.g. `Project_talk` for namespace 5), and a
 safe fallback such as `ns_01` if the namespace has no stable name.
 
 ## Alternatives
@@ -89,29 +90,50 @@ format=json
 formatversion=2
 ```
 
-This should eventually be cached under a wiki-level cache directory, likely
-`_cache/_titles/` or a sibling such as `_cache/_siteinfo/`. Hard-coding common
-namespace IDs is acceptable as a fallback, but checkout/add should prefer the
-wiki's actual namespace map when available.
+This should be cached under the wiki-level cache directory as `_cache/_titles/namespaces.json` when fetching titles. Hard-coding common namespace IDs (standard English namespaces) is acceptable as a fallback when the cache is missing, but checkout/add should prefer the wiki's actual namespace map when available.
+
+The cached JSON format should store the mapping of namespace IDs to names and list aliases for resolution:
+
+```json
+{
+  "fetched_at": "2026-05-22T22:56:00Z",
+  "api_base": "https://electowiki.org/w/api.php",
+  "namespaces": {
+    "0": {"canonical": "", "local": ""},
+    "1": {"canonical": "Talk", "local": "Talk"},
+    "10": {"canonical": "Template", "local": "Template"},
+    "14": {"canonical": "Category", "local": "Category"}
+  },
+  "aliases": {
+    "talk": 1,
+    "template": 10,
+    "category": 14
+  }
+}
+```
+All keys in the `aliases` object must be lowercase to support case-insensitive namespace lookup.
 
 ## Command Behavior
 
 `mwsync.py add Talk:Software` and `mwsync.py checkout Talk:Software` should
 resolve `Talk` as a namespace prefix for the configured wiki. The resulting
-entry should store `title: Talk:Software`, `namespace: 1`, and a safe default
-`local`.
+entry should store `title: Talk:Software`, `namespace: 1`, `namespace_name: Talk`,
+`dbkey: Software`, and a safe default `local`.
 
-Lookup should remain forgiving. Users should be able to refer to a tracked page
-by article key, canonical title, DB key, or configured local path:
+### Lookup Resolution Algorithm
 
-```bash
-mwsync.py status Talk:Software
-mwsync.py status Talk/Software.mw
-mwsync.py status Talk__Software
-```
+When a command receives a target string `target` representing an article, it should resolve it using the following steps:
 
-If multiple entries match a shorthand, the command should fail with an
-ambiguity error and list the matching keys.
+1. **Exact Key Match**: Check if `target` matches a key in `wiki.articles` (e.g. `Talk__Software`) directly.
+2. **Local Path Match**: Check if `target` (with or without the `.mw` suffix) matches the `local` path of any registered article.
+3. **Parse and Match Title**:
+   - Normalize delimiters: treat `/` and `:` as potential namespace separators.
+   - If the first segment (case-insensitively, e.g. `talk` or `Talk`) is a known namespace name or alias, extract the namespace ID and treat the rest as the page title.
+   - Otherwise, treat the entire string as a main-namespace (`0`) title.
+   - Normalize the title (replace spaces and underscores with spaces, capitalize the first letter).
+   - Search for a registered article whose `namespace` and normalized `title` (or `dbkey` with namespace prefix) match the parsed values.
+
+If exactly one registered article matches, use it. If multiple match, exit with an ambiguity error listing the candidate keys. If none match, treat it as a new article target to be registered.
 
 ## Cache Layout Implications
 
