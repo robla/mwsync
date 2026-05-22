@@ -44,6 +44,25 @@ identifier, not the only place namespace information is stored. It may continue
 to use a filesystem-safe encoding, but code should not infer the MediaWiki
 namespace only from the key.
 
+For *new* entries created by `add` or `checkout`, the key is derived as:
+
+- Main namespace: the page dbkey (e.g. `Software`).
+- Other namespaces: `<NamespaceName>__<dbkey>` joined by a double underscore
+  (e.g. `Talk__Software`, `Template__Election_methods`,
+  `Category__Ranked_voting_methods`). `NamespaceName` is the canonical name
+  from the wiki's namespace map — not aliases or localized variants — so keys
+  stay stable across `siteinfo` refreshes.
+
+For main-namespace articles, `namespace`, `namespace_name`, and `dbkey` may be
+omitted. The resolver treats a missing `namespace` as `0` and derives the
+`dbkey` from `title`. This keeps simple existing entries (e.g.
+`Software: {title: Software, local: Software.mw}`) untouched.
+
+The stored `url` for non-main-namespace articles should be built from the
+canonical `title`, preserving the `:` between namespace prefix and page name
+(e.g. `https://electowiki.org/wiki/Talk:Software`) — not from the
+double-underscore article key.
+
 ## Recommended Local Filename Policy
 
 Default local paths should be namespace-aware:
@@ -121,7 +140,18 @@ list aliases for resolution:
 ```
 
 All keys in the `aliases` object must be lowercase to support case-insensitive
-namespace lookup.
+namespace lookup. The `canonical` and `local` strings under `namespaces` retain
+their natural casing; the resolver case-folds both sides at lookup time.
+
+The namespace map is fetched lazily the first time a command needs namespace
+resolution — typically the first `add`/`checkout` of any target, or any
+resolution of a colon-bearing argument that does not match an existing key or
+`local` path. Once fetched it is reused for subsequent invocations. The cache
+is treated as stale when its `api_base` does not match the configured
+`api_base`; in that case it is re-fetched and overwritten. `fetched_at` is
+informational only — there is no time-based TTL in v0.01. If the live fetch
+fails (network error, unexpected response), commands fall back to the
+hard-coded English namespace table rather than aborting.
 
 ## Command Behavior
 
@@ -146,8 +176,10 @@ should resolve it using the following steps:
    - Normalize the title proper to a DB key by trimming whitespace, collapsing
      spaces/underscores, and converting spaces to underscores.
    - Search for a registered article whose `namespace` and `dbkey` match the
-     parsed namespace ID and DB key. Existing entries without `namespace` or
-     `dbkey` should fall back to comparing canonical `title` values.
+     parsed namespace ID and DB key. Transitionally, entries without
+     `namespace` or `dbkey` fall back to comparing canonical `title` values
+     until they are migrated by `mwsync.py migrate` (see Migration via
+     mwsync.py migrate).
 
 If exactly one registered article matches, use it. If multiple match, exit with
 an ambiguity error listing the candidate keys. If none match, treat it as a new
@@ -176,7 +208,46 @@ non-main namespaces, with explicit namespace metadata in `mwsync.yaml`.
 The first implementation step should be conservative:
 
 1. Add helpers that parse and normalize namespace-prefixed titles.
-2. Store `namespace`, `namespace_name`, and `dbkey` for newly added pages.
-3. Change default local paths for non-main namespaces to `<Namespace>/<Title>.mw`.
-4. Keep resolving existing `Talk__Software.mw` entries through their configured
-   `local` field so current checkouts do not break.
+2. Store `namespace`, `namespace_name`, and `dbkey` for newly added non-main
+   pages. Main-namespace adds may continue to write only `title`, `url`, and
+   `local`.
+3. Change default local paths for non-main namespaces to `<Namespace>/<Title>.mw`,
+   creating intermediate directories on first write (`merge`, `checkout`).
+4. During the migration window, continue resolving existing
+   `Talk__Software.mw` entries through their configured `local` field so
+   current checkouts do not break before `mwsync.py migrate` is run.
+   This fallback is transitional, not permanent (see Migration via
+   mwsync.py migrate).
+
+### Migration via mwsync.py migrate
+
+`mwsync` is new enough and has few enough users that the long-term plan
+is *migration* of legacy entries, not permanent compatibility shims.
+The work is split across two commands so the diagnostic stays safe and
+the destructive one is explicit:
+
+- [`fsck`](fsck.md) detects legacy entries — missing
+  `namespace`/`namespace_name`/`dbkey`, colon-bearing keys
+  (e.g. `Talk:Software`), and flat `local` paths for non-main-namespace
+  pages — alongside its existing cache integrity checks. It does not
+  fix them.
+- [`migrate`](migrate.md) does the actual fixing. Safe metadata-only
+  migrations (adding `namespace`, `namespace_name`, `dbkey` to entries
+  whose `title` resolves cleanly via the namespace map) apply without
+  prompting. Risky migrations that touch files on disk — renaming
+  literal-colon keys (`Talk:Software` → `Talk__Software`) with the
+  matching `_cache/<key>/` rename, and moving flat working files
+  (`Talk__Software.mw` → `Talk/Software.mw`) — prompt per-entry unless
+  `--yes` is given. `--dry-run` previews every change without writing.
+
+This split keeps `fsck` purely diagnostic in the spirit of `git fsck` /
+`brew doctor`, while `migrate` is the one command that rewrites
+`mwsync.yaml` and moves working files. When another `mwsync.py`
+subcommand encounters a legacy-shape working directory, its error
+message should point the user at `mwsync.py migrate` rather than
+attempt a quiet in-place fix.
+
+The resolver's fallback for legacy entries (Lookup Resolution Algorithm
+step 3) exists only to give users time to run `migrate`. A later release
+may drop the fallback once migration is widespread; new features should
+not be designed assuming the legacy shape keeps working.
