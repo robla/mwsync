@@ -33,7 +33,10 @@ wiki:
 - `namespace` is the numeric namespace ID, such as `0` for main, `1` for Talk,
   `10` for Template, and `14` for Category.
 - `namespace_name` is the localized/canonical namespace prefix (e.g. `Talk`).
-- `dbkey` is the page title *excluding* the namespace prefix, with spaces normalized to underscores (e.g. `Software`).
+- `dbkey` is the MediaWiki database-key form of the page title *excluding* the
+  namespace prefix, with spaces normalized to underscores (e.g. `Software`).
+  This mirrors MediaWiki's `page_namespace` plus `page_title` model; the full
+  human-readable title remains available as `title`.
 - `local` is the editable working-copy path.
 
 The article key under `wiki.articles` should remain a stable internal
@@ -90,9 +93,14 @@ format=json
 formatversion=2
 ```
 
-This should be cached under the wiki-level cache directory as `_cache/_titles/namespaces.json` when fetching titles. Hard-coding common namespace IDs (standard English namespaces) is acceptable as a fallback when the cache is missing, but checkout/add should prefer the wiki's actual namespace map when available.
+This should be cached under the wiki-level cache directory as
+`_cache/_titles/namespaces.json` when fetching titles. Hard-coding common
+namespace IDs (standard English namespaces) is acceptable as a fallback when the
+cache is missing, but checkout/add should prefer the wiki's actual namespace map
+when available.
 
-The cached JSON format should store the mapping of namespace IDs to names and list aliases for resolution:
+The cached JSON format should store the mapping of namespace IDs to names and
+list aliases for resolution:
 
 ```json
 {
@@ -111,7 +119,9 @@ The cached JSON format should store the mapping of namespace IDs to names and li
   }
 }
 ```
-All keys in the `aliases` object must be lowercase to support case-insensitive namespace lookup.
+
+All keys in the `aliases` object must be lowercase to support case-insensitive
+namespace lookup.
 
 ## Command Behavior
 
@@ -122,18 +132,26 @@ entry should store `title: Talk:Software`, `namespace: 1`, `namespace_name: Talk
 
 ### Lookup Resolution Algorithm
 
-When a command receives a target string `target` representing an article, it should resolve it using the following steps:
+When a command receives a target string `target` representing an article, it
+should resolve it using the following steps:
 
 1. **Exact Key Match**: Check if `target` matches a key in `wiki.articles` (e.g. `Talk__Software`) directly.
 2. **Local Path Match**: Check if `target` (with or without the `.mw` suffix) matches the `local` path of any registered article.
 3. **Parse and Match Title**:
-   - Normalize delimiters: treat `/` and `:` as potential namespace separators.
+   - Treat `:` as the MediaWiki namespace separator. Treat `/` as a local-path
+     separator only when matching configured `local` paths; do not reinterpret
+     arbitrary slashes in MediaWiki titles as namespace separators.
    - If the first segment (case-insensitively, e.g. `talk` or `Talk`) is a known namespace name or alias, extract the namespace ID and treat the rest as the page title.
    - Otherwise, treat the entire string as a main-namespace (`0`) title.
-   - Normalize the title (replace spaces and underscores with spaces, capitalize the first letter).
-   - Search for a registered article whose `namespace` and normalized `title` (or `dbkey` with namespace prefix) match the parsed values.
+   - Normalize the title proper to a DB key by trimming whitespace, collapsing
+     spaces/underscores, and converting spaces to underscores.
+   - Search for a registered article whose `namespace` and `dbkey` match the
+     parsed namespace ID and DB key. Existing entries without `namespace` or
+     `dbkey` should fall back to comparing canonical `title` values.
 
-If exactly one registered article matches, use it. If multiple match, exit with an ambiguity error listing the candidate keys. If none match, treat it as a new article target to be registered.
+If exactly one registered article matches, use it. If multiple match, exit with
+an ambiguity error listing the candidate keys. If none match, treat it as a new
+article target to be registered.
 
 ## Cache Layout Implications
 
