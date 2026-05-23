@@ -17,6 +17,7 @@ Subcommands:
   log       Show cached revision history
   show      Print cached revision text
   fsck      Check cache refs, history, and revision files
+  migrate   Update legacy article entries to the current namespace layout
   status    Show sync state of tracked articles
 
 Usage:
@@ -59,6 +60,26 @@ DEFAULT_CONFIG_PATH = "mwsync.yaml"
 DEFAULT_API_BASE = "https://electowiki.org/w/api.php"
 DEFAULT_HISTORY_DEPTH = 50
 USER_AGENT = "mwsync/1.0 (+https://electowiki.org/)"
+NAMESPACE_CACHE_PATH = os.path.join("_cache", "_titles", "namespaces.json")
+
+FALLBACK_NAMESPACES = {
+    "0": {"canonical": "", "local": ""},
+    "1": {"canonical": "Talk", "local": "Talk"},
+    "2": {"canonical": "User", "local": "User"},
+    "3": {"canonical": "User talk", "local": "User talk"},
+    "4": {"canonical": "Project", "local": "Project"},
+    "5": {"canonical": "Project talk", "local": "Project talk"},
+    "6": {"canonical": "File", "local": "File"},
+    "7": {"canonical": "File talk", "local": "File talk"},
+    "8": {"canonical": "MediaWiki", "local": "MediaWiki"},
+    "9": {"canonical": "MediaWiki talk", "local": "MediaWiki talk"},
+    "10": {"canonical": "Template", "local": "Template"},
+    "11": {"canonical": "Template talk", "local": "Template talk"},
+    "12": {"canonical": "Help", "local": "Help"},
+    "13": {"canonical": "Help talk", "local": "Help talk"},
+    "14": {"canonical": "Category", "local": "Category"},
+    "15": {"canonical": "Category talk", "local": "Category talk"},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +134,232 @@ def minimal_config() -> dict:
     }
 
 
-def _parse_article_url(url: str) -> tuple[str, str, str]:
+def _normalize_dbkey(value: str) -> str:
+    parts = value.replace("_", " ").strip().split()
+    return "_".join(parts)
+
+
+def _title_from_dbkey(dbkey: str) -> str:
+    return dbkey.replace("_", " ")
+
+
+def _namespace_segment(name: str, namespace_id: int) -> str:
+    dbkey = _normalize_dbkey(name)
+    return dbkey or f"ns_{int(namespace_id):02d}"
+
+
+def _fallback_namespace_map(api_base: str = "") -> dict:
+    aliases = {}
+    for raw_id, ns in FALLBACK_NAMESPACES.items():
+        ns_id = int(raw_id)
+        for name in (ns.get("canonical", ""), ns.get("local", "")):
+            if name:
+                aliases[name.casefold()] = ns_id
+    return {
+        "fetched_at": "",
+        "api_base": api_base,
+        "namespaces": FALLBACK_NAMESPACES,
+        "aliases": aliases,
+        "source": "fallback",
+    }
+
+
+def _normalize_namespace_map(raw: dict, api_base: str) -> dict:
+    namespaces = {}
+    aliases = {}
+
+    raw_namespaces = raw.get("namespaces", {})
+    if isinstance(raw_namespaces, list):
+        ns_items = []
+        for item in raw_namespaces:
+            if isinstance(item, dict):
+                ns_items.append((str(item.get("id", "")), item))
+    else:
+        ns_items = list(raw_namespaces.items()) if isinstance(raw_namespaces, dict) else []
+
+    for raw_id, item in ns_items:
+        try:
+            ns_id = int(raw_id)
+        except (TypeError, ValueError):
+            try:
+                ns_id = int(item.get("id"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+        if not isinstance(item, dict):
+            continue
+        local = item.get("local")
+        if local is None:
+            local = item.get("*", "")
+        canonical = item.get("canonical", "")
+        if ns_id == 0:
+            local = ""
+            canonical = ""
+        namespaces[str(ns_id)] = {
+            "canonical": canonical or local or "",
+            "local": local or canonical or "",
+        }
+        for name in (canonical, local):
+            if name:
+                aliases[str(name).casefold()] = ns_id
+
+    raw_aliases = raw.get("aliases", {})
+    if isinstance(raw_aliases, dict):
+        for alias, ns_id in raw_aliases.items():
+            try:
+                aliases[str(alias).casefold()] = int(ns_id)
+            except (TypeError, ValueError):
+                continue
+    elif isinstance(raw_aliases, list):
+        for item in raw_aliases:
+            if not isinstance(item, dict):
+                continue
+            alias = item.get("alias") or item.get("*")
+            try:
+                ns_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if alias:
+                aliases[str(alias).casefold()] = ns_id
+
+    fallback = _fallback_namespace_map(api_base)
+    for raw_id, ns in fallback["namespaces"].items():
+        namespaces.setdefault(raw_id, ns)
+    for alias, ns_id in fallback["aliases"].items():
+        aliases.setdefault(alias, ns_id)
+
+    return {
+        "fetched_at": raw.get("fetched_at", ""),
+        "api_base": raw.get("api_base", api_base),
+        "namespaces": namespaces,
+        "aliases": aliases,
+    }
+
+
+def _fetch_namespace_map(api_base: str) -> dict:
+    params = {
+        "action": "query",
+        "format": "json",
+        "meta": "siteinfo",
+        "siprop": "namespaces|namespacealiases",
+        "formatversion": "2",
+    }
+    url = api_base + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    query = data.get("query", {})
+    if not query:
+        raise ValueError("MediaWiki siteinfo response did not include query data")
+    namespace_map = _normalize_namespace_map({
+        "api_base": api_base,
+        "fetched_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "namespaces": query.get("namespaces", {}),
+        "aliases": query.get("namespacealiases", []),
+    }, api_base)
+    if not _write_json(NAMESPACE_CACHE_PATH, namespace_map):
+        raise ValueError(f"failed to write {NAMESPACE_CACHE_PATH}")
+    return namespace_map
+
+
+def _load_namespace_map(config: dict, *, fetch: bool = True) -> dict:
+    api_base = get_api_base(config)
+    try:
+        with open(NAMESPACE_CACHE_PATH, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+        if cached.get("api_base") == api_base:
+            return _normalize_namespace_map(cached, api_base)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"Warning: could not read {NAMESPACE_CACHE_PATH}: {e}", file=sys.stderr)
+
+    if fetch:
+        try:
+            return _fetch_namespace_map(api_base)
+        except Exception as e:
+            print(f"Warning: could not fetch namespace map: {e}", file=sys.stderr)
+    return _fallback_namespace_map(api_base)
+
+
+def _namespace_name(namespace_map: dict, namespace_id: int) -> str:
+    ns = namespace_map.get("namespaces", {}).get(str(int(namespace_id)), {})
+    name = ns.get("local") or ns.get("canonical") or ""
+    return name or f"ns_{int(namespace_id):02d}"
+
+
+def _namespace_id_for_prefix(namespace_map: dict, prefix: str) -> int | None:
+    return namespace_map.get("aliases", {}).get(prefix.casefold())
+
+
+def _parse_title_parts(raw_title: str, namespace_map: dict) -> dict:
+    raw = raw_title.strip()
+    if not raw:
+        print("Error: article name cannot be empty.", file=sys.stderr)
+        sys.exit(1)
+
+    title_text = raw.replace("_", " ")
+    namespace_id = 0
+    page_part = title_text
+    if ":" in title_text:
+        prefix, rest = title_text.split(":", 1)
+        resolved = _namespace_id_for_prefix(namespace_map, prefix.strip())
+        if resolved is not None and int(resolved) != 0:
+            namespace_id = int(resolved)
+            page_part = rest
+
+    dbkey = _normalize_dbkey(page_part)
+    namespace_name = "" if namespace_id == 0 else _namespace_name(namespace_map, namespace_id)
+    title = _title_from_dbkey(dbkey)
+    if namespace_id != 0:
+        title = f"{namespace_name}:{title}"
+    return {
+        "title": title,
+        "namespace": namespace_id,
+        "namespace_name": namespace_name,
+        "dbkey": dbkey,
+    }
+
+
+def _key_for_title_parts(parts: dict) -> str:
+    dbkey = parts["dbkey"]
+    if not dbkey:
+        print("Error: article title cannot be empty.", file=sys.stderr)
+        sys.exit(1)
+    namespace_id = int(parts["namespace"])
+    if namespace_id == 0:
+        return dbkey
+    namespace_name = _namespace_segment(parts.get("namespace_name", ""), namespace_id)
+    return f"{namespace_name}__{dbkey}"
+
+
+def _local_for_title_parts(parts: dict) -> str:
+    dbkey = parts["dbkey"]
+    namespace_id = int(parts["namespace"])
+    if namespace_id == 0:
+        return dbkey + ".mw"
+    namespace_name = _namespace_segment(parts.get("namespace_name", ""), namespace_id)
+    return os.path.join(namespace_name, dbkey + ".mw")
+
+
+def _article_fields_from_title(config: dict, raw_title: str, *,
+                               fetch_namespaces: bool = True) -> tuple[str, dict]:
+    namespace_map = _load_namespace_map(config, fetch=fetch_namespaces)
+    parts = _parse_title_parts(raw_title, namespace_map)
+    key = _key_for_title_parts(parts)
+    fields = {
+        "title": parts["title"],
+        "url": _article_url_from_title(config, parts["title"]),
+        "local": _local_for_title_parts(parts),
+    }
+    if int(parts["namespace"]) != 0:
+        fields["namespace"] = int(parts["namespace"])
+        fields["namespace_name"] = parts["namespace_name"]
+        fields["dbkey"] = parts["dbkey"]
+    return key, fields
+
+
+def _parse_article_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         print(f"Error: invalid URL: {url}", file=sys.stderr)
@@ -123,38 +369,37 @@ def _parse_article_url(url: str) -> tuple[str, str, str]:
         sys.exit(1)
 
     title_encoded = parsed.path.split("/wiki/", 1)[1]
-    title = urllib.parse.unquote(title_encoded).replace("_", " ")
-    key = urllib.parse.unquote(title_encoded).replace(" ", "_")
-    local = key + ".mw"
-    return key, title, local
+    return urllib.parse.unquote(title_encoded).replace("_", " ")
 
 
-def _parse_article_name(name: str) -> tuple[str, str, str]:
+def _parse_article_name(name: str) -> str:
     raw = name.strip()
     if not raw:
         print("Error: article name cannot be empty.", file=sys.stderr)
         sys.exit(1)
     if raw.endswith(".mw"):
         raw = raw[:-3]
-    title = raw.replace("_", " ")
-    key = title.replace(" ", "_")
-    local = key + ".mw"
-    return key, title, local
+    return raw.replace("_", " ")
 
 
-def _article_url_from_key(config: dict, key: str) -> str:
+def _article_url_from_title(config: dict, title: str) -> str:
     parsed = urllib.parse.urlparse(get_api_base(config))
     if not parsed.scheme or not parsed.netloc:
         return ""
+    title_path = title.replace(" ", "_")
 
     path = parsed.path
     if path.endswith("/w/api.php"):
-        article_path = path[:-len("/w/api.php")] + "/wiki/" + urllib.parse.quote(key, safe="/")
+        article_path = path[:-len("/w/api.php")] + "/wiki/" + urllib.parse.quote(title_path, safe="/:")
     elif path.endswith("/api.php"):
-        article_path = path[:-len("/api.php")] + "/wiki/" + urllib.parse.quote(key, safe="/")
+        article_path = path[:-len("/api.php")] + "/wiki/" + urllib.parse.quote(title_path, safe="/:")
     else:
-        article_path = "/wiki/" + urllib.parse.quote(key, safe="/")
+        article_path = "/wiki/" + urllib.parse.quote(title_path, safe="/:")
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, article_path, "", "", ""))
+
+
+def _article_url_from_key(config: dict, key: str) -> str:
+    return _article_url_from_title(config, key.replace("_", " "))
 
 
 def _article_url_prefix(config: dict) -> tuple[str, str, str] | None:
@@ -189,7 +434,7 @@ def _validate_article_url_matches_wiki(config: dict, url: str) -> None:
 
 
 def _article_url(config: dict, key: str, art: dict) -> str:
-    return art.get("url") or _article_url_from_key(config, key)
+    return art.get("url") or _article_url_from_title(config, art.get("title", key))
 
 
 def _looks_like_article_url(value: str) -> bool:
@@ -203,10 +448,13 @@ def find_article_entry(config: dict, key: str) -> tuple[str, dict] | None:
     if key in articles:
         return key, articles[key]
 
+    target = key[:-3] if key.endswith(".mw") else key
     local_matches = [
         (article_key, art)
         for article_key, art in articles.items()
-        if art.get("local", article_key + ".mw") == key
+        if (art.get("local", article_key + ".mw") == key
+            or (art.get("local", article_key + ".mw").endswith(".mw")
+                and art.get("local", article_key + ".mw")[:-3] == target))
     ]
     if len(local_matches) == 1:
         return local_matches[0]
@@ -216,7 +464,58 @@ def find_article_entry(config: dict, key: str) -> tuple[str, dict] | None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    if _looks_like_article_url(key):
+        _validate_article_url_matches_wiki(config, key)
+        raw_title = _parse_article_url(key)
+    else:
+        raw_title = _parse_article_name(key)
+
+    namespace_map = _load_namespace_map(config, fetch=":" in raw_title)
+    target_parts = _parse_title_parts(raw_title, namespace_map)
+    target_ns = int(target_parts["namespace"])
+    target_dbkey = target_parts["dbkey"]
+    title_matches = []
+    for article_key, art in articles.items():
+        art_parts = _article_parts(config, article_key, art, namespace_map)
+        if int(art_parts["namespace"]) == target_ns and art_parts["dbkey"] == target_dbkey:
+            title_matches.append((article_key, art))
+        elif target_ns != 0 and _canonical_title(art.get("title", article_key)) == target_parts["title"]:
+            title_matches.append((article_key, art))
+
+    if len(title_matches) == 1:
+        return title_matches[0]
+    if len(title_matches) > 1:
+        print(f"Error: article reference '{key}' matches multiple articles.", file=sys.stderr)
+        print(f"Matches: {', '.join(match[0] for match in title_matches)}", file=sys.stderr)
+        sys.exit(1)
     return None
+
+
+def _canonical_title(title: str) -> str:
+    if ":" in title:
+        prefix, rest = title.split(":", 1)
+        return prefix.replace("_", " ") + ":" + _title_from_dbkey(_normalize_dbkey(rest))
+    return _title_from_dbkey(_normalize_dbkey(title))
+
+
+def _article_parts(config: dict, key: str, art: dict, namespace_map: dict | None = None) -> dict:
+    if namespace_map is None:
+        namespace_map = _load_namespace_map(config, fetch=False)
+    if "namespace" in art and "dbkey" in art:
+        namespace_id = int(art.get("namespace") or 0)
+        namespace_name = art.get("namespace_name") or (
+            "" if namespace_id == 0 else _namespace_name(namespace_map, namespace_id)
+        )
+        dbkey = _normalize_dbkey(str(art.get("dbkey") or ""))
+        return {
+            "title": art.get("title", key),
+            "namespace": namespace_id,
+            "namespace_name": namespace_name,
+            "dbkey": dbkey,
+        }
+    raw_title = art.get("title", key)
+    return _parse_title_parts(raw_title, namespace_map)
 
 
 def _register_article_target(config: dict, config_path: str, target: str,
@@ -224,11 +523,20 @@ def _register_article_target(config: dict, config_path: str, target: str,
                              save: bool = True) -> tuple[str, dict, bool]:
     if _looks_like_article_url(target):
         _validate_article_url_matches_wiki(config, target)
-        key, title, local = _parse_article_url(target)
-        url = target
+        raw_title = _parse_article_url(target)
     else:
-        key, title, local = _parse_article_name(target)
-        url = _article_url_from_key(config, key)
+        raw_title = _parse_article_name(target)
+
+    existing = find_article_entry(config, target)
+    if existing:
+        existing_key, existing_art = existing
+        if allow_existing:
+            return existing_key, existing_art, False
+        print(f"Error: article '{existing_key}' is already registered in {config_path}.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    key, fields = _article_fields_from_title(config, raw_title, fetch_namespaces=":" in raw_title)
 
     wiki = config.setdefault("wiki", {})
     articles = wiki.setdefault("articles", {})
@@ -239,11 +547,7 @@ def _register_article_target(config: dict, config_path: str, target: str,
         print(f"Error: article '{key}' is already registered in {config_path}.", file=sys.stderr)
         sys.exit(1)
 
-    articles[key] = {
-        "title": title,
-        "url": url,
-        "local": local,
-    }
+    articles[key] = fields
     if save and not save_config(config, config_path):
         sys.exit(1)
     return key, articles[key], True
@@ -588,6 +892,24 @@ def _check_legacy_cache(key: str) -> None:
     sys.exit(1)
 
 
+def _default_local_for_article(config: dict, key: str, art: dict,
+                               namespace_map: dict | None = None) -> str:
+    parts = _article_parts(config, key, art, namespace_map)
+    return _local_for_title_parts(parts)
+
+
+def _article_has_non_main_title(config: dict, key: str, art: dict,
+                                namespace_map: dict | None = None) -> bool:
+    parts = _article_parts(config, key, art, namespace_map)
+    return int(parts.get("namespace") or 0) != 0
+
+
+def _new_key_for_article(config: dict, key: str, art: dict,
+                         namespace_map: dict | None = None) -> str:
+    parts = _article_parts(config, key, art, namespace_map)
+    return _key_for_title_parts(parts)
+
+
 def _write_json(path: str, data: dict) -> bool:
     content = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     return _atomic_write(path, content)
@@ -929,22 +1251,11 @@ def _ensure_cached_body(key: str, art: dict, revid: int, api_base: str) -> str:
 
 def _resolve_revision_arg(config: dict, spec: str, *, fetch_missing: bool = True) -> tuple[str, str]:
     if "@" not in spec:
-        articles = config.get("wiki", {}).get("articles", {})
-        if spec in articles:
-            local = articles[spec].get("local", spec + ".mw")
-            return local, f"{local} (local)"
-        matches = [
-            (key, art)
-            for key, art in articles.items()
-            if art.get("local", key + ".mw") == spec
-        ]
-        if len(matches) == 1:
-            key, art = matches[0]
+        found = find_article_entry(config, spec)
+        if found:
+            key, art = found
             local = art.get("local", key + ".mw")
             return local, f"{local} (local)"
-        if len(matches) > 1:
-            print(f"Error: local filename '{spec}' matches multiple articles.", file=sys.stderr)
-            sys.exit(1)
         if os.path.exists(spec):
             return spec, spec
         resolve_article_entry(config, spec)
@@ -1612,8 +1923,35 @@ def run_show(args, config: dict, config_path: str) -> None:
         sys.stdout.write(f.read())
 
 
-def _fsck_article(key: str, art: dict) -> int:
+def _fsck_article(config: dict, key: str, art: dict, namespace_map: dict | None = None) -> int:
+    if namespace_map is None:
+        namespace_map = _load_namespace_map(config, fetch=False)
     issues = 0
+    parts = _article_parts(config, key, art, namespace_map)
+    namespace_id = int(parts.get("namespace") or 0)
+    title = art.get("title", key)
+
+    if namespace_id != 0:
+        missing = [field for field in ("namespace", "namespace_name", "dbkey")
+                   if field not in art]
+        if missing:
+            print(f"{key}: missing namespace metadata (title={title})")
+            issues += 1
+
+        local = art.get("local", key + ".mw")
+        default_local = _local_for_title_parts(parts)
+        if os.path.dirname(local) == "":
+            print(f"{key}: flat local path for non-main namespace: {local}")
+            issues += 1
+        elif local != default_local:
+            # Non-default local paths are allowed, but highlight likely legacy flat escapes.
+            pass
+
+    if ":" in key:
+        new_key = _new_key_for_article(config, key, art, namespace_map)
+        print(f"{key}: legacy colon-bearing key, would migrate to {new_key}")
+        issues += 1
+
     if _legacy_cache_exists(key):
         print(f"{key}: legacy cache detected: {_server_snapshot_path(key)}")
         issues += 1
@@ -1716,11 +2054,139 @@ def run_fsck(args, config: dict, config_path: str) -> None:
         items = list(articles.items())
 
     issues = 0
+    namespace_map = _load_namespace_map(config, fetch=False)
     for key, art in items:
-        issues += _fsck_article(key, art)
+        issues += _fsck_article(config, key, art, namespace_map)
     if issues:
         print(f"fsck found {issues} issue(s).", file=sys.stderr)
         sys.exit(1)
+
+
+def _prompt_yes(prompt: str) -> bool:
+    try:
+        answer = input(prompt)
+    except EOFError:
+        return False
+    return answer.strip().casefold() in ("y", "yes")
+
+
+def _migrate_article(config: dict, config_path: str, key: str, art: dict,
+                     namespace_map: dict, *, dry_run: bool, yes: bool) -> tuple[str, bool, bool]:
+    """Return (current_key, changed, incomplete)."""
+    articles = config.setdefault("wiki", {}).setdefault("articles", {})
+    parts = _article_parts(config, key, art, namespace_map)
+    namespace_id = int(parts.get("namespace") or 0)
+    changed = False
+    incomplete = False
+
+    if namespace_id != 0:
+        missing = [field for field in ("namespace", "namespace_name", "dbkey")
+                   if field not in art]
+        if missing:
+            print(f"{key}: added namespace metadata "
+                  f"(namespace={namespace_id}, dbkey={parts['dbkey']})")
+            if not dry_run:
+                art["namespace"] = namespace_id
+                art["namespace_name"] = parts["namespace_name"]
+                art["dbkey"] = parts["dbkey"]
+                changed = True
+            else:
+                changed = True
+
+    desired_key = _key_for_title_parts(parts)
+    local = art.get("local", key + ".mw")
+    desired_local = _local_for_title_parts(parts)
+    risky: list[tuple[str, str, str]] = []
+
+    if ":" in key and desired_key != key:
+        risky.append(("rename key", key, desired_key))
+        if os.path.exists(_cache_dir(key)):
+            risky.append(("move cache", _cache_dir(key), _cache_dir(desired_key)))
+
+    if namespace_id != 0 and os.path.dirname(local) == "" and local != desired_local:
+        risky.append(("move file", local, desired_local))
+
+    if risky:
+        print(f"{key}: ready to migrate this entry:")
+        for label, source, target in risky:
+            print(f"  {label}:  {source} -> {target}")
+        if dry_run:
+            return key, True, False
+        if not yes and not _prompt_yes("Apply? [y/N] "):
+            return key, changed, True
+
+        if ":" in key and desired_key != key and desired_key in articles:
+            print(f"Error: cannot rename {key}; article key exists: {desired_key}",
+                  file=sys.stderr)
+            return key, changed, True
+        for label, source, target in risky:
+            if label == "rename key" or not os.path.exists(source):
+                continue
+            if os.path.exists(target):
+                print(f"Error: cannot {label}; destination exists: {target}", file=sys.stderr)
+                return key, changed, True
+
+        for label, source, target in risky:
+            if label == "rename key":
+                continue
+            if not os.path.exists(source):
+                continue
+            os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
+            try:
+                os.replace(source, target)
+            except OSError as e:
+                print(f"Error: cannot {label} {source} -> {target}: {e}", file=sys.stderr)
+                return key, changed, True
+
+        if ":" in key and desired_key != key:
+            articles[desired_key] = articles.pop(key)
+            key = desired_key
+            art = articles[key]
+        if namespace_id != 0 and os.path.dirname(local) == "" and local != desired_local:
+            art["local"] = desired_local
+        changed = True
+
+    if changed and not dry_run:
+        if not save_config(config, config_path):
+            return key, changed, True
+    return key, changed, incomplete
+
+
+def run_migrate(args, config: dict, config_path: str) -> None:
+    articles = config.get("wiki", {}).get("articles", {})
+    if not articles:
+        print("No articles registered.")
+        return
+
+    namespace_map = _load_namespace_map(config, fetch=True)
+    dry_run = getattr(args, "dry_run", False)
+    yes = getattr(args, "yes", False)
+
+    if getattr(args, "article", None):
+        key, art = resolve_article_entry(config, args.article)
+        items = [(key, art)]
+    else:
+        items = list(articles.items())
+
+    changed_any = False
+    incomplete = False
+    for key, art in items:
+        current_key, changed, failed = _migrate_article(
+            config, config_path, key, art, namespace_map, dry_run=dry_run, yes=yes,
+        )
+        changed_any = changed_any or changed
+        incomplete = incomplete or failed
+        if failed:
+            print(f"{current_key}: migration incomplete", file=sys.stderr)
+
+    if dry_run:
+        if not changed_any:
+            print("No migrations needed.")
+        return
+    if incomplete:
+        sys.exit(1)
+    if not changed_any:
+        print("No migrations needed.")
 
 
 def run_status(args, config: dict, config_path: str) -> None:
@@ -1882,6 +2348,16 @@ def main() -> None:
     p_fsck.add_argument("article", metavar="ARTICLE", nargs="?",
                         help="Article key (omit to check all)")
 
+    # migrate
+    p_migrate = sub.add_parser("migrate",
+                               help="Migrate legacy article entries and local paths")
+    p_migrate.add_argument("article", metavar="ARTICLE", nargs="?",
+                           help="Article key (omit to migrate all)")
+    p_migrate.add_argument("--dry-run", action="store_true",
+                           help="Preview migrations without writing")
+    p_migrate.add_argument("--yes", action="store_true",
+                           help="Apply risky migrations without prompting")
+
     # status
     p_status = sub.add_parser("status", help="Show sync state of tracked articles")
     p_status.add_argument("article", metavar="ARTICLE", nargs="?",
@@ -1920,6 +2396,8 @@ def main() -> None:
         run_show(args, config, config_path)
     elif args.subcommand == "fsck":
         run_fsck(args, config, config_path)
+    elif args.subcommand == "migrate":
+        run_migrate(args, config, config_path)
     elif args.subcommand == "status":
         run_status(args, config, config_path)
 
