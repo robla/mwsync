@@ -61,7 +61,7 @@ checked-out state:
   cache directory (`_cache/Talk:Software/` → `_cache/Talk__Software/`)
   to match.
 - Move a flat working file (`Talk__Software.mw`) into its
-  namespace-aware location (`_ns_Talk/Software.mw`), creating intermediate
+  namespace-aware location (`01ns_Talk/Software.mw`), creating intermediate
   directories as needed, and update the entry's `local` field. The
   article key does not change in this migration.
 
@@ -71,7 +71,7 @@ Each prompt prints the full set of changes for one entry and asks for
 ```
 <key>: ready to migrate this entry:
   rename key:  Talk:Software -> Talk__Software
-  move file:   Talk:Software.mw -> _ns_Talk/Software.mw
+  move file:   Talk:Software.mw -> 01ns_Talk/Software.mw
   move cache:  _cache/Talk:Software/ -> _cache/Talk__Software/
 Apply? [y/N]
 ```

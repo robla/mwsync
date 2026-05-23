@@ -137,7 +137,7 @@ For each registered article, fsck additionally reports:
   `<key>: legacy colon-bearing key, would migrate to <new_key>`.
 - **Flat non-main local path** — entry is a non-main-namespace article
   whose `local` is a flat filename rather than
-  `_ns_<Namespace>/<encoded-dbkey>.mw`.
+  `<NN>ns_<Namespace>/<encoded-dbkey>.mw`.
   Reported as
   `<key>: flat local path for non-main namespace: <local>`.
 

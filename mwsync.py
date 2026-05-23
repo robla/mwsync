@@ -153,7 +153,9 @@ def _encode_dbkey_segment(dbkey: str) -> str:
 
 
 def _namespace_local_dir(namespace_name: str, namespace_id: int) -> str:
-    return "_ns_" + _namespace_segment(namespace_name, namespace_id)
+    ns_id = int(namespace_id)
+    width = 2 if ns_id < 100 else len(str(ns_id))
+    return f"{ns_id:0{width}d}ns_" + _namespace_segment(namespace_name, namespace_id)
 
 
 def _fallback_namespace_map(api_base: str = "") -> dict:

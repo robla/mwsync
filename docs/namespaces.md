@@ -26,7 +26,7 @@ wiki:
       namespace: 1
       namespace_name: Talk
       dbkey: Software
-      local: _ns_Talk/Software.mw
+      local: 01ns_Talk/Software.mw
 ```
 
 - `title` is the canonical MediaWiki title used for API calls (e.g. `Talk:Software`).
@@ -78,11 +78,11 @@ Default local paths should be namespace-aware and shallow:
 ```text
 Software.mw
 Foo__Bar.mw
-_ns_Talk/Software.mw
-_ns_Template/Election_methods.mw
-_ns_Category/Ranked_voting_methods.mw
-_ns_User/RobLa.mw
-_ns_User/RobLa__Journal.mw
+01ns_Talk/Software.mw
+10ns_Template/Election_methods.mw
+14ns_Category/Ranked_voting_methods.mw
+02ns_User/RobLa.mw
+02ns_User/RobLa__Journal.mw
 ```
 
 This is more readable than putting all namespace pages in one flat directory,
@@ -92,11 +92,13 @@ visually separate from main-namespace files.
 Main-namespace pages should continue to live at the top level by default.
 Main-namespace subpages should not create directories; encode `/` in the DB key
 as `__`, so the theoretical main-namespace page `Foo/Bar` uses `Foo__Bar.mw`.
-Non-main namespaces should use `_ns_<NamespaceName>/<encoded-dbkey>.mw`, where
+Non-main namespaces should use `<NN>ns_<NamespaceName>/<encoded-dbkey>.mw`, where
 `<encoded-dbkey>` also replaces `/` with `__`. The namespace directory should
 use the stored `namespace_name`, with spaces normalized to underscores (e.g.
-`_ns_Project_talk` or a wiki-specific project-talk name for namespace 5), and a
-safe fallback such as `_ns_01` if the namespace has no stable name.
+`05ns_Project_talk` or a wiki-specific project-talk name for namespace 5), and a
+safe fallback such as `01ns_ns_01` for namespace 1 if the namespace has no
+stable name. Use at least two digits; namespace IDs 100 and above expand
+naturally, such as `100ns_Foo`.
 
 ## Alternatives
 
@@ -104,7 +106,7 @@ safe fallback such as `_ns_01` if the namespace has no stable name.
 safe because `mwsync.yaml` records the real title. It is not self-explanatory
 and can collide with real titles that normalize similarly.
 
-`_ns/Talk/Software.mw` groups all namespace pages under one top-level
+`ns/Talk/Software.mw` groups all namespace pages under one top-level
 directory, but it adds an extra hierarchy level and makes shallow browsing a
 little less direct.
 
@@ -220,7 +222,7 @@ canonical title and namespace metadata in `mwsync.yaml` are the durable state.
 ## Near-Term Recommendation
 
 Do not treat `Talk__Software.mw` or `Talk/Software.mw` as the final convention.
-The preferred default is `_ns_Talk/Software.mw` for non-main namespaces, with
+The preferred default is `01ns_Talk/Software.mw` for non-main namespaces, with
 explicit namespace metadata in `mwsync.yaml`.
 
 The first implementation step should be conservative:
@@ -230,7 +232,7 @@ The first implementation step should be conservative:
    pages. Main-namespace adds may continue to write only `title`, `url`, and
    `local`.
 3. Change default local paths for non-main namespaces to
-   `_ns_<Namespace>/<encoded-dbkey>.mw`, creating intermediate directories on
+   `<NN>ns_<Namespace>/<encoded-dbkey>.mw`, creating intermediate directories on
    first write (`merge`, `checkout`).
 4. During the migration window, core commands should detect existing legacy
    non-main entries and fail gracefully with a pointer to `mwsync.py migrate`.
@@ -253,7 +255,7 @@ the destructive one is explicit:
   prompting. Risky migrations that touch files on disk — renaming
   literal-colon keys (`Talk:Software` → `Talk__Software`) with the
   matching `_cache/<key>/` rename, and moving flat working files
-  (`Talk__Software.mw` → `_ns_Talk/Software.mw`) — prompt per-entry unless
+  (`Talk__Software.mw` → `01ns_Talk/Software.mw`) — prompt per-entry unless
   `--yes` is given. `--dry-run` previews every change without writing.
 
 This split keeps `fsck` purely diagnostic in the spirit of `git fsck` /
