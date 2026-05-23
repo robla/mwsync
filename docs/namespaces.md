@@ -26,7 +26,7 @@ wiki:
       namespace: 1
       namespace_name: Talk
       dbkey: Software
-      local: Talk/Software.mw
+      local: _ns_Talk/Software.mw
 ```
 
 - `title` is the canonical MediaWiki title used for API calls (e.g. `Talk:Software`).
@@ -51,11 +51,14 @@ namespace only from the key.
 For *new* entries created by `add` or `checkout`, the key is derived as:
 
 - Main namespace: the page dbkey (e.g. `Software`).
-- Other namespaces: `<NamespaceName>__<dbkey>` joined by a double underscore
+- Other namespaces: `<NamespaceName>__<encoded-dbkey>` joined by a double underscore
   (e.g. `Talk__Software`, `Template__Election_methods`,
   `Category__Ranked_voting_methods`). `NamespaceName` is the stored
   `namespace_name`, derived from the wiki's primary namespace map entry — not
   aliases — so generated keys stay readable and deterministic for that wiki.
+  The encoded DB key replaces `/` with `__`, so `User:RobLa/Journal` uses
+  `User__RobLa__Journal` as its article key while preserving
+  `dbkey: RobLa/Journal`.
 
 For main-namespace articles, `namespace`, `namespace_name`, and `dbkey` may be
 omitted. The resolver treats a missing `namespace` as `0` and derives the
@@ -70,32 +73,40 @@ double-underscore article key.
 
 ## Recommended Local Filename Policy
 
-Default local paths should be namespace-aware:
+Default local paths should be namespace-aware and shallow:
 
 ```text
 Software.mw
-Talk/Software.mw
-Template/Election_methods.mw
-Category/Ranked_voting_methods.mw
+Foo__Bar.mw
+_ns_Talk/Software.mw
+_ns_Template/Election_methods.mw
+_ns_Category/Ranked_voting_methods.mw
+_ns_User/RobLa.mw
+_ns_User/RobLa__Journal.mw
 ```
 
-This is more readable than `Talk__Software.mw`, avoids colons, and preserves the
-human distinction between namespace and page title. It does introduce
-subdirectories, but that is a reasonable tradeoff: namespace pages are already
-structurally distinct from main-namespace articles.
+This is more readable than putting all namespace pages in one flat directory,
+avoids colons, avoids deep subpage trees, and keeps MediaWiki namespaces
+visually separate from main-namespace files.
 
 Main-namespace pages should continue to live at the top level by default.
-Non-main namespaces should use `<Namespace>/<Page_Title>.mw`. The namespace
-directory should use the stored `namespace_name`, with spaces normalized to
-underscores (e.g. `Project_talk` or a wiki-specific project-talk name for
-namespace 5), and a safe fallback such as `ns_01` if the namespace has no
-stable name.
+Main-namespace subpages should not create directories; encode `/` in the DB key
+as `__`, so the theoretical main-namespace page `Foo/Bar` uses `Foo__Bar.mw`.
+Non-main namespaces should use `_ns_<NamespaceName>/<encoded-dbkey>.mw`, where
+`<encoded-dbkey>` also replaces `/` with `__`. The namespace directory should
+use the stored `namespace_name`, with spaces normalized to underscores (e.g.
+`_ns_Project_talk` or a wiki-specific project-talk name for namespace 5), and a
+safe fallback such as `_ns_01` if the namespace has no stable name.
 
 ## Alternatives
 
 `Talk__Software.mw` is compact and works in a flat directory, but it is only
 safe because `mwsync.yaml` records the real title. It is not self-explanatory
 and can collide with real titles that normalize similarly.
+
+`_ns/Talk/Software.mw` groups all namespace pages under one top-level
+directory, but it adds an extra hierarchy level and makes shallow browsing a
+little less direct.
 
 `Talk%3ASoftware.mw` is reversible and flat, but it is less pleasant to type
 and review.
@@ -119,10 +130,10 @@ formatversion=2
 ```
 
 This should be cached under the wiki-level cache directory as
-`_cache/_titles/namespaces.json` when fetching titles. Hard-coding common
-namespace IDs (standard English namespaces) is acceptable as a fallback when the
-cache is missing, but checkout/add should prefer the wiki's actual namespace map
-when available.
+`_cache/_titles/namespaces.json` when namespace-aware commands need it. Core
+commands should not silently fall back to hard-coded namespace IDs. If the
+cache is missing or stale and the live `siteinfo` fetch fails, fail gracefully
+and tell the user that the namespace map is required.
 
 The cached JSON format should store the mapping of namespace IDs to names and
 list aliases for resolution:
@@ -155,8 +166,8 @@ resolution of a colon-bearing argument that does not match an existing key or
 `local` path. Once fetched it is reused for subsequent invocations. The cache
 is treated as stale when its `api_base` does not match the configured
 `api_base`; in that case it is re-fetched and overwritten. If the live fetch
-fails (network error, unexpected response), commands fall back to the
-hard-coded English namespace table rather than aborting. `fetched_at` is
+fails (network error, unexpected response), the command should abort with a
+clear error rather than guessing from a fallback table. `fetched_at` is
 informational only; there is no time-based TTL in the initial implementation.
 
 ## Command Behavior
@@ -184,9 +195,9 @@ should resolve it using the following steps:
    - Search for a registered article whose `namespace` and `dbkey` match the
      parsed namespace ID and DB key. Entries without explicit `namespace` or
      `dbkey` are first normalized as main-namespace entries by deriving
-     `namespace: 0` and a DB key from `title`. As a transitional fallback for
-     older non-main entries, compare canonical `title` values until they are
-     migrated by `mwsync.py migrate` (see Migration via mwsync.py migrate).
+     `namespace: 0` and a DB key from `title`. Older non-main entries without
+     namespace metadata should not be resolved quietly; fail with a message
+     pointing at `mwsync.py migrate`.
 
 If exactly one registered article matches, use it. If multiple match, exit with
 an ambiguity error listing the candidate keys. If none match, treat it as a new
@@ -208,9 +219,9 @@ canonical title and namespace metadata in `mwsync.yaml` are the durable state.
 
 ## Near-Term Recommendation
 
-Do not treat `Talk__Software.mw` as the final convention. It is an acceptable
-temporary escape hatch, but the better default is `Talk/Software.mw` for
-non-main namespaces, with explicit namespace metadata in `mwsync.yaml`.
+Do not treat `Talk__Software.mw` or `Talk/Software.mw` as the final convention.
+The preferred default is `_ns_Talk/Software.mw` for non-main namespaces, with
+explicit namespace metadata in `mwsync.yaml`.
 
 The first implementation step should be conservative:
 
@@ -218,13 +229,12 @@ The first implementation step should be conservative:
 2. Store `namespace`, `namespace_name`, and `dbkey` for newly added non-main
    pages. Main-namespace adds may continue to write only `title`, `url`, and
    `local`.
-3. Change default local paths for non-main namespaces to `<Namespace>/<Title>.mw`,
-   creating intermediate directories on first write (`merge`, `checkout`).
-4. During the migration window, continue resolving existing
-   `Talk__Software.mw` entries through their configured `local` field so
-   current checkouts do not break before `mwsync.py migrate` is run.
-   This fallback is transitional, not permanent (see Migration via
-   mwsync.py migrate).
+3. Change default local paths for non-main namespaces to
+   `_ns_<Namespace>/<encoded-dbkey>.mw`, creating intermediate directories on
+   first write (`merge`, `checkout`).
+4. During the migration window, core commands should detect existing legacy
+   non-main entries and fail gracefully with a pointer to `mwsync.py migrate`.
+   Do not add broad compatibility fallbacks to normal command paths.
 
 ### Migration via mwsync.py migrate
 
@@ -243,7 +253,7 @@ the destructive one is explicit:
   prompting. Risky migrations that touch files on disk — renaming
   literal-colon keys (`Talk:Software` → `Talk__Software`) with the
   matching `_cache/<key>/` rename, and moving flat working files
-  (`Talk__Software.mw` → `Talk/Software.mw`) — prompt per-entry unless
+  (`Talk__Software.mw` → `_ns_Talk/Software.mw`) — prompt per-entry unless
   `--yes` is given. `--dry-run` previews every change without writing.
 
 This split keeps `fsck` purely diagnostic in the spirit of `git fsck` /
@@ -253,8 +263,6 @@ subcommand encounters a legacy-shape working directory, its error
 message should point the user at `mwsync.py migrate` rather than
 attempt a quiet in-place fix.
 
-The resolver's title-comparison fallback for older non-main entries (Lookup
-Resolution Algorithm step 3) exists only to give users time to run `migrate`.
-A later release may drop that fallback once migration is widespread; new
-features should not be designed assuming the legacy non-main shape keeps
-working. Main-namespace derivation from `title` remains normal behavior.
+Compatibility detection for older non-main entries belongs in `fsck` and
+`migrate`, not in the core resolver. Main-namespace derivation from `title`
+remains normal behavior.

@@ -148,6 +148,14 @@ def _namespace_segment(name: str, namespace_id: int) -> str:
     return dbkey or f"ns_{int(namespace_id):02d}"
 
 
+def _encode_dbkey_segment(dbkey: str) -> str:
+    return _normalize_dbkey(dbkey).replace("/", "__")
+
+
+def _namespace_local_dir(namespace_name: str, namespace_id: int) -> str:
+    return "_ns_" + _namespace_segment(namespace_name, namespace_id)
+
+
 def _fallback_namespace_map(api_base: str = "") -> dict:
     aliases = {}
     for raw_id, ns in FALLBACK_NAMESPACES.items():
@@ -189,6 +197,8 @@ def _normalize_namespace_map(raw: dict, api_base: str) -> dict:
             continue
         local = item.get("local")
         if local is None:
+            local = item.get("name")
+        if local is None:
             local = item.get("*", "")
         canonical = item.get("canonical", "")
         if ns_id == 0:
@@ -220,12 +230,6 @@ def _normalize_namespace_map(raw: dict, api_base: str) -> dict:
                 continue
             if alias:
                 aliases[str(alias).casefold()] = ns_id
-
-    fallback = _fallback_namespace_map(api_base)
-    for raw_id, ns in fallback["namespaces"].items():
-        namespaces.setdefault(raw_id, ns)
-    for alias, ns_id in fallback["aliases"].items():
-        aliases.setdefault(alias, ns_id)
 
     return {
         "fetched_at": raw.get("fetched_at", ""),
@@ -262,8 +266,10 @@ def _fetch_namespace_map(api_base: str) -> dict:
     return namespace_map
 
 
-def _load_namespace_map(config: dict, *, fetch: bool = True) -> dict:
+def _load_namespace_map(config: dict, *, fetch: bool = True,
+                        allow_fallback: bool = False) -> dict:
     api_base = get_api_base(config)
+    read_error = None
     try:
         with open(NAMESPACE_CACHE_PATH, "r", encoding="utf-8") as f:
             cached = json.load(f)
@@ -272,14 +278,32 @@ def _load_namespace_map(config: dict, *, fetch: bool = True) -> dict:
     except FileNotFoundError:
         pass
     except Exception as e:
-        print(f"Warning: could not read {NAMESPACE_CACHE_PATH}: {e}", file=sys.stderr)
+        read_error = e
 
     if fetch:
         try:
             return _fetch_namespace_map(api_base)
         except Exception as e:
-            print(f"Warning: could not fetch namespace map: {e}", file=sys.stderr)
-    return _fallback_namespace_map(api_base)
+            if allow_fallback:
+                print(f"Warning: could not fetch namespace map: {e}", file=sys.stderr)
+                return _fallback_namespace_map(api_base)
+            print(f"Error: could not fetch namespace map from {api_base}: {e}",
+                  file=sys.stderr)
+            print("Namespace-aware commands need the target wiki namespace map.",
+                  file=sys.stderr)
+            sys.exit(1)
+    if allow_fallback:
+        if read_error is not None:
+            print(f"Warning: could not read {NAMESPACE_CACHE_PATH}: {read_error}",
+                  file=sys.stderr)
+        return _fallback_namespace_map(api_base)
+    if read_error is not None:
+        print(f"Error: could not read {NAMESPACE_CACHE_PATH}: {read_error}", file=sys.stderr)
+    else:
+        print(f"Error: namespace map not found: {NAMESPACE_CACHE_PATH}", file=sys.stderr)
+    print("Run a namespace-aware command while online, or run 'mwsync.py migrate' "
+          "to update legacy entries.", file=sys.stderr)
+    sys.exit(1)
 
 
 def _namespace_name(namespace_map: dict, namespace_id: int) -> str:
@@ -321,31 +345,59 @@ def _parse_title_parts(raw_title: str, namespace_map: dict) -> dict:
     }
 
 
+def _main_title_parts(raw_title: str) -> dict:
+    dbkey = _normalize_dbkey(raw_title)
+    return {
+        "title": _title_from_dbkey(dbkey),
+        "namespace": 0,
+        "namespace_name": "",
+        "dbkey": dbkey,
+    }
+
+
+def _legacy_non_main_entry(config: dict, key: str, art: dict) -> bool:
+    if "namespace" in art or "dbkey" in art:
+        return False
+    return ":" in art.get("title", key) or ":" in key
+
+
+def _fail_legacy_non_main(key: str, art: dict) -> None:
+    print(f"Error: '{key}' is a legacy non-main-namespace entry.", file=sys.stderr)
+    print(f"Title: {art.get('title', key)}", file=sys.stderr)
+    print("Run 'mwsync.py migrate' to update namespace metadata and local paths.",
+          file=sys.stderr)
+    sys.exit(1)
+
+
 def _key_for_title_parts(parts: dict) -> str:
     dbkey = parts["dbkey"]
     if not dbkey:
         print("Error: article title cannot be empty.", file=sys.stderr)
         sys.exit(1)
+    key_dbkey = _encode_dbkey_segment(dbkey)
     namespace_id = int(parts["namespace"])
     if namespace_id == 0:
-        return dbkey
+        return key_dbkey
     namespace_name = _namespace_segment(parts.get("namespace_name", ""), namespace_id)
-    return f"{namespace_name}__{dbkey}"
+    return f"{namespace_name}__{key_dbkey}"
 
 
 def _local_for_title_parts(parts: dict) -> str:
-    dbkey = parts["dbkey"]
+    dbkey = _encode_dbkey_segment(parts["dbkey"])
     namespace_id = int(parts["namespace"])
     if namespace_id == 0:
         return dbkey + ".mw"
-    namespace_name = _namespace_segment(parts.get("namespace_name", ""), namespace_id)
-    return os.path.join(namespace_name, dbkey + ".mw")
+    namespace_dir = _namespace_local_dir(parts.get("namespace_name", ""), namespace_id)
+    return os.path.join(namespace_dir, dbkey + ".mw")
 
 
 def _article_fields_from_title(config: dict, raw_title: str, *,
                                fetch_namespaces: bool = True) -> tuple[str, dict]:
-    namespace_map = _load_namespace_map(config, fetch=fetch_namespaces)
-    parts = _parse_title_parts(raw_title, namespace_map)
+    if ":" in raw_title:
+        namespace_map = _load_namespace_map(config, fetch=fetch_namespaces)
+        parts = _parse_title_parts(raw_title, namespace_map)
+    else:
+        parts = _main_title_parts(raw_title)
     key = _key_for_title_parts(parts)
     fields = {
         "title": parts["title"],
@@ -442,10 +494,12 @@ def _looks_like_article_url(value: str) -> bool:
     return bool(parsed.scheme and parsed.netloc and "/wiki/" in parsed.path)
 
 
-def find_article_entry(config: dict, key: str) -> tuple[str, dict] | None:
+def find_article_entry(config: dict, key: str, *, allow_legacy: bool = False) -> tuple[str, dict] | None:
     wiki = config.setdefault("wiki", {})
     articles = wiki.setdefault("articles", {})
     if key in articles:
+        if _legacy_non_main_entry(config, key, articles[key]) and not allow_legacy:
+            _fail_legacy_non_main(key, articles[key])
         return key, articles[key]
 
     target = key[:-3] if key.endswith(".mw") else key
@@ -457,6 +511,9 @@ def find_article_entry(config: dict, key: str) -> tuple[str, dict] | None:
                 and art.get("local", article_key + ".mw")[:-3] == target))
     ]
     if len(local_matches) == 1:
+        article_key, art = local_matches[0]
+        if _legacy_non_main_entry(config, article_key, art) and not allow_legacy:
+            _fail_legacy_non_main(article_key, art)
         return local_matches[0]
     if len(local_matches) > 1:
         print(
@@ -471,16 +528,41 @@ def find_article_entry(config: dict, key: str) -> tuple[str, dict] | None:
     else:
         raw_title = _parse_article_name(key)
 
-    namespace_map = _load_namespace_map(config, fetch=":" in raw_title)
-    target_parts = _parse_title_parts(raw_title, namespace_map)
+    if ":" in raw_title:
+        requested_title = _canonical_title(raw_title)
+        legacy_matches = [
+            (article_key, art)
+            for article_key, art in articles.items()
+            if _legacy_non_main_entry(config, article_key, art)
+            and _canonical_title(art.get("title", article_key)) == requested_title
+        ]
+        if legacy_matches and not allow_legacy:
+            print(f"Error: article reference '{key}' matches legacy non-main entry:",
+                  file=sys.stderr)
+            print(f"Matches: {', '.join(match[0] for match in legacy_matches)}",
+                  file=sys.stderr)
+            print("Run 'mwsync.py migrate' to update namespace metadata and local paths.",
+                  file=sys.stderr)
+            sys.exit(1)
+        namespace_map = _load_namespace_map(config, fetch=True,
+                                            allow_fallback=allow_legacy)
+        target_parts = _parse_title_parts(raw_title, namespace_map)
+    else:
+        namespace_map = None
+        target_parts = _main_title_parts(raw_title)
     target_ns = int(target_parts["namespace"])
     target_dbkey = target_parts["dbkey"]
     title_matches = []
+    legacy_matches = []
     for article_key, art in articles.items():
+        if _legacy_non_main_entry(config, article_key, art):
+            if allow_legacy and _canonical_title(art.get("title", article_key)) == target_parts["title"]:
+                title_matches.append((article_key, art))
+            elif target_ns != 0 and _canonical_title(art.get("title", article_key)) == target_parts["title"]:
+                legacy_matches.append((article_key, art))
+            continue
         art_parts = _article_parts(config, article_key, art, namespace_map)
         if int(art_parts["namespace"]) == target_ns and art_parts["dbkey"] == target_dbkey:
-            title_matches.append((article_key, art))
-        elif target_ns != 0 and _canonical_title(art.get("title", article_key)) == target_parts["title"]:
             title_matches.append((article_key, art))
 
     if len(title_matches) == 1:
@@ -488,6 +570,13 @@ def find_article_entry(config: dict, key: str) -> tuple[str, dict] | None:
     if len(title_matches) > 1:
         print(f"Error: article reference '{key}' matches multiple articles.", file=sys.stderr)
         print(f"Matches: {', '.join(match[0] for match in title_matches)}", file=sys.stderr)
+        sys.exit(1)
+    if legacy_matches and not allow_legacy:
+        print(f"Error: article reference '{key}' matches legacy non-main entry:",
+              file=sys.stderr)
+        print(f"Matches: {', '.join(match[0] for match in legacy_matches)}", file=sys.stderr)
+        print("Run 'mwsync.py migrate' to update namespace metadata and local paths.",
+              file=sys.stderr)
         sys.exit(1)
     return None
 
@@ -499,13 +588,18 @@ def _canonical_title(title: str) -> str:
     return _title_from_dbkey(_normalize_dbkey(title))
 
 
-def _article_parts(config: dict, key: str, art: dict, namespace_map: dict | None = None) -> dict:
-    if namespace_map is None:
-        namespace_map = _load_namespace_map(config, fetch=False)
+def _article_parts(config: dict, key: str, art: dict,
+                   namespace_map: dict | None = None, *,
+                   allow_legacy: bool = False) -> dict:
     if "namespace" in art and "dbkey" in art:
         namespace_id = int(art.get("namespace") or 0)
+        if namespace_id != 0 and not art.get("namespace_name") and not allow_legacy:
+            _fail_legacy_non_main(key, art)
+        if namespace_map is None and namespace_id != 0 and not art.get("namespace_name"):
+            namespace_map = _load_namespace_map(config, fetch=False,
+                                                allow_fallback=allow_legacy)
         namespace_name = art.get("namespace_name") or (
-            "" if namespace_id == 0 else _namespace_name(namespace_map, namespace_id)
+            "" if namespace_id == 0 else _namespace_name(namespace_map or {}, namespace_id)
         )
         dbkey = _normalize_dbkey(str(art.get("dbkey") or ""))
         return {
@@ -515,6 +609,13 @@ def _article_parts(config: dict, key: str, art: dict, namespace_map: dict | None
             "dbkey": dbkey,
         }
     raw_title = art.get("title", key)
+    if ":" not in raw_title:
+        return _main_title_parts(raw_title)
+    if ":" in raw_title and not allow_legacy:
+        _fail_legacy_non_main(key, art)
+    if namespace_map is None:
+        namespace_map = _load_namespace_map(config, fetch=False,
+                                            allow_fallback=allow_legacy)
     return _parse_title_parts(raw_title, namespace_map)
 
 
@@ -567,6 +668,18 @@ def resolve_article_entry(config: dict, key: str) -> tuple[str, dict]:
     else:
         print("No articles registered yet. Use 'mwsync.py add URL' to add one.",
               file=sys.stderr)
+    sys.exit(1)
+
+
+def resolve_article_entry_for_migration(config: dict, key: str) -> tuple[str, dict]:
+    found = find_article_entry(config, key, allow_legacy=True)
+    if found:
+        return found
+    articles = config.get("wiki", {}).get("articles", {})
+    known = list(articles.keys())
+    print(f"Error: article '{key}' not found in mwsync.yaml.", file=sys.stderr)
+    if known:
+        print(f"Known articles: {', '.join(known)}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -893,20 +1006,23 @@ def _check_legacy_cache(key: str) -> None:
 
 
 def _default_local_for_article(config: dict, key: str, art: dict,
-                               namespace_map: dict | None = None) -> str:
-    parts = _article_parts(config, key, art, namespace_map)
+                               namespace_map: dict | None = None,
+                               *, allow_legacy: bool = False) -> str:
+    parts = _article_parts(config, key, art, namespace_map, allow_legacy=allow_legacy)
     return _local_for_title_parts(parts)
 
 
 def _article_has_non_main_title(config: dict, key: str, art: dict,
-                                namespace_map: dict | None = None) -> bool:
-    parts = _article_parts(config, key, art, namespace_map)
+                                namespace_map: dict | None = None,
+                                *, allow_legacy: bool = False) -> bool:
+    parts = _article_parts(config, key, art, namespace_map, allow_legacy=allow_legacy)
     return int(parts.get("namespace") or 0) != 0
 
 
 def _new_key_for_article(config: dict, key: str, art: dict,
-                         namespace_map: dict | None = None) -> str:
-    parts = _article_parts(config, key, art, namespace_map)
+                         namespace_map: dict | None = None,
+                         *, allow_legacy: bool = False) -> str:
+    parts = _article_parts(config, key, art, namespace_map, allow_legacy=allow_legacy)
     return _key_for_title_parts(parts)
 
 
@@ -1925,9 +2041,9 @@ def run_show(args, config: dict, config_path: str) -> None:
 
 def _fsck_article(config: dict, key: str, art: dict, namespace_map: dict | None = None) -> int:
     if namespace_map is None:
-        namespace_map = _load_namespace_map(config, fetch=False)
+        namespace_map = _load_namespace_map(config, fetch=False, allow_fallback=True)
     issues = 0
-    parts = _article_parts(config, key, art, namespace_map)
+    parts = _article_parts(config, key, art, namespace_map, allow_legacy=True)
     namespace_id = int(parts.get("namespace") or 0)
     title = art.get("title", key)
 
@@ -1948,7 +2064,8 @@ def _fsck_article(config: dict, key: str, art: dict, namespace_map: dict | None 
             pass
 
     if ":" in key:
-        new_key = _new_key_for_article(config, key, art, namespace_map)
+        new_key = _new_key_for_article(config, key, art, namespace_map,
+                                       allow_legacy=True)
         print(f"{key}: legacy colon-bearing key, would migrate to {new_key}")
         issues += 1
 
@@ -2048,13 +2165,13 @@ def run_fsck(args, config: dict, config_path: str) -> None:
         return
 
     if getattr(args, "article", None):
-        key, art = resolve_article_entry(config, args.article)
+        key, art = resolve_article_entry_for_migration(config, args.article)
         items = [(key, art)]
     else:
         items = list(articles.items())
 
     issues = 0
-    namespace_map = _load_namespace_map(config, fetch=False)
+    namespace_map = _load_namespace_map(config, fetch=False, allow_fallback=True)
     for key, art in items:
         issues += _fsck_article(config, key, art, namespace_map)
     if issues:
@@ -2074,7 +2191,7 @@ def _migrate_article(config: dict, config_path: str, key: str, art: dict,
                      namespace_map: dict, *, dry_run: bool, yes: bool) -> tuple[str, bool, bool]:
     """Return (current_key, changed, incomplete)."""
     articles = config.setdefault("wiki", {}).setdefault("articles", {})
-    parts = _article_parts(config, key, art, namespace_map)
+    parts = _article_parts(config, key, art, namespace_map, allow_legacy=True)
     namespace_id = int(parts.get("namespace") or 0)
     changed = False
     incomplete = False
@@ -2158,12 +2275,12 @@ def run_migrate(args, config: dict, config_path: str) -> None:
         print("No articles registered.")
         return
 
-    namespace_map = _load_namespace_map(config, fetch=True)
+    namespace_map = _load_namespace_map(config, fetch=True, allow_fallback=True)
     dry_run = getattr(args, "dry_run", False)
     yes = getattr(args, "yes", False)
 
     if getattr(args, "article", None):
-        key, art = resolve_article_entry(config, args.article)
+        key, art = resolve_article_entry_for_migration(config, args.article)
         items = [(key, art)]
     else:
         items = list(articles.items())

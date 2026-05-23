@@ -136,7 +136,8 @@ For each registered article, fsck additionally reports:
   (e.g. an old `Talk:Software` registration). Reported as
   `<key>: legacy colon-bearing key, would migrate to <new_key>`.
 - **Flat non-main local path** — entry is a non-main-namespace article
-  whose `local` is a flat filename rather than `<Namespace>/<DBKey>.mw`.
+  whose `local` is a flat filename rather than
+  `_ns_<Namespace>/<encoded-dbkey>.mw`.
   Reported as
   `<key>: flat local path for non-main namespace: <local>`.
 
@@ -154,12 +155,10 @@ snapshots to the per-article cache layout (no history, no refs, no
 per-revision metadata to reconstruct from); the message continues to
 ask the user to delete and re-fetch. See [legacy.md](legacy.md).
 
-### Interaction with the resolver fallback
+### Relationship to strict resolution
 
-The Lookup Resolution Algorithm in [namespaces.md](namespaces.md) keeps
-a transitional fallback to `title` comparison for older non-main entries
-without `namespace`/`dbkey`. `mwsync.py migrate` is the mechanism that removes
-the need for that fallback in a given working directory. New features
-should not rely on the non-main fallback continuing to exist; it may be dropped
-in a later release once `migrate` is in wide use. Deriving main-namespace
+Normal subcommands should not quietly resolve older non-main entries by
+guessing from `title`. They should fail gracefully and point at
+`mwsync.py migrate`. `fsck` is allowed to use compatibility detection so it can
+diagnose those legacy entries without changing them. Deriving main-namespace
 metadata from `title` remains normal behavior.

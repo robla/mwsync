@@ -61,7 +61,7 @@ checked-out state:
   cache directory (`_cache/Talk:Software/` → `_cache/Talk__Software/`)
   to match.
 - Move a flat working file (`Talk__Software.mw`) into its
-  namespace-aware location (`Talk/Software.mw`), creating intermediate
+  namespace-aware location (`_ns_Talk/Software.mw`), creating intermediate
   directories as needed, and update the entry's `local` field. The
   article key does not change in this migration.
 
@@ -71,7 +71,7 @@ Each prompt prints the full set of changes for one entry and asks for
 ```
 <key>: ready to migrate this entry:
   rename key:  Talk:Software -> Talk__Software
-  move file:   Talk:Software.mw -> Talk/Software.mw
+  move file:   Talk:Software.mw -> _ns_Talk/Software.mw
   move cache:  _cache/Talk:Software/ -> _cache/Talk__Software/
 Apply? [y/N]
 ```
@@ -113,10 +113,8 @@ stays "report and tell the user to re-fetch", per
 only command that rewrites `mwsync.yaml` entries or moves working
 files into their namespace-aware locations.
 
-The Lookup Resolution Algorithm in [namespaces.md](namespaces.md)
-keeps a transitional fallback so older non-main entries continue to work in a
-working directory that has not been migrated yet. `migrate` is the mechanism
-that removes the need for that fallback in a given working directory. The
-non-main fallback may be dropped in a later release once `migrate` is in wide
-use; new features should not be designed assuming the legacy non-main shape
-keeps working. Main-namespace derivation from `title` is not legacy behavior.
+Normal subcommands should not quietly resolve older non-main entries. They
+should fail gracefully and point at `mwsync.py migrate`. `migrate` is the
+partitioned compatibility command that may inspect old shapes, use conservative
+detection rules, and rewrite the working directory into the current layout.
+Main-namespace derivation from `title` is not legacy behavior.
