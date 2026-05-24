@@ -32,15 +32,12 @@ page at a time and is stored as readable files under
 `_cache/<Article_Key>/commit.json` and `commit.mw`, not as part of a repository
 commit graph.
 
-### 2. Verbose `status` Output (FIXME)
+### 2. `status` Is Concise By Default
 
-Git's default `status` is compact and centered on what changed.
-`mwsync.py status` is currently more diagnostic: it reports registered articles,
-local paths, URLs, upstream metadata, and raw cache refs.
-
-> [!NOTE]
-> **FIXME:** Make default `status` concise, and move detailed config/ref output
-> behind `--verbose` or a separate diagnostic command.
+Git's default `status` is compact and centered on what changed. `mwsync.py
+status` now follows that model: default output lists only articles needing
+attention, while `mwsync.py status --verbose` reports registered articles, local
+paths, URLs, upstream metadata, and raw cache refs.
 
 ### 3. There Is No Staging Index
 

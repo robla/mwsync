@@ -2552,6 +2552,7 @@ def run_status(args, config: dict, config_path: str) -> None:
     if not articles:
         print("No articles registered. Use 'mwsync.py add URL' to add one.")
         return
+    verbose = getattr(args, "verbose", False)
 
     key_filter = getattr(args, "article", None)
     if key_filter:
@@ -2560,6 +2561,7 @@ def run_status(args, config: dict, config_path: str) -> None:
     else:
         items = list(articles.items())
 
+    rows = []
     for key, art in items:
         local = art.get("local", key + ".mw")
         url = _article_url(config, key, art)
@@ -2584,6 +2586,10 @@ def run_status(args, config: dict, config_path: str) -> None:
         pushed_at = art.get("last_pushed_at", "")
 
         modified = _git_is_modified(local)
+        if modified is None and os.path.exists(local) and base_ref is not None:
+            base_path = _revision_body_path(key, base_ref)
+            if os.path.exists(base_path):
+                modified = not _file_content_matches(local, _read_text(base_path))
         if modified is True:
             flag = "[modified]"
         elif modified is False:
@@ -2591,43 +2597,80 @@ def run_status(args, config: dict, config_path: str) -> None:
         else:
             flag = ""
 
-        print(key)
-        print(f"  local:           {local}  {flag}".rstrip())
-        if url:
-            print(f"  url:             {url}")
-        if revid:
-            rev_info = str(revid)
-            if ts:
-                rev_info += f"  ({ts}"
-                if editor:
-                    rev_info += f" by {editor}"
-                rev_info += ")"
-            print(f"  upstream_revid:  {rev_info}")
-        else:
-            print("  upstream_revid:  (not fetched)")
-        if upstream_ref:
-            print(f"  refs/upstream:   {upstream_ref}")
-        if base_ref:
-            print(f"  refs/base:       {base_ref}")
-        if last_pushed_ref:
-            print(f"  refs/last-pushed:{last_pushed_ref}")
-        if pushed_revid:
-            print(f"  last_pushed:     {pushed_revid}  ({pushed_at})")
-        else:
-            print("  last_pushed:     (never)")
-        if pending:
-            pending_summary = str(pending.get("summary") or "")
-            pending_base = pending.get("base_revid") or ""
-            pending_created = pending.get("created_at") or ""
-            mode = "new article" if pending.get("create_new") else f"base {pending_base}"
-            print(f"  pending_commit:  {mode}  ({pending_created})")
-            if pending_summary:
-                print(f"  pending_summary: {pending_summary}")
+        if verbose:
+            print(key)
+            print(f"  local:           {local}  {flag}".rstrip())
+            if url:
+                print(f"  url:             {url}")
+            if revid:
+                rev_info = str(revid)
+                if ts:
+                    rev_info += f"  ({ts}"
+                    if editor:
+                        rev_info += f" by {editor}"
+                    rev_info += ")"
+                print(f"  upstream_revid:  {rev_info}")
+            else:
+                print("  upstream_revid:  (not fetched)")
+            if upstream_ref:
+                print(f"  refs/upstream:   {upstream_ref}")
+            if base_ref:
+                print(f"  refs/base:       {base_ref}")
+            if last_pushed_ref:
+                print(f"  refs/last-pushed:{last_pushed_ref}")
+            if pushed_revid:
+                print(f"  last_pushed:     {pushed_revid}  ({pushed_at})")
+            else:
+                print("  last_pushed:     (never)")
+            if pending:
+                pending_summary = str(pending.get("summary") or "")
+                pending_base = pending.get("base_revid") or ""
+                pending_created = pending.get("created_at") or ""
+                mode = "new article" if pending.get("create_new") else f"base {pending_base}"
+                print(f"  pending_commit:  {mode}  ({pending_created})")
+                if pending_summary:
+                    print(f"  pending_summary: {pending_summary}")
+            if merge_state:
+                merge_base = merge_state.get("base_revid", "")
+                merge_upstream = merge_state.get("upstream_revid", "")
+                print(f"  merge_state:     base {merge_base} -> upstream {merge_upstream}")
+            print()
+            continue
+
+        states = []
+        details = []
         if merge_state:
             merge_base = merge_state.get("base_revid", "")
             merge_upstream = merge_state.get("upstream_revid", "")
-            print(f"  merge_state:     base {merge_base} -> upstream {merge_upstream}")
-        print()
+            states.append("merging")
+            details.append(f"base {merge_base} -> upstream {merge_upstream}")
+        if pending:
+            pending_summary = str(pending.get("summary") or "").strip()
+            states.append("pending")
+            if pending_summary:
+                details.append(pending_summary)
+        if not os.path.exists(local):
+            states.append("missing")
+        elif modified is True:
+            states.append("modified")
+        if upstream_ref is None:
+            states.append("unfetched")
+        elif base_ref is None:
+            states.append("unmerged")
+        elif int(base_ref) != int(upstream_ref):
+            states.append("behind")
+            details.append(f"base {base_ref} -> upstream {upstream_ref}")
+
+        if states or key_filter:
+            state = ",".join(states) if states else "clean"
+            detail = "  " + "; ".join(details) if details else ""
+            rows.append(f"{state:<18} {key}  {local}{detail}")
+
+    if not verbose:
+        if rows:
+            print("\n".join(rows))
+        else:
+            print("All tracked articles clean.")
 
 
 # ---------------------------------------------------------------------------
@@ -2742,6 +2785,8 @@ def main() -> None:
     p_status = sub.add_parser("status", help="Show sync state of tracked articles")
     p_status.add_argument("article", metavar="ARTICLE", nargs="?",
                           help="Article key (omit to show all)")
+    p_status.add_argument("-v", "--verbose", action="store_true",
+                          help="Show detailed refs, URLs, and metadata")
 
     args = ap.parse_args()
 

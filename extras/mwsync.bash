@@ -112,7 +112,14 @@ _mwsync_complete()
                 COMPREPLY=( $(compgen -W "$(_mwsync_article_words)" -- "$cur") )
             fi
             ;;
-        difftool|merge|log|fsck|status)
+        status)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "-v --verbose -h --help" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "$(_mwsync_article_words)" -- "$cur") )
+            fi
+            ;;
+        difftool|merge|log|fsck)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
             else
