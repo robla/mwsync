@@ -18,6 +18,8 @@ Runtime state is created in the working directory where the tools are run:
 - `_cache/<Article_Key>/history.jsonl`: chronological revision manifest.
 - `_cache/<Article_Key>/<revid>.mw` and `<revid>.json`: cached revision body and metadata.
 - `_cache/<Article_Key>/refs/upstream`, `refs/base`, `refs/last-pushed`: sync refs.
+- `_cache/<Article_Key>/commit.mw` and `commit.json`: pending local edit for `push`.
+- `_cache/<Article_Key>/merge.json`: unresolved merge-conflict state.
 - `_cache/categories/`: planned category cache for `catmgr.py`.
 
 The legacy `_cache/server--<Article_Key>.mw` format is intentionally not mainline
@@ -36,6 +38,8 @@ Use Python 3 directly; there is no build system.
 - `python3 mwsync.py checkout Maine`: register, fetch, and merge into `Maine.mw`.
 - `python3 mwsync.py fetch Maine`: update `_cache` and `refs/upstream` only.
 - `python3 mwsync.py merge Maine`: update the local `.mw` from fetched upstream.
+- `python3 mwsync.py commit Maine -m "Update Maine"`: snapshot local edits as a pending wiki edit.
+- `python3 mwsync.py push Maine`: publish the pending commit to the wiki.
 - `python3 mwsync.py diff Maine@upstream^ Maine@upstream`: compare cached revisions.
 - `python3 mwsync.py fsck`: check cache refs, history, and revision files.
 - `python3 ledecopy.py "New York"`: create a new Electowiki draft from the enwiki lede.

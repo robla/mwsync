@@ -64,11 +64,14 @@ _cache/<Article_Key>/history.jsonl
 _cache/<Article_Key>/refs/upstream
 _cache/<Article_Key>/refs/base
 _cache/<Article_Key>/refs/last-pushed
+_cache/<Article_Key>/commit.json
+_cache/<Article_Key>/commit.mw
+_cache/<Article_Key>/merge.json
 _cache/<Article_Key>/<revid>.mw
 _cache/<Article_Key>/<revid>.json
 ```
 
-The local file is intended for user edits. Revid-named `.mw` files are cached upstream revision bodies; matching `.json` sidecars store revision metadata. `history.jsonl` is the chronological manifest, while `refs/upstream`, `refs/base`, and `refs/last-pushed` hold small sync-state pointers. Writes use `_atomic_write()`, which writes to a temporary file in the target directory and then replaces the destination.
+The local file is intended for user edits. Revid-named `.mw` files are cached upstream revision bodies; matching `.json` sidecars store revision metadata. `history.jsonl` is the chronological manifest, while `refs/upstream`, `refs/base`, and `refs/last-pushed` hold small sync-state pointers. `commit.mw` and `commit.json` store the single pending local edit that `push` will publish. `merge.json` records an unresolved merge conflict so a later `commit` can use the fetched upstream revid as the MediaWiki `baserevid`. Writes use `_atomic_write()`, which writes to a temporary file in the target directory and then replaces the destination.
 
 The older `_cache/server--<Article_Key>.mw` layout is treated as legacy. Current code detects that file and exits with a migration/reset message instead of reading it as normal state.
 
@@ -117,9 +120,11 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `fetch` resolves the article, fetches the current server revision, writes `_cache/<Article_Key>/<revid>.mw`, `_cache/<Article_Key>/<revid>.json`, `history.jsonl`, and `refs/upstream`, then leaves both the local `.mw` file and `mwsync.yaml` unchanged. It records metadata for the newest 50 revisions by default without downloading every old revision body; `--depth N` changes that metadata window, `--all-known` walks all available revision metadata, and `--with-bodies` fetches bodies for the selected metadata window. Fetch should be transactional at the article-cache level: a failed network call, metadata fetch, body fetch, or validation step should not leave new refs or partially updated manifests pointing at incomplete data.
 
-`merge` reconciles the local working file with fetched upstream state. It uses `refs/base` as the common ancestor, `refs/upstream` as the remote side, and the local `.mw` file as the local side. A clean merge or fast-forward updates `refs/base` and records the local file's upstream base in `mwsync.yaml` using the legacy `upstream_revid`, `upstream_timestamp`, `upstream_editor`, `upstream_summary`, and `upstream_sha1` fields. A conflict writes conflict markers and leaves `refs/base` and those YAML fields unchanged.
+`merge` reconciles the local working file with fetched upstream state. It uses `refs/base` as the common ancestor, `refs/upstream` as the remote side, and the local `.mw` file as the local side. A clean merge or fast-forward updates `refs/base` and records the local file's upstream base in `mwsync.yaml` using the legacy `upstream_revid`, `upstream_timestamp`, `upstream_editor`, `upstream_summary`, and `upstream_sha1` fields. A conflict writes conflict markers and `merge.json`, then leaves `refs/base` and those YAML fields unchanged until the user resolves the file and runs `commit`.
 
-`push` resolves the article, reads the local file, obtains an edit summary from `-m/--message` or `$VISUAL`/`$EDITOR`, logs in with `MWSYNC_MW_USER` and `MWSYNC_MW_PASSWORD`, submits the edit, records push metadata, updates `refs/last-pushed`, then re-fetches the page to resync the local file, cache, `refs/upstream`, and `refs/base`.
+`commit` resolves the article, reads the local file, obtains an edit summary from `-m/--message` or `$VISUAL`/`$EDITOR`, and writes a pending local edit to `_cache/<Article_Key>/commit.mw` plus `_cache/<Article_Key>/commit.json`. For existing pages, it records the current `refs/base` value as `base_revid` and refuses an unchanged file unless `--allow-empty` is used. If `merge.json` exists, `commit` refuses unresolved conflict markers and uses the merge target's upstream revid as `base_revid`, then clears `merge.json`. For new pages, `--new` records that the eventual edit should use MediaWiki `createonly` rather than `baserevid`. A second commit is refused unless `--amend` is used.
+
+`push` resolves the article, reads the pending commit snapshot rather than the current working file, logs in with `MWSYNC_MW_USER` and `MWSYNC_MW_PASSWORD`, submits the edit, records push metadata, updates `refs/last-pushed`, clears the pending commit files, then re-fetches the page to resync the local file, cache, `refs/upstream`, and `refs/base`. With `--dry-run`, it reports the pending commit that would be pushed and does not contact the wiki.
 
 `diff` compares cached revisions and local files using `git diff --no-index`. `diff New_York` compares `New_York@upstream` with the local working file. `diff New_York@upstream^ New_York@upstream` compares two cached revision expressions. With `--remote`, it first refreshes the upstream cache without rewriting the local working copy.
 
@@ -129,7 +134,7 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `show` prints revision text for expressions such as `New_York@upstream`, `New_York@upstream^`, or `New_York@19778`. If metadata is known but the requested body is not cached yet, `show` fetches that one revision body by revid and stores it in the article cache.
 
-`status` prints tracked article state, including local path, git cleanliness, upstream revision metadata, refs, and last pushed revision.
+`status` prints tracked article state, including local path, git cleanliness, upstream revision metadata, refs, last pushed revision, and any pending commit.
 
 `fsck` checks cache consistency for one article or all registered articles. It reports legacy cache files, malformed refs, missing revision bodies or sidecars, non-chronological history entries, and ref/history mismatches. It does not repair files implicitly.
 
@@ -142,8 +147,9 @@ The main safety checks are:
 - Subcommands other than `init` require an existing `mwsync.yaml`; they should
   not silently create a new working directory state.
 - `fetch` does not overwrite local content; `merge` is responsible for changing the working `.mw` file.
-- `push` requires an upstream revision unless `--new` is specified.
-- `push` uses `baserevid` so MediaWiki can detect edit conflicts.
+- `commit` requires an upstream revision unless `--new` is specified.
+- `push` requires a pending commit and uses its stored `base_revid` so
+  MediaWiki can detect edit conflicts.
 - Legacy `_cache/server--<Article_Key>.mw` files are detected and produce a clear migration/reset error.
 - `show`, `diff`, and revision checkout fetch missing old revision bodies on demand when the history metadata identifies the requested revid.
 

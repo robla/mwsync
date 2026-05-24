@@ -33,9 +33,9 @@ _mwsync_complete()
 
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="init add checkout fetch push diff difftool merge log show fsck migrate status"
+    commands="init add checkout fetch commit push diff difftool merge log show fsck migrate status"
     global_opts="-h --help --config"
-    article_commands="fetch push difftool merge log fsck status"
+    article_commands="fetch commit push difftool merge log fsck status"
 
     if [[ "$COMP_CWORD" -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$commands $global_opts" -- "$cur") )
@@ -71,9 +71,16 @@ _mwsync_complete()
                 COMPREPLY=( $(compgen -W "$(_mwsync_article_words)" -- "$cur") )
             fi
             ;;
+        commit)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--new --amend --allow-empty -m --message -h --help" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "$(_mwsync_article_words)" -- "$cur") )
+            fi
+            ;;
         push)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--dry-run --new -m --message -h --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--dry-run -h --help" -- "$cur") )
             else
                 COMPREPLY=( $(compgen -W "$(_mwsync_article_words)" -- "$cur") )
             fi

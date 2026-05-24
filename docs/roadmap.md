@@ -11,6 +11,9 @@ _cache/New_York/history.jsonl
 _cache/New_York/refs/upstream
 _cache/New_York/refs/base
 _cache/New_York/refs/last-pushed
+_cache/New_York/commit.json
+_cache/New_York/commit.mw
+_cache/New_York/merge.json
 _cache/New_York/19778.mw
 _cache/New_York/19778.json
 _cache/New_York/19791.mw
@@ -41,7 +44,7 @@ Meanings:
 - `refs/base`: upstream revision that the local working file is based on.
 - `refs/last-pushed`: most recent wiki revision created by a successful `push` from this checkout.
 
-`fetch` updates `refs/upstream` and `history.jsonl`, but should not rewrite the local working file once the merge workflow exists. `merge` reconciles `refs/base`, `refs/upstream`, and the local `.mw` file. `push` should update `refs/last-pushed` after a successful edit and then refresh `refs/upstream` and `refs/base` after confirming the new wiki revision.
+`fetch` updates `refs/upstream` and `history.jsonl`, but should not rewrite the local working file once the merge workflow exists. `merge` reconciles `refs/base`, `refs/upstream`, and the local `.mw` file, using `merge.json` only while a conflict is unresolved. `commit` writes the pending edit snapshot to `commit.mw` and `commit.json`. `push` should update `refs/last-pushed` after a successful edit and then refresh `refs/upstream` and `refs/base` after confirming the new wiki revision.
 
 These refs are intentionally more explicit than a single `latest` file. `latest` can mean latest fetched, latest pushed, or latest local base; sync code needs those states separated.
 
@@ -105,7 +108,8 @@ mwsync.py show New_York@upstream^
 mwsync.py diff New_York@upstream^ New_York@upstream
 mwsync.py diff New_York@upstream New_York.mw
 mwsync.py merge New_York
-mwsync.py push New_York -m "Update New York article"
+mwsync.py commit New_York -m "Update New York article"
+mwsync.py push New_York
 mwsync.py checkout New_York@upstream~5 --to scratch/New_York-old.mw
 mwsync.py show New_York@19778
 mwsync.py fsck New_York
@@ -135,7 +139,8 @@ The primitive operations should mirror git's broad shape:
 
 - `fetch`: contact the wiki, cache revision metadata/body as requested, and update `refs/upstream`.
 - `merge`: reconcile local edits with the fetched upstream revision using `refs/base` as the common ancestor.
-- `push`: submit the local working file to the wiki using a safe base revision, then update sync refs after confirmation.
+- `commit`: snapshot the local working file and edit summary as a pending wiki edit.
+- `push`: submit the pending commit to the wiki using its stored safe base revision, then update sync refs after confirmation.
 
 During early implementation, keep `fetch` and `merge` separate. The separate commands make network failures, cache failures, and merge conflicts easier to diagnose.
 

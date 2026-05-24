@@ -101,6 +101,20 @@ If history is non-empty and `refs/upstream` exists, the ref must equal
 the latest history revid. Mismatch is reported as
 `refs/upstream (<ref>) does not match latest history (<tip>)`.
 
+### Pending commit
+
+If either `_cache/<key>/commit.json` or `_cache/<key>/commit.mw` exists, both
+must exist. `commit.json` must parse as a JSON object, match the article key
+when it contains `article_key`, include a non-empty `summary`, and include a
+`base_revid` unless it is marked `create_new`.
+
+### Merge state
+
+If `_cache/<key>/merge.json` exists, it must parse as a JSON object, match the
+article key when it contains `article_key`, and contain `base_revid` and
+`upstream_revid` values that point at known history entries when history is
+available.
+
 ### Summary
 
 A clean article prints `<key>: ok`. After all articles are checked, if

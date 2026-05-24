@@ -390,7 +390,7 @@ Omit the references section if there are no `<ref>` tags in the copied lede.
 ## mwsync Integration
 
 `ledecopy.py` should write the article entry into `mwsync.yaml` so the
-article is ready for `mwsync.py push --new`. If `mwsync.yaml` does not yet
+article is ready for `mwsync.py commit --new`. If `mwsync.yaml` does not yet
 exist in the working directory, create one with the same minimal shape that
 `mwsync.py init` produces, then add the article entry. If the file exists,
 preserve its other articles and insert the new entry alongside them. The
@@ -423,23 +423,25 @@ updated during category resolution, just as in default mode.
 After success, print the next command:
 
 ```bash
-mwsync.py push --new New_York -m "Import lede from [[wikipedia:New York]] (oldid=123456789)"
+mwsync.py commit --new New_York -m "Import lede from [[wikipedia:New York]] (oldid=123456789)"
+mwsync.py push New_York
 ```
 
-In `--merge` mode, suggest a normal push rather than `push --new`:
+In `--merge` mode, suggest a normal commit and push rather than `commit --new`:
 
 ```bash
-mwsync.py push Ohio -m "Merge lede from [[wikipedia:Ohio]] (oldid=123456789)"
+mwsync.py commit Ohio -m "Merge lede from [[wikipedia:Ohio]] (oldid=123456789)"
+mwsync.py push Ohio
 ```
 
 The intent of `--merge` is that the resulting working tree looks exactly
 like the user manually edited the local `.mw` file against the cached
 Electowiki upstream. `refs/base` and `refs/upstream` are left untouched so
 that `mwsync.py diff <key>` cleanly shows the spliced lede and merged
-categories as a local change, and `mwsync.py push <key>` is the natural
-next step. Do not re-fetch from Electowiki and do not adjust `refs/base`
-to reflect the enwiki source — that would defeat the diff-then-push
-workflow this mode is designed for.
+categories as a local change, and `mwsync.py commit <key>` is the natural
+next step before `mwsync.py push <key>`. Do not re-fetch from Electowiki and
+do not adjust `refs/base` to reflect the enwiki source — that would defeat
+the diff-then-push workflow this mode is designed for.
 
 ## Implementation Notes
 
@@ -482,7 +484,7 @@ A successful default-mode run should:
 - Report category outcomes (kept / mapped / dropped / skipped / review-needed)
   and the count of new `catmap.yaml` entries written.
 - Report whether references were copied.
-- Print the recommended `mwsync.py push --new` command.
+- Print the recommended `mwsync.py commit --new` and `mwsync.py push` commands.
 
 A successful `--merge` run should:
 
@@ -496,7 +498,7 @@ A successful `--merge` run should:
 - Require interactive confirmation.
 - Modify only the local `.mw` file.
 - Leave `mwsync.yaml` and `_cache/` unchanged.
-- Print the recommended non-`--new` `mwsync.py push` command.
+- Print the recommended non-`--new` `mwsync.py commit` and `mwsync.py push` commands.
 
 Smoke tests should cover:
 

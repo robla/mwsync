@@ -12,7 +12,7 @@ The argument is an enwiki page title. ledecopy fetches the page from English
 Wikipedia, extracts the lede (the wikitext before the first level-2 heading),
 strips obvious non-prose top-of-page templates, adds Electowiki attribution
 templates, and writes the result to a local <Article_Key>.mw file plus an
-entry in mwsync.yaml. The resulting draft is ready for `mwsync.py push --new`.
+entry in mwsync.yaml. The resulting draft is ready for `mwsync.py commit --new`.
 
 ledecopy refuses to run if the local file exists, the article key is already
 registered in mwsync.yaml, the enwiki source is a redirect, or the target
@@ -864,9 +864,10 @@ def run_default(args, config_path: str) -> None:
     print(f"  Wrote {local_filename} and updated {config_path}.")
     print()
     print("Next:")
-    print(f"  mwsync.py push --new {key} "
+    print(f"  mwsync.py commit --new {key} "
           f"-m \"Import lede from [[wikipedia:{title}]] "
           f"(oldid={page['revid']})\"")
+    print(f"  mwsync.py push {key}")
 
 
 def run_merge(args, config_path: str) -> None:
@@ -1050,9 +1051,10 @@ def run_merge(args, config_path: str) -> None:
     print(f"  {config_path} and _cache/ left unchanged.")
     print()
     print("Next:")
-    print(f"  mwsync.py push {derived_key} "
+    print(f"  mwsync.py commit {derived_key} "
           f"-m \"Merge lede from [[wikipedia:{title}]] "
           f"(oldid={page['revid']})\"")
+    print(f"  mwsync.py push {derived_key}")
 
 
 if __name__ == "__main__":

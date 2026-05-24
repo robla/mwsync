@@ -1,6 +1,6 @@
 # mwsync Project Context
 
-`mwsync.py` is a single-file Python 3 CLI tool designed to sync individual MediaWiki articles between a local `.mw` working copy and a remote wiki (default: [Electowiki](https://electowiki.org)). It follows a Git-like workflow with commands such as `fetch`, `merge`, `push`, `diff`, and `log`.
+`mwsync.py` is a single-file Python 3 CLI tool designed to sync individual MediaWiki articles between a local `.mw` working copy and a remote wiki (default: [Electowiki](https://electowiki.org)). It follows a Git-like workflow with commands such as `fetch`, `merge`, `commit`, `push`, `diff`, and `log`.
 
 ## Project Overview
 
@@ -38,11 +38,11 @@ There is no build system. Run scripts directly with Python 3.
 ### mwsync.py
 - **Help:** `python3 mwsync.py --help`
 - **Tracked Articles:** `python3 mwsync.py status`
-- **Sync Workflow:** `fetch` -> `merge` -> (edit) -> `push`.
+- **Sync Workflow:** `fetch` -> `merge` -> (edit) -> `commit` -> `push`.
 
 ### ledecopy.py
 - **Usage:** `python3 ledecopy.py "Article Title"`
-- **Workflow:** Imports lede from enwiki, prepares `.mw` file and `mwsync.yaml` entry for `push --new`.
+- **Workflow:** Imports lede from enwiki, prepares `.mw` file and `mwsync.yaml` entry for `commit --new`.
 
 ### Validation
 - **Syntax Check:** `python3 -m py_compile mwsync.py ledecopy.py`

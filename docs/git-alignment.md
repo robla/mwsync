@@ -24,17 +24,13 @@ from Git in ways that can surprise Git power users.
 
 ## Differences Likely To Surprise Git Users
 
-### 1. `push` Combines Commit and Push (FIXME)
+### 1. `commit` and `push` Are Split, But Still Page-Scoped
 
-In Git, `commit` creates a local snapshot and `push` sends already-created
-commits to a remote. In `mwsync.py`, `push` reads the working `.mw` file, prompts
-for an edit summary if needed, logs into MediaWiki, creates the remote revision,
-refetches metadata, and updates local sync state.
-
-> [!NOTE]
-> **FIXME:** Split the local "commit/checkpoint" phase from the remote "push"
-> phase so users can review, checkpoint, and possibly work offline before
-> publishing.
+Like Git, `mwsync.py commit` creates a local snapshot and `mwsync.py push`
+publishes an already-created snapshot. Unlike Git, the pending commit is one
+page at a time and is stored as readable files under
+`_cache/<Article_Key>/commit.json` and `commit.mw`, not as part of a repository
+commit graph.
 
 ### 2. Verbose `status` Output (FIXME)
 
@@ -50,14 +46,15 @@ local paths, URLs, upstream metadata, and raw cache refs.
 
 `git add` stages content into the index. `mwsync.py add` registers a MediaWiki
 page in `mwsync.yaml`; it does not snapshot file content. A modified tracked
-`.mw` file is the candidate content for `push`.
+`.mw` file is the candidate content for `commit`.
 
 ### 4. There Is No Local Commit Graph
 
 Git stores an immutable object graph of commits, trees, and blobs. `mwsync.py`
-stores readable MediaWiki revision bodies and metadata under `_cache/`. Local
-draft changes are normally preserved by the surrounding Git repository, not by
-an internal mwsync commit database.
+stores readable MediaWiki revision bodies and metadata under `_cache/`, plus at
+most one pending commit per article. Rich local draft history is normally
+preserved by the surrounding Git repository, not by an internal mwsync commit
+database.
 
 ### 5. `checkout` Means Page Materialization
 
@@ -82,8 +79,9 @@ and no equivalent of `origin/main`.
 ### 8. Commands Are Page-Scoped
 
 Git commands usually operate on a repository snapshot. `mwsync.py fetch`,
-`merge`, `log`, `show`, and `push` operate on one article at a time. There is no
-single transaction that pushes a coherent multi-page change set to the wiki.
+`merge`, `commit`, `log`, `show`, and `push` operate on one article at a time.
+There is no single transaction that pushes a coherent multi-page change set to
+the wiki.
 
 ### 9. Some Read-Looking Commands May Use the Network
 
@@ -138,10 +136,12 @@ for mostly immutable revisions, not guaranteed immutable objects.
 
 ### 16. Merge Conflicts Have No Index or Abort Machinery
 
-`mwsync.py merge` uses `git merge-file`, so conflict markers are familiar. But
-there is no Git index with staged `ours/base/theirs` entries, no branch state,
-and no `git merge --abort` equivalent. Resolving a conflict means editing the
-working `.mw` file and continuing from that file state.
+`mwsync.py merge` uses `git merge-file`, so conflict markers are familiar. It
+also writes a small `merge.json` state file so `commit` can finish the merge
+against the fetched upstream revid. But there is no Git index with staged
+`ours/base/theirs` entries, no branch state, and no `git merge --abort`
+equivalent. Resolving a conflict means editing the working `.mw` file and then
+running `mwsync.py commit`.
 
 ### 17. Auth Uses MediaWiki Bot Credentials
 

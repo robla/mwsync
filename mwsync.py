@@ -10,7 +10,8 @@ Subcommands:
   add       Register a new article by URL or page name
   checkout  Register, fetch, and merge an article into a local .mw file
   fetch     Pull current wikitext and metadata into _cache
-  push      Submit local edits back to the wiki
+  commit    Snapshot local edits as a pending wiki edit
+  push      Submit pending local commits back to the wiki
   diff      Compare upstream cache vs working local file
   difftool  Launch meld to compare upstream cache vs working local
   merge     Merge fetched upstream changes into local file
@@ -29,7 +30,8 @@ Usage:
   mwsync.py diff Maine
   mwsync.py diff Maine@upstream^ Maine@upstream
   mwsync.py merge Maine
-  mwsync.py push Maine -m "Update Maine article"
+  mwsync.py commit Maine -m "Update Maine article"
+  mwsync.py push Maine
   mwsync.py status
 
 Credentials (for push):
@@ -938,9 +940,9 @@ def _mw_edit_page(api_base: str, opener: urllib.request.OpenerDirector,
 def _edit_summary(default: str, key: str, title: str, baserevid: int) -> str | None:
     """Open $VISUAL/$EDITOR for edit summary. Returns summary string or None to abort."""
     comment_block = (
-        f"\n# Edit summary for push to wiki.\n"
+        f"\n# Edit summary for pending wiki commit.\n"
         f"# Lines starting with '#' are stripped.\n"
-        f"# An empty summary aborts the push.\n"
+        f"# An empty summary aborts the commit.\n"
         f"#\n"
         f"# Article: {key}\n"
         f"# Page:    {title}\n"
@@ -987,6 +989,18 @@ def _revision_meta_path(key: str, revid: int | str) -> str:
 
 def _ref_path(key: str, ref: str) -> str:
     return os.path.join(_cache_dir(key), "refs", ref)
+
+
+def _pending_commit_meta_path(key: str) -> str:
+    return os.path.join(_cache_dir(key), "commit.json")
+
+
+def _pending_commit_body_path(key: str) -> str:
+    return os.path.join(_cache_dir(key), "commit.mw")
+
+
+def _merge_state_path(key: str) -> str:
+    return os.path.join(_cache_dir(key), "merge.json")
 
 
 def _legacy_cache_exists(key: str) -> bool:
@@ -1059,6 +1073,21 @@ def _read_optional_text(path: str) -> str | None:
             return f.read()
     except FileNotFoundError:
         return None
+
+
+def _read_json_file(path: str) -> dict | None:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        print(f"Error reading {path}: {e}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print(f"Error: expected JSON object in {path}", file=sys.stderr)
+        sys.exit(1)
+    return data
 
 
 def _restore_optional_text(path: str, content: str | None) -> None:
@@ -1474,6 +1503,52 @@ def _write_base_and_upstream_config(config: dict, config_path: str, key: str,
     return save_config(config, config_path)
 
 
+def _pending_commit(key: str) -> dict | None:
+    meta = _read_json_file(_pending_commit_meta_path(key))
+    if meta is None:
+        return None
+    body_path = _pending_commit_body_path(key)
+    if not os.path.exists(body_path):
+        print(f"Error: pending commit metadata exists but body is missing: {body_path}",
+              file=sys.stderr)
+        sys.exit(1)
+    return meta
+
+
+def _clear_pending_commit(key: str) -> None:
+    for path in (_pending_commit_meta_path(key), _pending_commit_body_path(key)):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
+def _write_pending_commit(key: str, meta: dict, text: str) -> bool:
+    if not _atomic_write(_pending_commit_body_path(key), text):
+        return False
+    return _write_json(_pending_commit_meta_path(key), meta)
+
+
+def _read_merge_state(key: str) -> dict | None:
+    return _read_json_file(_merge_state_path(key))
+
+
+def _write_merge_state(key: str, state: dict) -> bool:
+    return _write_json(_merge_state_path(key), state)
+
+
+def _clear_merge_state(key: str) -> None:
+    try:
+        os.unlink(_merge_state_path(key))
+    except FileNotFoundError:
+        pass
+
+
+def _has_conflict_markers(text: str) -> bool:
+    return any(line.startswith(("<<<<<<< ", ">>>>>>> ")) or line == "======="
+               for line in text.splitlines())
+
+
 # ---------------------------------------------------------------------------
 # Subcommand runners
 # ---------------------------------------------------------------------------
@@ -1696,6 +1771,108 @@ def run_fetch(args, config: dict, config_path: str) -> dict | None:
     }
 
 
+def run_commit(args, config: dict, config_path: str) -> None:
+    key, art = resolve_article_entry(config, args.article)
+    _check_legacy_cache(key)
+    title = art.get("title", key)
+    local = art.get("local", key + ".mw")
+    url = _article_url(config, key, art)
+    baserevid = _read_ref(key, "base") or art.get("upstream_revid", 0)
+    message = getattr(args, "message", None)
+    create_new = getattr(args, "new", False)
+    amend = getattr(args, "amend", False)
+    allow_empty = getattr(args, "allow_empty", False)
+    pending = _pending_commit(key)
+
+    if not baserevid and not create_new:
+        print(f"Error: upstream_revid not set for '{key}'.", file=sys.stderr)
+        print(f"If this is a new article, use 'mwsync.py commit --new {key}' first.",
+              file=sys.stderr)
+        print(f"Otherwise, run 'mwsync.py fetch {key}' first.", file=sys.stderr)
+        sys.exit(1)
+
+    if pending and not amend:
+        print(f"Error: pending commit already exists for '{key}'.", file=sys.stderr)
+        print(f"Run 'mwsync.py push {key}' to publish it, or "
+              f"'mwsync.py commit --amend {key}' to replace it.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    if not os.path.exists(local):
+        print(f"Error: local file not found: {local}", file=sys.stderr)
+        print(f"Run 'mwsync.py merge {key}' first, or create {local}.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        page_text = _read_text(local)
+    except Exception as e:
+        print(f"Error reading {local}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    merge_state = None if create_new else _read_merge_state(key)
+    if merge_state:
+        if _has_conflict_markers(page_text):
+            print(f"Error: {local} still contains merge conflict markers.",
+                  file=sys.stderr)
+            print("Resolve the conflicts before running mwsync.py commit.",
+                  file=sys.stderr)
+            sys.exit(1)
+        try:
+            merge_upstream = int(merge_state.get("upstream_revid") or 0)
+        except (TypeError, ValueError):
+            merge_upstream = 0
+        if merge_upstream:
+            baserevid = merge_upstream
+
+    if not create_new and not allow_empty and baserevid:
+        base_path = _cached_body_or_die(key, int(baserevid))
+        if _read_text(base_path) == page_text:
+            print(f"Nothing to commit for '{key}'.", file=sys.stderr)
+            print("Use --allow-empty to create a pending commit anyway.",
+                  file=sys.stderr)
+            sys.exit(1)
+
+    if message:
+        summary = message
+    elif amend and pending and pending.get("summary"):
+        summary = _edit_summary(str(pending.get("summary", "")), key, title, int(baserevid))
+    else:
+        summary = _edit_summary("", key, title, int(baserevid or 0))
+    if summary is None:
+        print("# Aborted: empty edit summary.", file=sys.stderr)
+        sys.exit(0)
+
+    created_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    meta = {
+        "article_key": key,
+        "title": title,
+        "url": url,
+        "local": local,
+        "base_revid": int(baserevid or 0),
+        "create_new": bool(create_new),
+        "summary": summary,
+        "created_at": created_at,
+        "body": os.path.basename(_pending_commit_body_path(key)),
+    }
+    if not _write_pending_commit(key, meta, page_text):
+        sys.exit(1)
+    if merge_state:
+        _clear_merge_state(key)
+
+    action = "Amended" if amend and pending else "Committed"
+    print(f"# {action} pending edit for '{key}'", file=sys.stderr)
+    print(f"#   Title:      {title}", file=sys.stderr)
+    if url:
+        print(f"#   URL:        {url}", file=sys.stderr)
+    print(f"#   Local:      {local} ({len(page_text)} chars)", file=sys.stderr)
+    if create_new:
+        print("#   Mode:       CREATE NEW article", file=sys.stderr)
+    else:
+        print(f"#   Base revid: {baserevid}", file=sys.stderr)
+    print(f"#   Summary:    {summary}", file=sys.stderr)
+    print(f"# Run: mwsync.py push {key}", file=sys.stderr)
+
+
 def run_push(args, config: dict, config_path: str) -> None:
     key, art = resolve_article_entry(config, args.article)
     _check_legacy_cache(key)
@@ -1703,45 +1880,56 @@ def run_push(args, config: dict, config_path: str) -> None:
     local = art.get("local", key + ".mw")
     url = _article_url(config, key, art)
     api_base = get_api_base(config)
-    baserevid = _read_ref(key, "base") or art.get("upstream_revid", 0)
     dry_run = getattr(args, "dry_run", False)
-    message = getattr(args, "message", None)
-    create_new = getattr(args, "new", False)
+    pending = _pending_commit(key)
 
-    if not baserevid and not create_new:
-        print(f"Error: upstream_revid not set for '{key}'.", file=sys.stderr)
-        print(f"If this is a new article, use 'mwsync.py push --new {key}' to create it.",
+    if pending is None:
+        print(f"Everything up-to-date for '{key}' (no pending commit).", file=sys.stderr)
+        print(f"Run 'mwsync.py commit {key} -m \"Summary\"' first.", file=sys.stderr)
+        return
+
+    commit_title = str(pending.get("title") or title)
+    baserevid = int(pending.get("base_revid") or 0)
+    create_new = bool(pending.get("create_new", False))
+    summary = str(pending.get("summary") or "").strip()
+    commit_local = str(pending.get("local") or local)
+    commit_url = str(pending.get("url") or url)
+    body_path = _pending_commit_body_path(key)
+
+    if not summary:
+        print(f"Error: pending commit for '{key}' has an empty summary.", file=sys.stderr)
+        print(f"Repair {_pending_commit_meta_path(key)} or recommit with --amend.",
               file=sys.stderr)
-        print(f"Otherwise, run 'mwsync.py fetch {key}' first.", file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.exists(local):
-        print(f"Error: local file not found: {local}", file=sys.stderr)
-        print(f"Run 'mwsync.py fetch {key}' first.", file=sys.stderr)
+    if not baserevid and not create_new:
+        print(f"Error: pending commit for '{key}' has no base revid.", file=sys.stderr)
+        print(f"If this is a new article, recommit with 'mwsync.py commit --new {key}'.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        page_text = _read_text(body_path)
+    except Exception as e:
+        print(f"Error reading {body_path}: {e}", file=sys.stderr)
         sys.exit(1)
 
     username = os.environ.get("MWSYNC_MW_USER", "")
     password = os.environ.get("MWSYNC_MW_PASSWORD", "")
 
     if dry_run:
-        try:
-            page_len = len(open(local, encoding="utf-8").read())
-        except Exception:
-            page_len = 0
         print(f"# Push plan for: {key}", file=sys.stderr)
-        print(f"#   Title:      {title}", file=sys.stderr)
-        if url:
-            print(f"#   URL:        {url}", file=sys.stderr)
+        print(f"#   Title:      {commit_title}", file=sys.stderr)
+        if commit_url:
+            print(f"#   URL:        {commit_url}", file=sys.stderr)
         print(f"#   API:        {api_base}", file=sys.stderr)
-        print(f"#   Local:      {local} ({page_len} chars)", file=sys.stderr)
+        print(f"#   Commit:     {body_path} ({len(page_text)} chars)", file=sys.stderr)
+        print(f"#   Local:      {commit_local}", file=sys.stderr)
         if create_new:
             print("#   Mode:       CREATE NEW article", file=sys.stderr)
         else:
             print(f"#   Base revid: {baserevid}", file=sys.stderr)
-        if message:
-            print(f"#   Summary:    {message}", file=sys.stderr)
-        else:
-            print("#   Summary:    (editor will open)", file=sys.stderr)
+        print(f"#   Summary:    {summary}", file=sys.stderr)
         if username:
             print(f"#   Credentials: found (user: {username})", file=sys.stderr)
         else:
@@ -1755,25 +1943,10 @@ def run_push(args, config: dict, config_path: str) -> None:
               file=sys.stderr)
         sys.exit(1)
 
-    try:
-        with open(local, "r", encoding="utf-8") as f:
-            page_text = f.read()
-    except Exception as e:
-        print(f"Error reading {local}: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    if message:
-        summary = message
-    else:
-        summary = _edit_summary("", key, title, baserevid)
-        if summary is None:
-            print("# Aborted: empty edit summary.", file=sys.stderr)
-            sys.exit(0)
-
     print(f"# Pushing '{key}'...", file=sys.stderr)
-    print(f"#   Title:      {title}", file=sys.stderr)
-    if url:
-        print(f"#   URL:        {url}", file=sys.stderr)
+    print(f"#   Title:      {commit_title}", file=sys.stderr)
+    if commit_url:
+        print(f"#   URL:        {commit_url}", file=sys.stderr)
     print(f"#   Content:    {len(page_text)} chars", file=sys.stderr)
     if create_new:
         print("#   Mode:       CREATE NEW article", file=sys.stderr)
@@ -1797,7 +1970,7 @@ def run_push(args, config: dict, config_path: str) -> None:
 
     print("# Submitting edit...", file=sys.stderr)
     try:
-        new_revid = _mw_edit_page(api_base, opener, title, page_text,
+        new_revid = _mw_edit_page(api_base, opener, commit_title, page_text,
                                    baserevid, csrf_token, summary,
                                    create_new=create_new)
     except Exception as e:
@@ -1805,8 +1978,8 @@ def run_push(args, config: dict, config_path: str) -> None:
         sys.exit(1)
 
     print(f"# Success! New revid: {new_revid}", file=sys.stderr)
-    if url:
-        print(f"# URL: {url}", file=sys.stderr)
+    if commit_url:
+        print(f"# URL: {commit_url}", file=sys.stderr)
 
     now_utc = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     wiki = config.setdefault("wiki", {})
@@ -1817,11 +1990,12 @@ def run_push(args, config: dict, config_path: str) -> None:
     if not _write_ref(key, "last-pushed", int(new_revid)):
         sys.exit(1)
     save_config(config, config_path)
+    _clear_pending_commit(key)
 
     # Auto-fetch to resync upstream refs with the revision we just created.
     print("# Re-fetching to sync upstream cache...", file=sys.stderr)
     try:
-        result = _fetch_page(title, api_base)
+        result = _fetch_page(commit_title, api_base)
         if not _cache_fetch_transaction(key, art, api_base, result, [], []):
             sys.exit(1)
         if not _write_ref(key, "base", int(result["revid"])):
@@ -1906,6 +2080,7 @@ def run_merge(args, config: dict, config_path: str) -> dict | None:
             print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
             print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
                   file=sys.stderr)
+        _clear_merge_state(key)
         return {"action": "checked-out", "upstream_revid": upstream_revid}
 
     if base_revid is None:
@@ -1917,6 +2092,7 @@ def run_merge(args, config: dict, config_path: str) -> dict | None:
                       file=sys.stderr)
                 print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
                       file=sys.stderr)
+            _clear_merge_state(key)
             return {"action": "adopted", "upstream_revid": upstream_revid}
         print(f"Error: no base revision cached for '{key}'.", file=sys.stderr)
         print(f"Run 'mwsync.py fetch {key}' before making local edits.", file=sys.stderr)
@@ -1928,6 +2104,7 @@ def run_merge(args, config: dict, config_path: str) -> dict | None:
     if int(base_revid) == int(upstream_revid):
         if not quiet:
             print(f"# Already up to date at revid {upstream_revid}", file=sys.stderr)
+        _clear_merge_state(key)
         return {
             "action": "already-up-to-date",
             "base_revid": base_revid,
@@ -1943,6 +2120,7 @@ def run_merge(args, config: dict, config_path: str) -> dict | None:
             print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
             print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
                   file=sys.stderr)
+        _clear_merge_state(key)
         return {
             "action": "local-matches-upstream",
             "base_revid": base_revid,
@@ -1959,6 +2137,7 @@ def run_merge(args, config: dict, config_path: str) -> dict | None:
                   file=sys.stderr)
             print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
                   file=sys.stderr)
+        _clear_merge_state(key)
         return {
             "action": "fast-forwarded",
             "base_revid": base_revid,
@@ -1977,6 +2156,7 @@ def run_merge(args, config: dict, config_path: str) -> dict | None:
             print(f"# Updated refs/base to {upstream_revid}", file=sys.stderr)
             print(f"# Updated upstream_revid={upstream_revid} in {config_path}",
                   file=sys.stderr)
+        _clear_merge_state(key)
         return {
             "action": "merged",
             "base_revid": base_revid,
@@ -1986,9 +2166,17 @@ def run_merge(args, config: dict, config_path: str) -> dict | None:
     if code == 1:
         if not _atomic_write(local, merged_text):
             sys.exit(1)
+        state = {
+            "article_key": key,
+            "base_revid": int(base_revid),
+            "upstream_revid": int(upstream_revid),
+            "created_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        if not _write_merge_state(key, state):
+            sys.exit(1)
         print(f"Conflict: merged with conflict markers in {local}", file=sys.stderr)
-        print(f"Resolve conflicts, then commit locally. refs/base remains {base_revid}.",
-              file=sys.stderr)
+        print("Resolve conflicts, then run 'mwsync.py commit'.", file=sys.stderr)
+        print(f"Merge state saved in {_merge_state_path(key)}.", file=sys.stderr)
         sys.exit(1)
 
     if merge_stderr:
@@ -2154,6 +2342,57 @@ def _fsck_article(config: dict, key: str, art: dict, namespace_map: dict | None 
                 issues += 1
         except Exception:
             pass
+
+    commit_meta_path = _pending_commit_meta_path(key)
+    commit_body_path = _pending_commit_body_path(key)
+    if os.path.exists(commit_meta_path) or os.path.exists(commit_body_path):
+        if not os.path.exists(commit_meta_path):
+            print(f"{key}: pending commit body exists without commit.json")
+            issues += 1
+        if not os.path.exists(commit_body_path):
+            print(f"{key}: pending commit metadata exists without commit.mw")
+            issues += 1
+        if os.path.exists(commit_meta_path):
+            try:
+                with open(commit_meta_path, "r", encoding="utf-8") as f:
+                    pending = json.load(f)
+                if not isinstance(pending, dict):
+                    raise ValueError("expected JSON object")
+                if pending.get("article_key") and pending["article_key"] != key:
+                    print(f"{key}: pending commit article_key mismatch")
+                    issues += 1
+                if not str(pending.get("summary") or "").strip():
+                    print(f"{key}: pending commit has empty summary")
+                    issues += 1
+                base_revid = int(pending.get("base_revid") or 0)
+                if not pending.get("create_new") and not base_revid:
+                    print(f"{key}: pending commit has no base_revid")
+                    issues += 1
+            except Exception as e:
+                print(f"{key}: cannot read pending commit metadata {commit_meta_path}: {e}")
+                issues += 1
+
+    merge_state_path = _merge_state_path(key)
+    if os.path.exists(merge_state_path):
+        try:
+            with open(merge_state_path, "r", encoding="utf-8") as f:
+                merge_state = json.load(f)
+            if not isinstance(merge_state, dict):
+                raise ValueError("expected JSON object")
+            if merge_state.get("article_key") and merge_state["article_key"] != key:
+                print(f"{key}: merge state article_key mismatch")
+                issues += 1
+            for field in ("base_revid", "upstream_revid"):
+                revid = int(merge_state.get(field) or 0)
+                if not revid:
+                    print(f"{key}: merge state missing {field}")
+                    issues += 1
+                elif history and revid not in seen_revids:
+                    print(f"{key}: merge state {field} points outside history: {revid}")
+                    issues += 1
+        except Exception as e:
+            print(f"{key}: cannot read merge state {merge_state_path}: {e}")
+            issues += 1
 
     if issues == 0:
         print(f"{key}: ok")
@@ -2327,6 +2566,8 @@ def run_status(args, config: dict, config_path: str) -> None:
         upstream_ref = _read_ref(key, "upstream")
         base_ref = _read_ref(key, "base")
         last_pushed_ref = _read_ref(key, "last-pushed")
+        pending = _pending_commit(key)
+        merge_state = _read_merge_state(key)
         history = _read_history(key)
         latest = {}
         if upstream_ref is not None:
@@ -2374,6 +2615,18 @@ def run_status(args, config: dict, config_path: str) -> None:
             print(f"  last_pushed:     {pushed_revid}  ({pushed_at})")
         else:
             print("  last_pushed:     (never)")
+        if pending:
+            pending_summary = str(pending.get("summary") or "")
+            pending_base = pending.get("base_revid") or ""
+            pending_created = pending.get("created_at") or ""
+            mode = "new article" if pending.get("create_new") else f"base {pending_base}"
+            print(f"  pending_commit:  {mode}  ({pending_created})")
+            if pending_summary:
+                print(f"  pending_summary: {pending_summary}")
+        if merge_state:
+            merge_base = merge_state.get("base_revid", "")
+            merge_upstream = merge_state.get("upstream_revid", "")
+            print(f"  merge_state:     base {merge_base} -> upstream {merge_upstream}")
         print()
 
 
@@ -2427,13 +2680,21 @@ def main() -> None:
     p_fetch.add_argument("--with-bodies", action="store_true",
                          help="Also fetch bodies for revisions in the metadata window")
 
+    # commit
+    p_commit = sub.add_parser("commit", help="Snapshot local edits as a pending wiki edit")
+    p_commit.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
+    p_commit.add_argument("--new", action="store_true",
+                          help="Commit a new article that does not have a base revid")
+    p_commit.add_argument("--amend", action="store_true",
+                          help="Replace the existing pending commit for this article")
+    p_commit.add_argument("--allow-empty", action="store_true",
+                          help="Allow a pending commit whose content matches the base")
+    p_commit.add_argument("-m", "--message", help="Edit summary (skips editor prompt)")
+
     # push
-    p_push = sub.add_parser("push", help="Submit local edits back to the wiki")
+    p_push = sub.add_parser("push", help="Submit pending local commits back to the wiki")
     p_push.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
     p_push.add_argument("--dry-run", action="store_true", help="Preview without pushing")
-    p_push.add_argument("--new", action="store_true",
-                        help="Create a new article (instead of editing an existing one)")
-    p_push.add_argument("-m", "--message", help="Edit summary (skips editor prompt)")
 
     # diff
     p_diff = sub.add_parser("diff", help="Compare cached revisions and local files")
@@ -2501,6 +2762,8 @@ def main() -> None:
         run_checkout(args, config, config_path)
     elif args.subcommand == "fetch":
         run_fetch(args, config, config_path)
+    elif args.subcommand == "commit":
+        run_commit(args, config, config_path)
     elif args.subcommand == "push":
         run_push(args, config, config_path)
     elif args.subcommand == "diff":
