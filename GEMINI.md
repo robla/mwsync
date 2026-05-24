@@ -38,7 +38,7 @@ There is no build system. Run scripts directly with Python 3.
 ### mwsync.py
 - **Help:** `python3 mwsync.py --help`
 - **Tracked Articles:** `python3 mwsync.py status`
-- **Sync Workflow:** `fetch` -> `merge` -> (edit) -> `commit` -> `push`.
+- **Sync Workflow:** `fetch` -> `merge` -> (edit) -> `commit` -> `push`; use `restore` to discard local edits back to `refs/base`.
 
 ### ledecopy.py
 - **Usage:** `python3 ledecopy.py "Article Title"`

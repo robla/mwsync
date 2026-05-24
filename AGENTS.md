@@ -38,6 +38,7 @@ Use Python 3 directly; there is no build system.
 - `python3 mwsync.py checkout Maine`: register, fetch, and merge into `Maine.mw`.
 - `python3 mwsync.py fetch Maine`: update `_cache` and `refs/upstream` only.
 - `python3 mwsync.py merge Maine`: update the local `.mw` from fetched upstream.
+- `python3 mwsync.py restore Maine`: discard local `.mw` edits and restore `refs/base`.
 - `python3 mwsync.py commit Maine -m "Update Maine"`: snapshot local edits as a pending wiki edit.
 - `python3 mwsync.py push Maine`: publish the pending commit to the wiki.
 - `python3 mwsync.py diff Maine@upstream^ Maine@upstream`: compare cached revisions.

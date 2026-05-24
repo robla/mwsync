@@ -15,6 +15,7 @@ python3 mwsync.py add Maine                        # register by page name (no f
 python3 mwsync.py checkout https://electowiki.org/wiki/Maine  # register + fetch + merge
 python3 mwsync.py fetch Maine                      # update _cache only, never local
 python3 mwsync.py merge Maine                      # reconcile upstream → local
+python3 mwsync.py restore Maine                    # discard local edits back to refs/base
 python3 mwsync.py diff Maine                       # upstream vs local (uses git diff --no-index)
 python3 mwsync.py commit Maine -m "summary"        # snapshot local edit as pending wiki commit
 python3 mwsync.py push Maine                       # publish pending commit, then re-fetch

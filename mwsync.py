@@ -15,6 +15,7 @@ Subcommands:
   diff      Compare upstream cache vs working local file
   difftool  Launch meld to compare upstream cache vs working local
   merge     Merge fetched upstream changes into local file
+  restore   Restore the local .mw file from refs/base
   log       Show cached revision history
   show      Print cached revision text
   fsck      Check cache refs, history, and revision files
@@ -30,6 +31,7 @@ Usage:
   mwsync.py diff Maine
   mwsync.py diff Maine@upstream^ Maine@upstream
   mwsync.py merge Maine
+  mwsync.py restore Maine
   mwsync.py commit Maine -m "Update Maine article"
   mwsync.py push Maine
   mwsync.py status
@@ -2185,6 +2187,64 @@ def run_merge(args, config: dict, config_path: str) -> dict | None:
     sys.exit(1)
 
 
+def run_restore(args, config: dict, config_path: str) -> None:
+    key, art = resolve_article_entry(config, args.article)
+    _check_legacy_cache(key)
+    local = art.get("local", key + ".mw")
+    discard_commit = getattr(args, "discard_commit", False)
+    abort_merge = getattr(args, "abort_merge", False)
+    dry_run = getattr(args, "dry_run", False)
+
+    base_revid = _read_ref(key, "base")
+    if base_revid is None:
+        print(f"Error: no base revision cached for '{key}'.", file=sys.stderr)
+        print(f"Run 'mwsync.py fetch {key}' and 'mwsync.py merge {key}' first.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    merge_state_exists = os.path.exists(_merge_state_path(key))
+    merge_state = None if abort_merge else _read_merge_state(key)
+    if merge_state and not abort_merge:
+        print(f"Error: merge state exists for '{key}'.", file=sys.stderr)
+        print(f"Use 'mwsync.py restore --abort-merge {key}' to discard the merge.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    base_path = _cached_body_or_die(key, int(base_revid))
+    pending_exists = (os.path.exists(_pending_commit_meta_path(key))
+                      or os.path.exists(_pending_commit_body_path(key)))
+    pending = None if discard_commit else _pending_commit(key)
+
+    if dry_run:
+        print(f"# Restore plan for: {key}", file=sys.stderr)
+        print(f"#   Local:       {local}", file=sys.stderr)
+        print(f"#   Source:      refs/base ({base_revid})", file=sys.stderr)
+        if merge_state_exists:
+            print("#   Merge state: will be cleared", file=sys.stderr)
+        if pending_exists:
+            action = "will be discarded" if discard_commit else "will remain"
+            print(f"#   Pending:     {action}", file=sys.stderr)
+        return
+
+    base_text = _read_text(base_path)
+    if not _atomic_write(local, base_text):
+        sys.exit(1)
+    if abort_merge:
+        _clear_merge_state(key)
+    if discard_commit:
+        _clear_pending_commit(key)
+
+    print(f"# Restored {local} from refs/base ({base_revid})", file=sys.stderr)
+    if abort_merge and merge_state_exists:
+        print(f"# Cleared merge state for '{key}'", file=sys.stderr)
+    if discard_commit and pending_exists:
+        print(f"# Discarded pending commit for '{key}'", file=sys.stderr)
+    elif pending:
+        print(f"# Pending commit still exists for '{key}'.", file=sys.stderr)
+        print(f"# Use 'mwsync.py restore --discard-commit {key}' to discard it.",
+              file=sys.stderr)
+
+
 def run_log(args, config: dict, config_path: str) -> None:
     key, art = resolve_article_entry(config, args.article)
     _check_legacy_cache(key)
@@ -2757,6 +2817,16 @@ def main() -> None:
     p_merge = sub.add_parser("merge", help="Merge fetched upstream changes into local file")
     p_merge.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
 
+    # restore
+    p_restore = sub.add_parser("restore", help="Restore local file from refs/base")
+    p_restore.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
+    p_restore.add_argument("--dry-run", action="store_true",
+                           help="Preview restore without writing")
+    p_restore.add_argument("--discard-commit", action="store_true",
+                           help="Also discard any pending local commit")
+    p_restore.add_argument("--abort-merge", action="store_true",
+                           help="Clear merge-conflict state after restoring refs/base")
+
     # log
     p_log = sub.add_parser("log", help="Show cached revision history")
     p_log.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
@@ -2817,6 +2887,8 @@ def main() -> None:
         run_difftool(args, config, config_path)
     elif args.subcommand == "merge":
         run_merge(args, config, config_path)
+    elif args.subcommand == "restore":
+        run_restore(args, config, config_path)
     elif args.subcommand == "log":
         run_log(args, config, config_path)
     elif args.subcommand == "show":
