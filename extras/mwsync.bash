@@ -1,4 +1,4 @@
-# Bash completion for mwsync.py.
+# Bash completion for mwsync.py and the supported short alias, mws.
 #
 # Source this file from ~/.bashrc or an interactive shell:
 #   source /path/to/mwsync/extras/mwsync.bash
@@ -139,4 +139,4 @@ _mwsync_complete()
     esac
 }
 
-complete -F _mwsync_complete mwsync.py
+complete -F _mwsync_complete mwsync.py mws
