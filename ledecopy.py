@@ -784,8 +784,16 @@ def main() -> None:
         run_default(args, config_path)
 
 
+def _article_identity(config: dict, raw_title: str) -> tuple[str, str, str, str]:
+    key, fields = mwsync._article_fields_from_title(
+        config, raw_title, fetch_namespaces=False,
+    )
+    return key, fields["title"], fields["local"], fields.get("url", "")
+
+
 def run_default(args, config_path: str) -> None:
-    key, title, local_filename = mwsync._parse_article_name(args.title)
+    config = _load_or_minimal_config(config_path)
+    key, title, local_filename, article_url = _article_identity(config, args.title)
 
     if os.path.exists(local_filename):
         print(f"Error: local file '{local_filename}' already exists.",
@@ -794,7 +802,6 @@ def run_default(args, config_path: str) -> None:
               file=sys.stderr)
         sys.exit(1)
 
-    config = _load_or_minimal_config(config_path)
     articles = config.setdefault("wiki", {}).setdefault("articles", {})
     if key in articles:
         print(f"Error: article '{key}' is already registered in {config_path}.",
@@ -847,7 +854,7 @@ def run_default(args, config_path: str) -> None:
 
     articles[key] = {
         "title": title,
-        "url": _electowiki_article_url(key),
+        "url": article_url or _electowiki_article_url(key),
         "local": local_filename,
     }
     if not mwsync.save_config(config, config_path):
@@ -871,13 +878,12 @@ def run_default(args, config_path: str) -> None:
 
 
 def run_merge(args, config_path: str) -> None:
-    derived_key, title, derived_local = mwsync._parse_article_name(args.title)
-
     if not os.path.exists(config_path):
         print(f"Error: --merge requires an existing {config_path}.",
               file=sys.stderr)
         sys.exit(1)
     config = mwsync.load_config(config_path)
+    derived_key, title, derived_local, _article_url = _article_identity(config, args.title)
     articles = config.get("wiki", {}).get("articles") or {}
     if derived_key not in articles:
         print(f"Error: article '{derived_key}' is not registered in "
