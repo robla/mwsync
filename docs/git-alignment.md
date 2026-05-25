@@ -42,7 +42,8 @@ attention, while `mwsync.py status --verbose` reports registered articles, local
 paths, URLs, upstream metadata, and raw cache refs. The status model should be
 based on mwsync state: working files compared to `refs/base`, pending commits,
 merge state, and fetched-but-unmerged upstream revisions. Whether those files
-are also dirty in the surrounding Git repository is a separate concern.
+are also dirty in the surrounding Git repository is a separate concern, and
+`mwsync.py status` should not call `git status`.
 
 ### 3. There Is No Staging Index
 

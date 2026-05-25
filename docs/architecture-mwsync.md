@@ -136,7 +136,7 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `show` prints revision text for expressions such as `New_York@upstream`, `New_York@upstream^`, or `New_York@19778`. If metadata is known but the requested body is not cached yet, `show` fetches that one revision body by revid and stores it in the article cache.
 
-`status` prints a compact Git-like summary by default: articles with local modifications, pending commits, unresolved merge state, missing local files, unfetched state, or fetched upstream revisions not yet merged. If all tracked articles are clean, it prints a single clean message. `status --verbose` preserves the detailed output with local path, URL, upstream revision metadata, refs, last pushed revision, pending commit, and merge state.
+`status` is a purely local mwsync-state command. It performs no network activity and does not inspect the surrounding Git repository. By default it prints a compact Git-like summary: articles with local `.mw` content that differs from cached `refs/base`, pending commits ready to push, unresolved merge state, missing local files, unfetched state, or fetched upstream revisions not yet merged. If all tracked articles are clean, it prints a single clean message. `status --verbose` preserves the detailed output with local path, URL, upstream revision metadata, refs, last pushed revision, pending commit, and merge state.
 
 `fsck` checks cache consistency for one article or all registered articles. It reports legacy cache files, malformed refs, missing revision bodies or sidecars, non-chronological history entries, and ref/history mismatches. It does not repair files implicitly.
 

@@ -1420,20 +1420,6 @@ def _resolve_revision_arg(config: dict, spec: str, *, fetch_missing: bool = True
     return path, f"{key}@{revspec} ({revid})"
 
 
-def _git_is_modified(path: str) -> bool | None:
-    """Return True if file has uncommitted changes, False if clean, None if not in git."""
-    try:
-        res = subprocess.run(
-            ["git", "status", "--porcelain", "--", path],
-            check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        )
-        if res.returncode != 0:
-            return None
-        return bool(res.stdout.strip())
-    except FileNotFoundError:
-        return None
-
-
 def _file_content_matches(path: str, content: str) -> bool:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -2645,8 +2631,8 @@ def run_status(args, config: dict, config_path: str) -> None:
         pushed_revid = art.get("last_pushed_revid", "")
         pushed_at = art.get("last_pushed_at", "")
 
-        modified = _git_is_modified(local)
-        if modified is None and os.path.exists(local) and base_ref is not None:
+        modified = None
+        if os.path.exists(local) and base_ref is not None:
             base_path = _revision_body_path(key, base_ref)
             if os.path.exists(base_path):
                 modified = not _file_content_matches(local, _read_text(base_path))
@@ -2703,23 +2689,31 @@ def run_status(args, config: dict, config_path: str) -> None:
             merge_base = merge_state.get("base_revid", "")
             merge_upstream = merge_state.get("upstream_revid", "")
             states.append("merging")
-            details.append(f"base {merge_base} -> upstream {merge_upstream}")
+            details.append(f"resolve conflicts, then commit; base {merge_base} -> upstream {merge_upstream}")
         if pending:
             pending_summary = str(pending.get("summary") or "").strip()
             states.append("pending")
             if pending_summary:
-                details.append(pending_summary)
+                details.append(f"ready to push: {pending_summary}")
+            pending_body = _read_optional_text(_pending_commit_body_path(key))
+            if pending_body is not None and os.path.exists(local):
+                try:
+                    if _read_text(local) != pending_body:
+                        details.append("working file changed after commit")
+                except OSError:
+                    pass
         if not os.path.exists(local):
             states.append("missing")
         elif modified is True:
             states.append("modified")
-        if upstream_ref is None:
-            states.append("unfetched")
-        elif base_ref is None:
-            states.append("unmerged")
-        elif int(base_ref) != int(upstream_ref):
-            states.append("behind")
-            details.append(f"base {base_ref} -> upstream {upstream_ref}")
+        if not (pending and pending.get("create_new")):
+            if upstream_ref is None:
+                states.append("unfetched")
+            elif base_ref is None:
+                states.append("unmerged")
+            elif int(base_ref) != int(upstream_ref):
+                states.append("behind")
+                details.append(f"base {base_ref} -> upstream {upstream_ref}")
 
         if states or key_filter:
             state = ",".join(states) if states else "clean"
