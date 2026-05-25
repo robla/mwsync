@@ -139,6 +139,7 @@ The primitive operations should mirror git's broad shape:
 
 - `fetch`: contact the wiki, cache revision metadata/body as requested, and update `refs/upstream`.
 - `merge`: reconcile local edits with the fetched upstream revision using `refs/base` as the common ancestor.
+- `restore`: discard working-file edits by restoring cached `refs/base`.
 - `commit`: snapshot the local working file and edit summary as a pending wiki edit.
 - `push`: submit the pending commit to the wiki using its stored safe base revision, then update sync refs after confirmation.
 
@@ -151,6 +152,36 @@ For merge decisions:
 - Successful merge: update the working file and then update `refs/base` to `refs/upstream`
 - Clean fast-forward: if local file still matches `refs/base`, replace local file with `refs/upstream` and update `refs/base`
 - Conflict: leave conflict markers or side files, and do not advance `refs/base`
+
+## Surrounding Git Repository Alignment
+
+Many mwsync workspaces are also normal Git repositories that version
+`mwsync.yaml`, `.mw` files, docs, and local scripts. That is useful for personal
+history and review, but it should not be part of the core mwsync cleanliness
+model. Core commands should decide whether an article is clean by comparing the
+working `.mw` file with mwsync state such as `refs/base`, `commit.json`, and
+`merge.json`.
+
+Legacy behavior has sometimes conflated these layers by using
+`git status --porcelain` inside mwsync status checks. That can mark an article
+as modified even when it matches `refs/base`, simply because the surrounding Git
+repository has not committed the restored file. Treat that as a design issue to
+remove from core status behavior.
+
+A future helper should report Git/mwsync alignment explicitly, for example:
+
+```bash
+mwsync.py git-status
+mwsync.py git-check
+```
+
+Possible checks:
+
+- `.mw` files that are mwsync-clean but Git-dirty.
+- pending mwsync commits whose `.mw` file changed afterward.
+- tracked article files missing from Git.
+- `mwsync.yaml` changes that should be committed with matching `.mw` changes.
+- ignored cache files versus intentionally committed mirror state.
 
 ## Fetch Depth Semantics
 
