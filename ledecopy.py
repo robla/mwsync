@@ -48,7 +48,6 @@ import mwsync
 ENWIKI_API = "https://en.wikipedia.org/w/api.php"
 ELECTOWIKI_API = "https://electowiki.org/w/api.php"
 ELECTOWIKI_BASE = "https://electowiki.org"
-CATMAP_PATH = "catmap.yaml"
 
 # Top-of-page templates that ledecopy strips before splitting on the first
 # level-2 heading. Match is case-insensitive and runs against the template's
@@ -183,445 +182,6 @@ def _has_refs(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Category resolution (catmap.yaml + cache + interactive prompts)
-# ---------------------------------------------------------------------------
-
-def _format_category(name: str, sortkey: str | None) -> str:
-    if sortkey is not None:
-        return f"[[Category:{name}|{sortkey}]]"
-    return f"[[Category:{name}]]"
-
-
-def _load_catmap() -> dict[str, object]:
-    """Load catmap.yaml as {normalized_name: target_or_None}.
-
-    Returns an empty dict if the file does not exist. Validates that every
-    value is a string or null and exits on malformed entries.
-    """
-    if not os.path.exists(CATMAP_PATH):
-        return {}
-    try:
-        import yaml
-        with open(CATMAP_PATH, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except Exception as e:
-        print(f"Error reading {CATMAP_PATH}: {e}", file=sys.stderr)
-        sys.exit(1)
-    if not isinstance(data, dict):
-        print(f"Error: {CATMAP_PATH}: top-level must be a mapping.", file=sys.stderr)
-        sys.exit(1)
-    mappings = data.get("mappings") or {}
-    if not isinstance(mappings, dict):
-        print(f"Error: {CATMAP_PATH}: 'mappings' must be a mapping.", file=sys.stderr)
-        sys.exit(1)
-    out: dict[str, object] = {}
-    for k, v in mappings.items():
-        if v is not None and not isinstance(v, str):
-            print(f"Error: {CATMAP_PATH}: mapping for {k!r} must be string or null "
-                  f"(got {type(v).__name__}).", file=sys.stderr)
-            sys.exit(1)
-        normalized_key = catmgr.normalize_category_name(str(k))
-        if not normalized_key:
-            continue
-        out[normalized_key] = v if v is None else catmgr.normalize_category_name(v)
-    return out
-
-
-def _save_catmap(mapping: dict[str, object]) -> None:
-    sorted_keys = sorted(mapping.keys(), key=str.lower)
-    body = {"mappings": {k: mapping[k] for k in sorted_keys}}
-    if not mwsync.save_config(body, CATMAP_PATH):
-        sys.exit(1)
-
-
-def _load_category_cache() -> tuple[set[str], set[str], dict[str, str]] | None:
-    """Return (canonical_pages, used_categories, redirects) or None if missing.
-
-    canonical_pages: non-redirect category pages on the target wiki.
-    used_categories: category names appearing in the allcategories table.
-    redirects: {redirect_name: target_name} for category-page redirects with
-        a known target.
-    """
-    if not os.path.exists(catmgr.MANIFEST_PATH):
-        return None
-    canonical: set[str] = set()
-    used: set[str] = set()
-    redirects: dict[str, str] = {}
-
-    if os.path.exists(catmgr.CATEGORY_PAGES_PATH):
-        try:
-            with open(catmgr.CATEGORY_PAGES_PATH, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    row = json.loads(line)
-                    name = row.get("name")
-                    if not isinstance(name, str) or not name:
-                        continue
-                    if row.get("redirect"):
-                        target = row.get("redirect_target")
-                        if isinstance(target, str) and target:
-                            redirects[name] = target
-                    else:
-                        canonical.add(name)
-        except Exception as e:
-            print(f"Warning: could not read {catmgr.CATEGORY_PAGES_PATH}: {e}",
-                  file=sys.stderr)
-            return None
-
-    if os.path.exists(catmgr.ALLCATEGORIES_PATH):
-        try:
-            with open(catmgr.ALLCATEGORIES_PATH, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    row = json.loads(line)
-                    name = row.get("name")
-                    if isinstance(name, str) and name:
-                        used.add(name)
-        except Exception as e:
-            print(f"Warning: could not read {catmgr.ALLCATEGORIES_PATH}: {e}",
-                  file=sys.stderr)
-            return None
-
-    return canonical, used, redirects
-
-
-def _resolve_redirect(name: str,
-                      redirects: dict[str, str]) -> tuple[str, bool]:
-    """If `name` is a known redirect, walk the chain to its target.
-
-    Returns (resolved_name, was_redirected). Caps walk at 8 hops and gives up
-    on cycles, returning the original name unchanged in that case.
-    """
-    seen: set[str] = set()
-    current = name
-    for _ in range(8):
-        if current not in redirects or current in seen:
-            break
-        seen.add(current)
-        current = redirects[current]
-    return current, current != name
-
-
-def _print_redirect_note(source: str, target: str) -> None:
-    print(f'  "{source}" is a redirect on Electowiki to "{target}"; '
-          f'using "{target}".')
-
-
-def _input_with_completion(prompt: str, candidates: set[str]) -> str:
-    """Read a line from stdin with case-insensitive prefix completion against
-    `candidates`. Falls back to plain `input()` if `readline` is unavailable.
-    """
-    try:
-        import readline
-    except ImportError:
-        return input(prompt)
-
-    sorted_candidates = sorted(candidates, key=str.lower)
-
-    def completer(text: str, state: int) -> str | None:
-        text_lower = text.lower()
-        matches = [c for c in sorted_candidates
-                   if c.lower().startswith(text_lower)]
-        return matches[state] if state < len(matches) else None
-
-    old_completer = readline.get_completer()
-    old_delims = readline.get_completer_delims()
-    readline.set_completer(completer)
-    readline.set_completer_delims("")
-    readline.parse_and_bind("tab: complete")
-    try:
-        return input(prompt)
-    finally:
-        readline.set_completer(old_completer)
-        readline.set_completer_delims(old_delims)
-
-
-def _prompt_category_action(name: str, sortkey: str | None,
-                            cache_status: str,
-                            candidates: set[str]) -> tuple[str, str | None]:
-    """Prompt the user for a category decision.
-
-    Returns (action, target). Action is one of: 'map', 'drop', 'keep_save',
-    'keep_once', 'skip'. Target is the rename name when action == 'map',
-    None otherwise. `candidates` feeds tab completion on the rename input.
-    """
-    sortkey_note = f"  (sortkey: {sortkey!r})" if sortkey else ""
-    print()
-    print(f"Category not resolved: {name}{sortkey_note}")
-    print(f"  cache: {cache_status}")
-    print("  [m] map and save  [d] drop and save  [K] keep and save")
-    print("  [k] keep once     [s] skip once")
-    while True:
-        try:
-            choice = input("  choice: ").strip()
-        except EOFError:
-            return "skip", None
-        if choice == "m":
-            try:
-                new_name = _input_with_completion(
-                    "  new category name: ", candidates).strip()
-            except EOFError:
-                return "skip", None
-            if not new_name:
-                print("  empty name; please pick again.")
-                continue
-            return "map", catmgr.normalize_category_name(new_name)
-        if choice == "d":
-            return "drop", None
-        if choice == "K":
-            return "keep_save", None
-        if choice == "k":
-            return "keep_once", None
-        if choice == "s":
-            return "skip", None
-        print("  unrecognized choice; valid options: m, d, K, k, s")
-
-
-def _category_cache_status(name: str,
-                           canonical_pages: set[str] | None,
-                           used_categories: set[str] | None) -> str:
-    if canonical_pages is None:
-        return "cache missing"
-    if used_categories is not None and name in used_categories:
-        return "used on Electowiki but no category page"
-    return "absent from Electowiki cache"
-
-
-def _category_plan_lines(source_links: list[tuple[str, str | None]],
-                         catmap: dict[str, object],
-                         cache: tuple[set[str], set[str], dict[str, str]] | None,
-                         is_tty: bool) -> list[str]:
-    """Describe source-category handling before interactive prompts begin."""
-    if cache is None:
-        canonical_pages = used_categories = None
-        redirects: dict[str, str] = {}
-    else:
-        canonical_pages, used_categories, redirects = cache
-
-    rows = []
-    unresolved: set[str] = set()
-    for raw_name, sortkey in source_links:
-        normalized = catmgr.normalize_category_name(raw_name)
-        if not normalized:
-            continue
-
-        sortkey_note = f" | sortkey={sortkey!r}" if sortkey else ""
-        if normalized in catmap:
-            value = catmap[normalized]
-            if value is None:
-                disposition = "drop (catmap.yaml)"
-            else:
-                value_str = str(value)
-                resolved, via_redir = _resolve_redirect(value_str, redirects)
-                if value_str == normalized and not via_redir:
-                    disposition = "keep (catmap.yaml)"
-                elif via_redir:
-                    disposition = (f"use {resolved} "
-                                   f"(catmap.yaml via Electowiki redirect)")
-                else:
-                    disposition = f"use {value_str} (catmap.yaml)"
-        elif normalized in redirects:
-            resolved, _via_redir = _resolve_redirect(normalized, redirects)
-            disposition = f"use {resolved} (Electowiki redirect)"
-        elif canonical_pages is not None and normalized in canonical_pages:
-            disposition = "keep (Electowiki category page)"
-        else:
-            cache_status = _category_cache_status(
-                normalized, canonical_pages, used_categories)
-            if is_tty:
-                disposition = f"ask ({cache_status})"
-                unresolved.add(normalized)
-            else:
-                disposition = f"drop; review-needed ({cache_status})"
-
-        rows.append(f"  - {normalized}{sortkey_note}: {disposition}")
-
-    if not rows:
-        return ["Source categories: none."]
-
-    lines = [f"Source categories ({len(rows)}):"]
-    lines.extend(rows)
-    if is_tty and unresolved:
-        suffix = "" if len(unresolved) == 1 else "s"
-        lines.append(f"Interactive category decisions needed: "
-                     f"{len(unresolved)} unique category name{suffix}.")
-    return lines
-
-
-def _resolve_categories(source_links: list[tuple[str, str | None]],
-                        catmap: dict[str, object],
-                        cache: tuple[set[str], set[str], dict[str, str]] | None,
-                        is_tty: bool) -> tuple[list[str], list[dict], int]:
-    """Resolve each source category against catmap and (optional) cache.
-
-    Returns (output_categories, outcomes, new_entries_written). Mutates
-    catmap in place; saves catmap.yaml after each new recorded decision so
-    that an interrupted prompt session preserves the decisions already made.
-    Every emitted category name is routed through the cache's redirect map,
-    so a redirect category is never written into the local draft.
-    """
-    output: list[str] = []
-    outcomes: list[dict] = []
-    new_entries = 0
-    cache_warned = False
-
-    if cache is None:
-        canonical_pages = used_categories = None
-        redirects: dict[str, str] = {}
-    else:
-        canonical_pages, used_categories, redirects = cache
-
-    # Tab-completion candidates: cache contents (canonical pages, used
-    # categories, redirect names for discovery, redirect targets for
-    # canonical names) plus existing rename targets in catmap. Updated live
-    # as the user records new mappings during this run.
-    candidates: set[str] = set()
-    if canonical_pages:
-        candidates |= canonical_pages
-    if used_categories:
-        candidates |= used_categories
-    candidates |= set(redirects.keys())
-    candidates |= set(redirects.values())
-    candidates |= {v for v in catmap.values() if isinstance(v, str)}
-
-    def _emit(name: str, sortkey: str | None,
-              outcome: dict, source_for_note: str | None = None) -> None:
-        """Append a category to the output, resolving redirects on the way."""
-        resolved, via_redir = _resolve_redirect(name, redirects)
-        if via_redir:
-            _print_redirect_note(source_for_note or name, resolved)
-            outcome["via_redirect"] = True
-            outcome["target"] = resolved
-        output.append(_format_category(resolved, sortkey))
-
-    for raw_name, sortkey in source_links:
-        normalized = catmgr.normalize_category_name(raw_name)
-        if not normalized:
-            continue
-
-        # 1. catmap recorded decision wins.
-        if normalized in catmap:
-            value = catmap[normalized]
-            if value is None:
-                outcomes.append({"name": normalized, "action": "drop"})
-                continue
-            value_str = str(value)
-            action = "keep" if value_str == normalized else "map"
-            outcome = {"name": normalized, "action": action,
-                       "target": value_str}
-            _emit(value_str, sortkey, outcome, source_for_note=value_str)
-            outcomes.append(outcome)
-            continue
-
-        # 2. Source name is itself a known redirect on Electowiki.
-        # Substitute the target on emit; do not prompt and do not write a
-        # catmap entry — the redirect is the routing rule.
-        if normalized in redirects:
-            outcome = {"name": normalized, "action": "keep"}
-            _emit(normalized, sortkey, outcome, source_for_note=normalized)
-            outcomes.append(outcome)
-            continue
-
-        # 3. Cache implicit-keep (canonical, non-redirect page).
-        if canonical_pages is not None and normalized in canonical_pages:
-            outcome = {"name": normalized, "action": "keep"}
-            _emit(normalized, sortkey, outcome)
-            outcomes.append(outcome)
-            continue
-
-        # 4. Determine cache status hint for prompt or report.
-        if canonical_pages is None and not cache_warned:
-            print("Category cache not found; run catmgr.py fetch for "
-                  "better suggestions.", file=sys.stderr)
-            cache_warned = True
-        cache_status = _category_cache_status(
-            normalized, canonical_pages, used_categories)
-
-        # 5. Non-TTY: drop and report, do not prompt.
-        if not is_tty:
-            outcomes.append({"name": normalized, "action": "review"})
-            continue
-
-        # 6. Interactive prompt.
-        action, target = _prompt_category_action(normalized, sortkey,
-                                                 cache_status, candidates)
-
-        if action == "map":
-            resolved, via_redir = _resolve_redirect(target, redirects)
-            if via_redir:
-                _print_redirect_note(target, resolved)
-            output.append(_format_category(resolved, sortkey))
-            catmap[normalized] = resolved
-            _save_catmap(catmap)
-            new_entries += 1
-            candidates.add(resolved)
-            outcome = {"name": normalized, "action": "map", "target": resolved}
-            if via_redir:
-                outcome["via_redirect"] = True
-            outcomes.append(outcome)
-        elif action == "drop":
-            catmap[normalized] = None
-            _save_catmap(catmap)
-            new_entries += 1
-            outcomes.append({"name": normalized, "action": "drop"})
-        elif action == "keep_save":
-            output.append(_format_category(normalized, sortkey))
-            catmap[normalized] = normalized
-            _save_catmap(catmap)
-            new_entries += 1
-            candidates.add(normalized)
-            outcomes.append({"name": normalized, "action": "keep"})
-        elif action == "keep_once":
-            output.append(_format_category(normalized, sortkey))
-            outcomes.append({"name": normalized, "action": "keep"})
-        elif action == "skip":
-            outcomes.append({"name": normalized, "action": "skip"})
-
-    return output, outcomes, new_entries
-
-
-def _category_summary_lines(outcomes: list[dict], new_entries: int) -> list[str]:
-    if not outcomes:
-        return ["  No categories found in source."]
-    counts = {"keep": 0, "map": 0, "drop": 0, "skip": 0, "review": 0}
-    redirect_count = 0
-    for o in outcomes:
-        action = o.get("action")
-        if action in counts:
-            counts[action] += 1
-        if o.get("via_redirect"):
-            redirect_count += 1
-    parts = []
-    if counts["keep"]:
-        parts.append(f"{counts['keep']} kept")
-    if counts["map"]:
-        parts.append(f"{counts['map']} mapped")
-    if counts["drop"]:
-        parts.append(f"{counts['drop']} dropped")
-    if counts["skip"]:
-        parts.append(f"{counts['skip']} skipped")
-    if counts["review"]:
-        parts.append(f"{counts['review']} review-needed")
-    lines = [f"  Categories: {', '.join(parts)}."]
-    if redirect_count:
-        suffix = "" if redirect_count == 1 else "s"
-        lines.append(f"  {redirect_count} routed via Electowiki redirect{suffix}.")
-    if new_entries:
-        suffix = "y" if new_entries == 1 else "ies"
-        lines.append(f"  Wrote {new_entries} new catmap.yaml entr{suffix}.")
-    if counts["review"]:
-        lines.append("  Review-needed (re-run interactively or edit catmap.yaml):")
-        for o in outcomes:
-            if o.get("action") == "review":
-                lines.append(f"    - {o['name']}")
-    return lines
-
-
-# ---------------------------------------------------------------------------
 # Output assembly
 # ---------------------------------------------------------------------------
 
@@ -738,7 +298,7 @@ def _merge_categories(
     by_name: dict[str, str] = {}
     for name, sortkey in existing:
         if name not in by_name:
-            by_name[name] = _format_category(name, sortkey)
+            by_name[name] = catmgr.format_category_link(name, sortkey)
 
     new_count = 0
     for link in resolved:
@@ -838,12 +398,12 @@ def run_default(args, config_path: str) -> None:
     has_refs = _has_refs(lede)
 
     source_links = _extract_category_links(page["wikitext"])
-    catmap = _load_catmap()
-    cache = _load_category_cache()
+    catmap = catmgr.load_catmap()
+    cache = catmgr.load_category_cache()
     is_tty = sys.stdin.isatty()
-    for line in _category_plan_lines(source_links, catmap, cache, is_tty):
+    for line in catmgr.category_plan_lines(source_links, catmap, cache, is_tty):
         print(line)
-    resolved_categories, outcomes, new_entries = _resolve_categories(
+    resolved_categories, outcomes, new_entries = catmgr.resolve_categories(
         source_links, catmap, cache, is_tty)
 
     output = _build_output(title, lede, has_refs, page["revid"],
@@ -861,7 +421,7 @@ def run_default(args, config_path: str) -> None:
         sys.exit(1)
 
     print(f"Imported \"{title}\" from enwiki revision {page['revid']}.")
-    for line in _category_summary_lines(outcomes, new_entries):
+    for line in catmgr.category_summary_lines(outcomes, new_entries):
         print(line)
     if has_refs:
         print("  References section appended; named refs defined outside the "
@@ -987,11 +547,11 @@ def run_merge(args, config_path: str) -> None:
     has_refs = _has_refs(lede)
 
     source_links = _extract_category_links(page["wikitext"])
-    catmap = _load_catmap()
-    cache = _load_category_cache()
-    for line in _category_plan_lines(source_links, catmap, cache, is_tty):
+    catmap = catmgr.load_catmap()
+    cache = catmgr.load_category_cache()
+    for line in catmgr.category_plan_lines(source_links, catmap, cache, is_tty):
         print(line)
-    resolved_categories, outcomes, new_entries = _resolve_categories(
+    resolved_categories, outcomes, new_entries = catmgr.resolve_categories(
         source_links, catmap, cache, is_tty)
 
     local_text = local_bytes.decode("utf-8")
@@ -1047,7 +607,7 @@ def run_merge(args, config_path: str) -> None:
     print()
     print(f"Merged lede from \"{title}\" (enwiki revision "
           f"{page['revid']}) into {local}.")
-    for line in _category_summary_lines(outcomes, new_entries):
+    for line in catmgr.category_summary_lines(outcomes, new_entries):
         print(line)
     if has_refs:
         print("  References section appended; named refs defined outside "

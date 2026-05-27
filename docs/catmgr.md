@@ -343,16 +343,17 @@ Example enwiki-prose output:
 [[Category:Voting theory]]
 ```
 
-## Integration With ledecopy.py
+## Shared Category Resolution
 
-`ledecopy.py` is the primary consumer and editor of category state. During an
-import, it walks the categories from the enwiki source and consults two files
-in the working directory:
+`catmgr.py` owns the shared category-resolution logic used by both category
+maintenance and article imports. During an import or seed operation, the caller
+passes source category links to `catmgr.py`, which consults two files in the
+working directory:
 
 1. `catmap.yaml` (defined below) — durable mapping decisions.
 2. `_cache/categories/` — refreshable Electowiki category state.
 
-For each enwiki category encountered:
+For each source category encountered:
 
 - If `catmap.yaml` has a recorded decision (rename, drop, or explicit keep),
   apply it without prompting.
@@ -382,6 +383,10 @@ If stdin is not a TTY, `ledecopy.py` must not prompt. It should fall back to
 a defined batch policy (drop unknown categories and list them in the run
 summary as review-needed) and exit successfully. Re-running interactively
 later picks up the unmapped names and prompts for them.
+
+`ledecopy.py` should remain responsible for fetching/extracting article ledes
+and calling this shared category-resolution layer. It should not carry its own
+duplicate catmap, category-cache, or redirect-resolution implementation.
 
 ## Staleness
 
@@ -421,10 +426,8 @@ catmap entries can silently miss matching categories.
 
 Scope of ownership:
 
-- `ledecopy.py` reads and writes `catmap.yaml` during import.
-- `catmgr.py` does not modify `catmap.yaml`. It may read the file in future
-  audit/review commands, but editing stays with `ledecopy.py` until a
-  dedicated mapping CLI is designed.
+- `catmgr.py` reads and writes `catmap.yaml` through shared resolution helpers.
+- `ledecopy.py` delegates import-time category decisions to `catmgr.py`.
 - The file is separate from `_cache/categories/` because mapping decisions
   are durable human input, while the cache is refreshable wiki state.
 
