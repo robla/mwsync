@@ -222,6 +222,16 @@ def _load_cache() -> tuple[dict, list[dict], list[dict]]:
     )
 
 
+def _nonnegative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from e
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return parsed
+
+
 def run_fetch(args, config: dict) -> None:
     api_base = mwsync.get_api_base(config)
     print(f"# Fetching category table from {api_base}...", file=sys.stderr)
@@ -262,10 +272,98 @@ def run_status(args, config: dict) -> None:
 
 def run_list(args, config: dict) -> None:
     _manifest, allcategories, category_pages = _load_cache()
-    names = {row["name"] for row in allcategories if row.get("name")}
-    names.update(row["name"] for row in category_pages if row.get("name"))
-    for name in sorted(names, key=str.lower):
-        print(name)
+    rows = _category_index(allcategories, category_pages)
+    rows = [row for row in rows if _matches_list_filters(row, args)]
+    for row in rows:
+        if args.verbose:
+            print(_format_list_verbose(row))
+        else:
+            print(row["name"])
+
+
+def _category_index(allcategories: list[dict], category_pages: list[dict]) -> list[dict]:
+    rows = {}
+    for item in allcategories:
+        name = item.get("name")
+        if not name:
+            continue
+        rows[name] = {
+            "name": name,
+            "pages": int(item.get("pages") or 0),
+            "subcats": int(item.get("subcats") or 0),
+            "files": int(item.get("files") or 0),
+            "size": int(item.get("size") or 0),
+            "hidden": bool(item.get("hidden")),
+            "has_cat_page": False,
+            "redirect": False,
+            "redirect_target": "",
+        }
+
+    for item in category_pages:
+        name = item.get("name")
+        if not name:
+            continue
+        row = rows.setdefault(name, {
+            "name": name,
+            "pages": 0,
+            "subcats": 0,
+            "files": 0,
+            "size": 0,
+            "hidden": False,
+            "has_cat_page": False,
+            "redirect": False,
+            "redirect_target": "",
+        })
+        row["has_cat_page"] = True
+        row["redirect"] = bool(item.get("redirect"))
+        row["redirect_target"] = item.get("redirect_target", "")
+
+    return sorted(rows.values(), key=lambda item: item["name"].lower())
+
+
+def _matches_list_filters(row: dict, args) -> bool:
+    has_cat_page = row["has_cat_page"]
+    if args.has_cat_page == "true" and not has_cat_page:
+        return False
+    if args.has_cat_page == "false" and has_cat_page:
+        return False
+
+    pages = row["pages"]
+    if args.has_pages is not None and pages != args.has_pages:
+        return False
+    if args.min_pages is not None and pages < args.min_pages:
+        return False
+    if args.max_pages is not None and pages > args.max_pages:
+        return False
+    return True
+
+
+def _format_list_verbose(row: dict) -> str:
+    fields = [
+        row["name"],
+        f"cat_page={'yes' if row['has_cat_page'] else 'no'}",
+        f"pages={row['pages']}",
+        f"subcats={row['subcats']}",
+        f"files={row['files']}",
+        f"hidden={'yes' if row['hidden'] else 'no'}",
+    ]
+    if row["redirect"]:
+        target = row.get("redirect_target") or ""
+        fields.append(f"redirect=yes target={target}")
+    elif row["has_cat_page"]:
+        fields.append("redirect=no")
+    return "\t".join(fields)
+
+
+def _validate_list_args(args, parser: argparse.ArgumentParser) -> None:
+    if args.min_pages is not None and args.max_pages is not None:
+        if args.min_pages > args.max_pages:
+            parser.error("--min-pages cannot be greater than --max-pages")
+    if args.has_pages is not None:
+        if args.min_pages is not None and args.has_pages < args.min_pages:
+            parser.error("--has-pages cannot be less than --min-pages")
+        if args.max_pages is not None and args.has_pages > args.max_pages:
+            parser.error("--has-pages cannot be greater than --max-pages")
 
 
 def run_find(args, config: dict) -> None:
@@ -319,7 +417,33 @@ def main() -> None:
 
     sub.add_parser("fetch", help="Refresh _cache/categories from the target wiki")
     sub.add_parser("status", help="Show category cache status")
-    sub.add_parser("list", help="List cached category names")
+    p_list = sub.add_parser("list", help="List cached category names")
+    p_list.add_argument(
+        "--has-cat-page",
+        choices=["true", "false", "any"],
+        default="any",
+        help="Filter by whether a Category: page exists (default: any)",
+    )
+    p_list.add_argument(
+        "--has-pages",
+        type=_nonnegative_int,
+        help="Filter to categories with exactly this many normal page members",
+    )
+    p_list.add_argument(
+        "--min-pages",
+        type=_nonnegative_int,
+        help="Filter to categories with at least this many normal page members",
+    )
+    p_list.add_argument(
+        "--max-pages",
+        type=_nonnegative_int,
+        help="Filter to categories with at most this many normal page members",
+    )
+    p_list.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Include cached counts and category-page status",
+    )
 
     p_find = sub.add_parser("find", help="Search cached category names")
     p_find.add_argument("text", help="Case-insensitive search text")
@@ -331,6 +455,8 @@ def main() -> None:
     if not args.subcommand:
         ap.print_help()
         sys.exit(0)
+    if args.subcommand == "list":
+        _validate_list_args(args, ap)
 
     config = mwsync.load_config(args.config)
 

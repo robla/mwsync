@@ -151,6 +151,7 @@ Initial commands should focus on cache maintenance and inspection:
 catmgr.py fetch
 catmgr.py status
 catmgr.py list
+catmgr.py list --has-cat-page=false --min-pages=1
 catmgr.py find "Voting"
 catmgr.py check "Voting theory"
 ```
@@ -159,10 +160,33 @@ Meanings:
 
 - `fetch`: refresh `_cache/categories/` from the target wiki.
 - `status`: print when the cache was fetched and how many categories it has.
-- `list`: print cached category names.
+- `list`: print cached category names, optionally filtered by category-page
+  existence and member counts.
 - `find TEXT`: case-insensitive search of cached category names.
 - `check NAME`: report whether `NAME` appears as a category page, a used
   category, both, or neither.
+
+`list` supports filters that describe wiki-visible category state rather than
+MediaWiki storage internals:
+
+- `--has-cat-page=true|false|any`: filter by whether an actual `Category:`
+  page exists. `any` disables the filter.
+- `--has-pages=N`: filter to categories with exactly `N` normal page members.
+- `--min-pages=N`: filter to categories with at least `N` normal page members.
+- `--max-pages=N`: filter to categories with at most `N` normal page members.
+- `--verbose`: include cached counts and redirect/hidden status.
+
+With no filters, `list` prints all category names known from either used
+categories or existing category pages.
+
+The category-triage query for used categories that lack a category page is:
+
+```bash
+catmgr.py list --has-cat-page=false --min-pages=1
+```
+
+This is a local cache report only. It does not verify whether a matching
+category page exists on Wikipedia or Wikidata.
 
 Example `check` output:
 
@@ -179,6 +203,12 @@ For a redirect category, `check` should also print the redirect target:
 Category:Preferential voting methods
   category page: yes (redirect to "Ranked voting methods")
   used category: no
+```
+
+Verbose `list` output includes cached member counts:
+
+```text
+Voting theory	pages=61	subcats=13	files=0	hidden=no
 ```
 
 If the cache is missing, commands other than `fetch` should fail with:
