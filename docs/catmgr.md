@@ -231,6 +231,7 @@ The first useful target set is the same triage query:
 catmgr.py list --has-cat-page=false --min-pages=1
 catmgr.py seed "Voting" --parent "Voting theory"
 catmgr.py seed "Voting" --from=enwiki
+catmgr.py seed "Voting" --from=enwiki --force
 ```
 
 `seed` should register the category page with `mwsync.py`-compatible local
@@ -239,7 +240,14 @@ mechanics should preserve the normal mwsync publishing path: `catmgr.py` may
 prepare text, but `mwsync.py` remains responsible for tracking, committing, and
 pushing wiki pages.
 
-The initial implementation accepts parent categories explicitly:
+By default, `seed` refuses to overwrite existing local state and refuses
+categories that already have a target-wiki category page in the cache. Passing
+`--force` overwrites the local seed for the same category and allows reseeding
+even when the cache says the category already exists remotely. It does not push
+the replacement to the wiki; the normal `mwsync.py commit` and `mwsync.py push`
+review path still applies.
+
+The local-only default accepts parent categories explicitly:
 
 ```bash
 catmgr.py seed "Voting" --parent "Voting theory" --parent "Electoral systems"
@@ -247,12 +255,11 @@ catmgr.py seed "Voting" --parent "Voting theory" --parent "Electoral systems"
 
 ### Source Selection
 
-`seed` should support separate source choices for parent categories and prose:
+`seed` supports separate source choices for parent categories and prose:
 
 ```bash
 catmgr.py seed "Voting" --parents-from=manual --prose-from=none
 catmgr.py seed "Voting" --parents-from=enwiki --prose-from=none
-catmgr.py seed "Voting" --parents-from=enwiki --prose-from=wikidata
 catmgr.py seed "Voting" --parents-from=enwiki --prose-from=enwiki
 ```
 
@@ -261,14 +268,12 @@ catmgr.py seed "Voting" --parents-from=enwiki --prose-from=enwiki
 ```bash
 catmgr.py seed "Voting" --from=manual
 catmgr.py seed "Voting" --from=enwiki
-catmgr.py seed "Voting" --from=wikidata
 ```
 
 The presets expand as follows:
 
 - `--from=manual`: `--parents-from=manual --prose-from=none`
 - `--from=enwiki`: `--parents-from=enwiki --prose-from=enwiki`
-- `--from=wikidata`: `--parents-from=wikidata --prose-from=wikidata`
 
 Explicit source flags override the preset. For example:
 
@@ -283,18 +288,11 @@ Allowed source values:
 - `--parents-from=manual`: only use explicit `--parent` values.
 - `--parents-from=enwiki`: fetch the enwiki `Category:<Name>` page and extract
   its parent `[[Category:...]]` links.
-- `--parents-from=wikidata`: use Wikidata/category graph data when available.
 - `--prose-from=none`: generate no descriptive prose.
-- `--prose-from=wikidata`: generate short original prose from Wikidata/CC0
-  structured data.
 - `--prose-from=enwiki`: copy or adapt prose from the enwiki category page.
 
 Any source mode other than `manual`/`none` is explicit network behavior. It
 must not be triggered by `list`, `check`, or default local-only `seed` runs.
-
-Prefer Wikidata and other CC0 structured data for generated descriptive content
-when possible. This avoids importing Wikipedia category-page prose and the
-associated CC BY-SA attribution requirements.
 
 When `--prose-from=enwiki` is used, the generated page must include
 `{{Fromwikipedia|Category:<Name>|oldid=<revid>}}` or an equivalent attribution
@@ -302,20 +300,26 @@ template with the exact enwiki revision id. `--parents-from=enwiki` alone does
 not require `{{Fromwikipedia}}`, because category links are being used as
 organizational facts rather than copied prose.
 
+When enwiki category prose contains a simple `{{Cat main|Article}}` template,
+`catmgr.py` rewrites it to local wikitext instead of preserving the enwiki
+template:
+
+```wikitext
+See [[Article]] for the main article about this topic.
+```
+
 Seeded category pages should also carry appropriate parent categories when they
-are known. The initial implementation accepts explicit `--parent` values and
-resolves them using the same non-interactive rules as `ledecopy.py`:
+are known. Explicit `--parent` values and enwiki-sourced parent categories are
+resolved using the same shared rules as `ledecopy.py`:
 
 - Apply durable `catmap.yaml` decisions when present.
 - Keep a parent category when the Electowiki cache shows a non-redirect
   category page.
 - Substitute the redirect target when the Electowiki cache shows a category
   redirect.
-- Refuse unresolved parent categories unless
+- Prompt interactively for unknown parent categories when stdin is a TTY.
+- Refuse unresolved skipped/review-needed parent categories unless
   `--allow-unresolved-parents` is passed.
-
-Interactive parent-category prompts may be added later, but should not be
-required for the first useful version.
 
 `seed` must not recursively create missing parent categories by default. If a
 seeded category belongs to a parent category that is also missing, report that
@@ -326,8 +330,6 @@ can unexpectedly expand into a tree of new pages.
 Example starter output:
 
 ```wikitext
-<!-- Starter category page generated by catmgr.py seed. Review before pushing. -->
-
 [[Category:Voting theory]]
 ```
 

@@ -18,6 +18,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -29,6 +30,12 @@ MANIFEST_PATH = os.path.join(CATEGORY_CACHE_DIR, "manifest.json")
 ALLCATEGORIES_PATH = os.path.join(CATEGORY_CACHE_DIR, "allcategories.jsonl")
 CATEGORY_PAGES_PATH = os.path.join(CATEGORY_CACHE_DIR, "category-pages.jsonl")
 CATMAP_PATH = "catmap.yaml"
+ENWIKI_API = "https://en.wikipedia.org/w/api.php"
+CATEGORY_LINK_RE = re.compile(r"\[\[\s*[Cc]ategory\s*:[^\]\n]+\]\]")
+CAT_MAIN_RE = re.compile(r"\{\{\s*[Cc]at main\s*\|([^{}\n|]+)(?:\|[^{}\n]*)?\}\}")
+REDIRECT_RE = re.compile(r"\s*#REDIRECT\s*\[\[([^\]]+)\]\]", re.IGNORECASE)
+BEHAVIOR_SWITCH_RE = re.compile(r"^__(?:HIDDENCAT|EXPECTUNUSEDCATEGORY|NOGALLERY)__\s*$",
+                                re.IGNORECASE)
 
 
 def normalize_category_name(name: str) -> str:
@@ -479,6 +486,41 @@ def _category_page_maps(
     return used, pages, redirects
 
 
+def extract_category_links(source: str) -> list[tuple[str, str | None]]:
+    """Return (raw_name, sortkey) tuples from [[Category:...]] links."""
+    result = []
+    for link in CATEGORY_LINK_RE.findall(source):
+        inner = link[2:-2]
+        _prefix, _sep, payload = inner.partition(":")
+        if "|" in payload:
+            name, sortkey = payload.split("|", 1)
+        else:
+            name, sortkey = payload, None
+        result.append((name.strip(), sortkey))
+    return result
+
+
+def _strip_category_links(source: str) -> str:
+    lines = []
+    for line in source.splitlines():
+        if BEHAVIOR_SWITCH_RE.match(line.strip()):
+            continue
+        stripped = CATEGORY_LINK_RE.sub("", line).rstrip()
+        if stripped.strip():
+            lines.append(stripped)
+    return "\n".join(lines).strip()
+
+
+def _replace_cat_main_templates(source: str) -> str:
+    def replacement(match: re.Match) -> str:
+        title = match.group(1).strip()
+        if not title:
+            return ""
+        return f"See [[{title}]] for the main article about this topic."
+
+    return CAT_MAIN_RE.sub(replacement, source)
+
+
 def format_category_link(name: str, sortkey: str | None = None) -> str:
     if sortkey is not None:
         return f"[[Category:{name}|{sortkey}]]"
@@ -494,41 +536,6 @@ def _resolve_redirect(name: str, redirects: dict[str, str]) -> tuple[str, bool]:
         seen.add(current)
         current = redirects[current]
     return current, current != name
-
-
-def _resolve_seed_parent(
-        raw_name: str,
-        catmap: dict[str, object],
-        pages: dict[str, dict],
-        used: dict[str, dict],
-        redirects: dict[str, str]) -> tuple[str | None, str]:
-    name = normalize_category_name(raw_name)
-    if not name:
-        return None, "empty"
-
-    if name in catmap:
-        value = catmap[name]
-        if value is None:
-            return None, "drop (catmap.yaml)"
-        target = str(value)
-        resolved, via_redirect = _resolve_redirect(target, redirects)
-        if via_redirect:
-            return resolved, f"use {resolved} (catmap.yaml via redirect)"
-        if target == name:
-            return target, "keep (catmap.yaml)"
-        return target, f"use {target} (catmap.yaml)"
-
-    if name in redirects:
-        resolved, _via_redirect = _resolve_redirect(name, redirects)
-        return resolved, f"use {resolved} (Electowiki redirect)"
-
-    page_row = pages.get(name)
-    if page_row and not page_row.get("redirect"):
-        return name, "keep (Electowiki category page)"
-
-    if name in used:
-        return None, "unresolved: used on Electowiki but no category page"
-    return None, "unresolved: absent from Electowiki cache"
 
 
 def _print_redirect_note(source: str, target: str) -> None:
@@ -818,6 +825,77 @@ def category_summary_lines(outcomes: list[dict], new_entries: int) -> list[str]:
     return lines
 
 
+def _is_redirect_wikitext(wikitext: str) -> tuple[bool, str | None]:
+    match = REDIRECT_RE.match(wikitext)
+    if not match:
+        return False, None
+    target = match.group(1).split("|", 1)[0].strip()
+    return True, target or None
+
+
+def _fetch_enwiki_category_page(name: str) -> dict:
+    title = f"Category:{name}"
+    try:
+        page = mwsync._fetch_page(title, ENWIKI_API)
+    except Exception as e:
+        print(f"Error: failed to fetch enwiki {title}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    is_redirect, target = _is_redirect_wikitext(page["wikitext"])
+    if is_redirect:
+        print(f"Error: enwiki {title} is a redirect"
+              + (f" to '{target}'." if target else "."), file=sys.stderr)
+        if target:
+            print(f"Re-run with the target category: catmgr.py seed \"{target}\"",
+                  file=sys.stderr)
+        sys.exit(1)
+    page["title"] = title
+    return page
+
+
+def _expand_seed_sources(args) -> tuple[str, str]:
+    presets = {
+        "manual": ("manual", "none"),
+        "enwiki": ("enwiki", "enwiki"),
+    }
+    parents_from, prose_from = presets[args.source_preset]
+    if args.parents_from is not None:
+        parents_from = args.parents_from
+    if args.prose_from is not None:
+        prose_from = args.prose_from
+    return parents_from, prose_from
+
+
+def _seed_prose_from_enwiki(page: dict) -> str:
+    source = _replace_cat_main_templates(page.get("wikitext", ""))
+    return _strip_category_links(source)
+
+
+def _resolve_seed_parent_links(
+        source_links: list[tuple[str, str | None]],
+        catmap: dict[str, object],
+        cache: tuple[set[str], set[str], dict[str, str]] | None,
+        is_tty: bool,
+        allow_unresolved: bool) -> tuple[list[str], list[dict], int]:
+    for line in category_plan_lines(source_links, catmap, cache, is_tty):
+        print(line, file=sys.stderr)
+    parent_links, outcomes, new_entries = resolve_categories(
+        source_links, catmap, cache, is_tty)
+
+    unresolved = [
+        outcome for outcome in outcomes
+        if outcome.get("action") in {"review", "skip"}
+    ]
+    if unresolved and not allow_unresolved:
+        print("Error: unresolved parent categories:", file=sys.stderr)
+        for outcome in unresolved:
+            print(f"  - {outcome.get('name', '')}", file=sys.stderr)
+        print("Use --allow-unresolved-parents to seed without them, "
+              "or edit catmap.yaml.", file=sys.stderr)
+        sys.exit(1)
+    return parent_links, outcomes, new_entries
+
+
 def _seed_article_fields(config: dict, name: str) -> tuple[str, dict]:
     namespace_map = mwsync._load_namespace_map(config, fetch=False, allow_fallback=True)
     parts = mwsync._parse_title_parts(f"Category:{name}", namespace_map)
@@ -833,15 +911,33 @@ def _seed_article_fields(config: dict, name: str) -> tuple[str, dict]:
     return key, fields
 
 
-def _build_seed_text(name: str, parent_links: list[str]) -> str:
-    lines = [
-        "<!-- Starter category page generated by catmgr.py seed. "
-        "Review before pushing. -->",
-    ]
+def _build_seed_text(name: str,
+                     parent_links: list[str],
+                     prose: str = "",
+                     attribution: str = "") -> str:
+    lines = []
+    if prose.strip():
+        lines.append(prose.strip())
+    if attribution.strip():
+        if lines:
+            lines.append("")
+        lines.append(attribution.strip())
     if parent_links:
-        lines.append("")
+        if lines:
+            lines.append("")
         lines.extend(parent_links)
     return "\n".join(lines) + "\n"
+
+
+def _dedupe_category_links(links: list[str]) -> list[str]:
+    seen = set()
+    out = []
+    for link in links:
+        if link in seen:
+            continue
+        seen.add(link)
+        out.append(link)
+    return out
 
 
 def run_seed(args, config: dict, config_path: str) -> None:
@@ -849,79 +945,112 @@ def run_seed(args, config: dict, config_path: str) -> None:
     if not name:
         print("Error: category name cannot be empty.", file=sys.stderr)
         sys.exit(1)
+    parents_from, prose_from = _expand_seed_sources(args)
 
     _manifest, allcategories, category_pages = _load_cache()
     used, pages, redirects = _category_page_maps(allcategories, category_pages)
-    if name not in used:
+    page_row = pages.get(name)
+    if page_row:
+        if args.force:
+            print(f"# Category:{name} already exists in the target wiki cache; "
+                  "overwriting local seed because --force was given.",
+                  file=sys.stderr)
+        else:
+            if page_row.get("redirect"):
+                target = page_row.get("redirect_target", "")
+                print(f"Error: Category:{name} already exists as a redirect"
+                      f"{f' to Category:{target}' if target else ''}.",
+                      file=sys.stderr)
+            else:
+                print(f"Error: Category:{name} already exists on the target wiki cache.",
+                      file=sys.stderr)
+            print("Use --force to overwrite the local seed anyway.", file=sys.stderr)
+            sys.exit(1)
+    if name not in used and not page_row:
         print(f"Error: Category:{name} is not a used category in the target wiki cache.",
               file=sys.stderr)
         print("Run 'catmgr.py list --has-cat-page=false --min-pages=1' "
               "to find seed candidates.", file=sys.stderr)
         sys.exit(1)
-    page_row = pages.get(name)
-    if page_row:
-        if page_row.get("redirect"):
-            target = page_row.get("redirect_target", "")
-            print(f"Error: Category:{name} already exists as a redirect"
-                  f"{f' to Category:{target}' if target else ''}.", file=sys.stderr)
-        else:
-            print(f"Error: Category:{name} already exists on the target wiki cache.",
-                  file=sys.stderr)
-        sys.exit(1)
+
+    enwiki_page = None
+    if parents_from == "enwiki" or prose_from == "enwiki":
+        print(f"# Fetching enwiki Category:{name}...", file=sys.stderr)
+        enwiki_page = _fetch_enwiki_category_page(name)
 
     catmap = load_catmap()
-    parent_links: list[str] = []
-    unresolved: list[tuple[str, str]] = []
-    seen_parents: set[str] = set()
-    for raw_parent in args.parent:
-        resolved, status = _resolve_seed_parent(raw_parent, catmap, pages, used, redirects)
-        parent_name = normalize_category_name(raw_parent)
-        print(f"# parent {parent_name}: {status}", file=sys.stderr)
-        if resolved:
-            if resolved not in seen_parents:
-                parent_links.append(format_category_link(resolved))
-                seen_parents.add(resolved)
-        elif not status.startswith("drop"):
-            unresolved.append((parent_name, status))
+    cache = load_category_cache()
+    parent_source_links = [(parent, None) for parent in args.parent]
+    if parents_from == "enwiki" and enwiki_page is not None:
+        parent_source_links.extend(extract_category_links(enwiki_page["wikitext"]))
 
-    if unresolved and not args.allow_unresolved_parents:
-        print("Error: unresolved parent categories:", file=sys.stderr)
-        for parent_name, status in unresolved:
-            print(f"  - {parent_name}: {status}", file=sys.stderr)
-        print("Use --allow-unresolved-parents to seed without them, or edit catmap.yaml.",
-              file=sys.stderr)
-        sys.exit(1)
+    parent_links: list[str] = []
+    outcomes: list[dict] = []
+    new_entries = 0
+    if parent_source_links:
+        is_tty = sys.stdin.isatty()
+        parent_links, outcomes, new_entries = _resolve_seed_parent_links(
+            parent_source_links, catmap, cache, is_tty,
+            args.allow_unresolved_parents)
+        parent_links = _dedupe_category_links(parent_links)
+
+    prose = ""
+    attribution = ""
+    if prose_from == "enwiki" and enwiki_page is not None:
+        prose = _seed_prose_from_enwiki(enwiki_page)
+        attribution = (f"{{{{Fromwikipedia|Category:{name}|"
+                       f"oldid={enwiki_page['revid']}}}}}")
 
     key, fields = _seed_article_fields(config, name)
     articles = config.setdefault("wiki", {}).setdefault("articles", {})
     if key in articles:
-        print(f"Error: article '{key}' is already registered in {config_path}.",
-              file=sys.stderr)
-        sys.exit(1)
+        existing_local = articles[key].get("local", key + ".mw")
+        if existing_local != fields["local"]:
+            print(f"Error: article '{key}' is already registered with a different "
+                  f"local file: {existing_local}", file=sys.stderr)
+            print("Refusing to overwrite; resolve the existing entry first.",
+                  file=sys.stderr)
+            sys.exit(1)
+        if not args.force:
+            print(f"Error: article '{key}' is already registered in {config_path}.",
+                  file=sys.stderr)
+            print("Use --force to overwrite the local seed.", file=sys.stderr)
+            sys.exit(1)
 
     local = fields["local"]
     local_matches = [
         article_key for article_key, art in articles.items()
         if art.get("local", article_key + ".mw") == local
     ]
-    if local_matches:
+    conflicting_matches = [article_key for article_key in local_matches
+                           if article_key != key]
+    if conflicting_matches:
         print(f"Error: local file '{local}' is already registered in {config_path}.",
               file=sys.stderr)
-        print(f"Matches: {', '.join(local_matches)}", file=sys.stderr)
+        print(f"Matches: {', '.join(conflicting_matches)}", file=sys.stderr)
         sys.exit(1)
-    if os.path.exists(local):
-        print(f"Error: local file already exists: {local}", file=sys.stderr)
+    if local_matches and not args.force:
+        print(f"Error: local file '{local}' is already registered in {config_path}.",
+              file=sys.stderr)
+        print("Use --force to overwrite the local seed.", file=sys.stderr)
         sys.exit(1)
 
-    text = _build_seed_text(name, parent_links)
+    local_preexisted = os.path.exists(local)
+    if local_preexisted and not args.force:
+        print(f"Error: local file already exists: {local}", file=sys.stderr)
+        print("Use --force to overwrite the local seed.", file=sys.stderr)
+        sys.exit(1)
+
+    text = _build_seed_text(name, parent_links, prose, attribution)
     if not mwsync._atomic_write(local, text):
         sys.exit(1)
     articles[key] = fields
     if not mwsync.save_config(config, config_path):
-        try:
-            os.unlink(local)
-        except OSError:
-            pass
+        if not local_preexisted:
+            try:
+                os.unlink(local)
+            except OSError:
+                pass
         sys.exit(1)
 
     print(f"# Seeded Category:{name}", file=sys.stderr)
@@ -933,6 +1062,11 @@ def run_seed(args, config: dict, config_path: str) -> None:
         print(f"#   parent categories: {len(parent_links)}", file=sys.stderr)
     else:
         print("#   parent categories: none", file=sys.stderr)
+    if prose_from == "enwiki" and enwiki_page is not None:
+        print(f"#   enwiki source revid: {enwiki_page['revid']}", file=sys.stderr)
+    if parent_source_links:
+        for line in category_summary_lines(outcomes, new_entries):
+            print(f"# {line}", file=sys.stderr)
     print(f"# Review {local}, then use mwsync.py commit/push.", file=sys.stderr)
 
 
@@ -1024,6 +1158,23 @@ def main() -> None:
     p_seed = sub.add_parser("seed", help="Create a local starter category page")
     p_seed.add_argument("name", help="Category name, with or without Category: prefix")
     p_seed.add_argument(
+        "--from",
+        dest="source_preset",
+        choices=["manual", "enwiki"],
+        default="manual",
+        help="Preset for parent/prose sources (default: manual)",
+    )
+    p_seed.add_argument(
+        "--parents-from",
+        choices=["manual", "enwiki"],
+        help="Source for parent categories; overrides --from",
+    )
+    p_seed.add_argument(
+        "--prose-from",
+        choices=["none", "enwiki"],
+        help="Source for starter prose; overrides --from",
+    )
+    p_seed.add_argument(
         "--parent",
         action="append",
         default=[],
@@ -1033,6 +1184,12 @@ def main() -> None:
         "--allow-unresolved-parents",
         action="store_true",
         help="Create the starter page even when a supplied parent cannot be resolved",
+    )
+    p_seed.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Overwrite an existing local seed, even if the category exists remotely",
     )
 
     args = ap.parse_args()
