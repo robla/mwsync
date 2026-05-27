@@ -875,25 +875,10 @@ def _resolve_seed_parent_links(
         source_links: list[tuple[str, str | None]],
         catmap: dict[str, object],
         cache: tuple[set[str], set[str], dict[str, str]] | None,
-        is_tty: bool,
-        allow_unresolved: bool) -> tuple[list[str], list[dict], int]:
+        is_tty: bool) -> tuple[list[str], list[dict], int]:
     for line in category_plan_lines(source_links, catmap, cache, is_tty):
         print(line, file=sys.stderr)
-    parent_links, outcomes, new_entries = resolve_categories(
-        source_links, catmap, cache, is_tty)
-
-    unresolved = [
-        outcome for outcome in outcomes
-        if outcome.get("action") in {"review", "skip"}
-    ]
-    if unresolved and not allow_unresolved:
-        print("Error: unresolved parent categories:", file=sys.stderr)
-        for outcome in unresolved:
-            print(f"  - {outcome.get('name', '')}", file=sys.stderr)
-        print("Use --allow-unresolved-parents to seed without them, "
-              "or edit catmap.yaml.", file=sys.stderr)
-        sys.exit(1)
-    return parent_links, outcomes, new_entries
+    return resolve_categories(source_links, catmap, cache, is_tty)
 
 
 def _seed_article_fields(config: dict, name: str) -> tuple[str, dict]:
@@ -947,31 +932,21 @@ def run_seed(args, config: dict, config_path: str) -> None:
         sys.exit(1)
     parents_from, prose_from = _expand_seed_sources(args)
 
-    _manifest, allcategories, category_pages = _load_cache()
-    used, pages, redirects = _category_page_maps(allcategories, category_pages)
+    allcategories: list[dict] = []
+    category_pages: list[dict] = []
+    if os.path.exists(MANIFEST_PATH):
+        _manifest, allcategories, category_pages = _load_cache()
+    _used, pages, _redirects = _category_page_maps(allcategories, category_pages)
     page_row = pages.get(name)
     if page_row:
-        if args.force:
-            print(f"# Category:{name} already exists in the target wiki cache; "
-                  "overwriting local seed because --force was given.",
+        if page_row.get("redirect"):
+            target = page_row.get("redirect_target", "")
+            print(f"# Category:{name} exists in the target wiki cache as a redirect"
+                  f"{f' to Category:{target}' if target else ''}.",
                   file=sys.stderr)
         else:
-            if page_row.get("redirect"):
-                target = page_row.get("redirect_target", "")
-                print(f"Error: Category:{name} already exists as a redirect"
-                      f"{f' to Category:{target}' if target else ''}.",
-                      file=sys.stderr)
-            else:
-                print(f"Error: Category:{name} already exists on the target wiki cache.",
-                      file=sys.stderr)
-            print("Use --force to overwrite the local seed anyway.", file=sys.stderr)
-            sys.exit(1)
-    if name not in used and not page_row:
-        print(f"Error: Category:{name} is not a used category in the target wiki cache.",
-              file=sys.stderr)
-        print("Run 'catmgr.py list --has-cat-page=false --min-pages=1' "
-              "to find seed candidates.", file=sys.stderr)
-        sys.exit(1)
+            print(f"# Category:{name} already exists in the target wiki cache.",
+                  file=sys.stderr)
 
     enwiki_page = None
     if parents_from == "enwiki" or prose_from == "enwiki":
@@ -990,8 +965,7 @@ def run_seed(args, config: dict, config_path: str) -> None:
     if parent_source_links:
         is_tty = sys.stdin.isatty()
         parent_links, outcomes, new_entries = _resolve_seed_parent_links(
-            parent_source_links, catmap, cache, is_tty,
-            args.allow_unresolved_parents)
+            parent_source_links, catmap, cache, is_tty)
         parent_links = _dedupe_category_links(parent_links)
 
     prose = ""
@@ -1181,15 +1155,10 @@ def main() -> None:
         help="Parent category to include after resolving catmap/cache rules; repeatable",
     )
     p_seed.add_argument(
-        "--allow-unresolved-parents",
-        action="store_true",
-        help="Create the starter page even when a supplied parent cannot be resolved",
-    )
-    p_seed.add_argument(
         "--force",
         "-f",
         action="store_true",
-        help="Overwrite an existing local seed, even if the category exists remotely",
+        help="Overwrite an existing local seed",
     )
 
     args = ap.parse_args()

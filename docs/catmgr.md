@@ -220,10 +220,9 @@ Category cache not found. Run: catmgr.py fetch
 
 ## Category Page Seeding
 
-`seed` prepares a local, reviewable `Category:<Name>` page for a category that
-is used on Electowiki but does not yet have an Electowiki category page. The
-verb is intentionally not `copy` or `mirror`: generated output is starter
-content that should be reviewed before `mwsync.py commit` and `mwsync.py push`.
+`seed` prepares a local, reviewable `Category:<Name>` page. The verb is
+intentionally not `copy` or `mirror`: generated output is starter content that
+should be reviewed before `mwsync.py commit` and `mwsync.py push`.
 
 The first useful target set is the same triage query:
 
@@ -240,12 +239,12 @@ mechanics should preserve the normal mwsync publishing path: `catmgr.py` may
 prepare text, but `mwsync.py` remains responsible for tracking, committing, and
 pushing wiki pages.
 
-By default, `seed` refuses to overwrite existing local state and refuses
-categories that already have a target-wiki category page in the cache. Passing
-`--force` overwrites the local seed for the same category and allows reseeding
-even when the cache says the category already exists remotely. It does not push
-the replacement to the wiki; the normal `mwsync.py commit` and `mwsync.py push`
-review path still applies.
+By default, `seed` refuses to overwrite existing local state. Passing `--force`
+overwrites the local seed for the same category. Target-wiki cache state is
+advisory: if the cache says the category already exists remotely, `seed` prints
+a note but still prepares the local page. It does not push the replacement to
+the wiki; the normal `mwsync.py commit` and `mwsync.py push` review path still
+applies.
 
 The local-only default accepts parent categories explicitly:
 
@@ -318,8 +317,10 @@ resolved using the same shared rules as `ledecopy.py`:
 - Substitute the redirect target when the Electowiki cache shows a category
   redirect.
 - Prompt interactively for unknown parent categories when stdin is a TTY.
-- Refuse unresolved skipped/review-needed parent categories unless
-  `--allow-unresolved-parents` is passed.
+- Treat `skip once` as an unsaved drop: emit no category link and do not write
+  `catmap.yaml`.
+- Treat non-interactive review-needed categories as unsaved drops and list them
+  in the run summary.
 
 `seed` must not recursively create missing parent categories by default. If a
 seeded category belongs to a parent category that is also missing, report that
