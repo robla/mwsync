@@ -1,23 +1,21 @@
 # catmgr.py Specification
 
-`catmgr.py` is a proposed companion tool for caching and inspecting the category
-system for the MediaWiki instance managed by the current `mwsync.yaml`.
+`catmgr.py` is the category-management companion tool for the MediaWiki
+instance managed by the current `mwsync.yaml`.
 
 The category subsystem in a working directory has three pieces:
 
 - `_cache/categories/` — refreshable cache of category names and usage on the
   target wiki. Owned by `catmgr.py`.
 - `catmap.yaml` — durable per-category decisions (rename, drop, explicit keep)
-  for this working directory. Edited by `ledecopy.py` during import and read
-  back on subsequent runs so the same prompt does not recur.
-- `ledecopy.py` — the primary editor of `catmap.yaml`. When an imported
-  article has an enwiki category not yet in `catmap.yaml`, `ledecopy.py`
-  prompts the user with whatever context the cache can provide and saves
-  the answer.
+  for this working directory. Read and written by `catmgr.py`'s shared
+  category-resolution helpers.
+- `ledecopy.py` — article import tool that delegates category decisions to
+  `catmgr.py` while it handles enwiki lede extraction and draft assembly.
 
-`catmgr.py`'s own scope is the cache piece. The `catmap.yaml` shape is also
-defined in this document because the cache and the map are designed together
-and `ledecopy.py` uses both.
+`catmgr.py` owns both the refreshable category cache and reusable category
+resolution. The `catmap.yaml` shape is defined in this document because the
+cache, the map, and import-time category decisions are designed together.
 
 Each mwsync working directory corresponds to one target wiki because
 `wiki.api_base` is global for the directory. Cache and mapping state both live
@@ -48,10 +46,10 @@ MediaWiki exposes more than one useful category concept:
   because pages or subcategories belong to it.
 - A **redlink category** may be used by pages even when no category page exists.
 
-For import decisions, `catmgr.py` should cache both existing category pages and
-used categories. A category that is used but has no category page may still be a
-reasonable target, but it should be reported differently from a category with a
-real page.
+For import decisions, `catmgr.py` caches both existing category pages and used
+categories. A category that is used but has no category page may still be a
+reasonable target, but it is reported differently from a category with a real
+page.
 
 ## Cache Layout
 
@@ -365,12 +363,12 @@ For each source category encountered:
 
 When a category about to be emitted is a redirect according to the cache —
 whether the source name itself, a `catmap.yaml` rename target, or a name the
-user typed in the rename prompt — `ledecopy.py` should substitute the
-redirect target before writing the draft, and print a one-line note such as
+user typed in the rename prompt — the shared resolver substitutes the redirect
+target before writing the draft, and prints a one-line note such as
 `"Preferential voting methods" is a redirect on Electowiki to "Ranked voting
 methods"; using "Ranked voting methods".`. Redirect substitution is
 deterministic, so it does not require a confirmation prompt; the run summary
-should list how many categories were routed via redirect.
+lists how many categories were routed via redirect.
 
 If `_cache/categories/` is missing, prompts still work but lose the
 "exists on Electowiki?" hint. Tell the user once per run:
@@ -379,10 +377,10 @@ If `_cache/categories/` is missing, prompts still work but lose the
 Category cache not found; run catmgr.py fetch for better suggestions.
 ```
 
-If stdin is not a TTY, `ledecopy.py` must not prompt. It should fall back to
-a defined batch policy (drop unknown categories and list them in the run
-summary as review-needed) and exit successfully. Re-running interactively
-later picks up the unmapped names and prompts for them.
+If stdin is not a TTY, the shared resolver must not prompt. It falls back to a
+defined batch policy (drop unknown categories and list them in the run summary
+as review-needed) and exits successfully. Re-running interactively later picks
+up the unmapped names and prompts for them.
 
 `ledecopy.py` should remain responsible for fetching/extracting article ledes
 and calling this shared category-resolution layer. It should not carry its own
@@ -420,9 +418,9 @@ Value semantics:
 
 Keys are normalized the same way MediaWiki normalizes category titles:
 underscores replaced with spaces, leading and trailing whitespace trimmed,
-first letter capitalized, no `Category:` prefix. `ledecopy.py` and
-`catmgr.py check` must apply the same normalization before lookup, otherwise
-catmap entries can silently miss matching categories.
+first letter capitalized, no `Category:` prefix. `catmgr.py` applies the same
+normalization before lookup for imports, seed operations, and `check`;
+otherwise catmap entries can silently miss matching categories.
 
 Scope of ownership:
 
