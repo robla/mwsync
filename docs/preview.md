@@ -46,6 +46,25 @@ The command also does not currently:
 
 ## Future Directions
 
+A local web server is useful, but it is not what makes the preview meaningfully
+closer to "preview before pushing." The important semantic improvement is to
+preview the exact content that `push` would submit.
+
+Near-term recommendation:
+
+```bash
+mwsync.py commit Maine -m "Update Maine"
+mwsync.py preview Maine
+mwsync.py push Maine
+```
+
+When `_cache/<Article_Key>/commit.mw` exists, `preview` should prefer that
+pending commit snapshot over the mutable working file. That makes preview
+match the push path: the user previews the exact wikitext that `mwsync.py push`
+will submit. A future `--working` flag could force previewing the editable
+local `.mw` file instead, but the default should support the pre-push review
+workflow.
+
 A more advanced workflow could add an edit-form integration mode, such as:
 
 ```bash
@@ -63,12 +82,35 @@ as base revid, pending commit state, and local modification status.
 
 ### Secure Transient Local Server
 
-To address the security limitations of opening local `file://` URIs directly in a browser (where scripts could run with elevated privileges or trigger cross-origin restrictions), `mwsync` can host the generated preview using a lightweight, short-lived HTTP server. 
+Serving the generated HTML over loopback HTTP is a display and browser-security
+improvement over opening a `file://` URI. It does not by itself make the preview
+more like Electowiki's edit-form preview; the parser call and the choice of
+source text determine that. It does, however, provide a cleaner foundation for
+opening previews in a browser.
 
-Instead of introducing third-party dependencies like Flask, this server can be implemented directly using Python's standard `http.server` and `socketserver` libraries:
+Instead of introducing third-party dependencies like Flask, this server can be
+implemented directly using Python's standard `http.server` and `socketserver`
+libraries. It should be hardened:
 
-1. **Transient Lifetime:** The server runs in a background thread and automatically triggers `server.shutdown()` immediately after serving the preview HTML page once.
-2. **Loopback-Only Binding:** The server binds strictly to `127.0.0.1` (localhost) rather than `0.0.0.0`, preventing exposure to the local network.
-3. **Randomized Port:** It binds to port `0`, allowing the operating system to allocate an ephemeral, conflict-free port.
-4. **Single-Use Access Token:** The script generates a cryptographically secure random token (using Python's built-in `secrets` library) and opens the browser with the token in the URL query string (e.g., `http://127.0.0.1:PORT/?token=XYZ`). The server rejects any incoming request that does not match this token, preventing other local users or processes on the host machine from snooping on unpublished draft content.
+1. **In-memory only:** Serve exactly one generated HTML document from memory.
+   Do not expose `_cache/`, the repository, or the working directory.
+2. **Loopback-only binding:** Bind strictly to `127.0.0.1`, not `localhost`
+   and not `0.0.0.0`.
+3. **Randomized port:** Bind to port `0` so the operating system allocates an
+   ephemeral, conflict-free port.
+4. **Access token:** Generate a cryptographically secure token with Python's
+   `secrets` module and put it in the path, such as
+   `http://127.0.0.1:PORT/preview/TOKEN`.
+5. **Strict response headers:** Send `Referrer-Policy: no-referrer` and a
+   restrictive Content Security Policy. A reasonable starting point is
+   `default-src 'none'; img-src https: data:; style-src 'unsafe-inline';
+   base-uri 'none'; form-action 'none'; script-src 'none'`.
+6. **Short lifetime:** Use a short timeout and shut down after serving the
+   valid preview route. Do not shut down after the first request blindly,
+   because browser requests for `/favicon.ico` or prefetches could consume it.
+7. **No proxying:** Do not proxy arbitrary requests to Electowiki or other
+   hosts through the local server.
 
+The main risk is accidentally turning preview HTML into an active local web app
+that can execute scripts or interact with other localhost services. The server
+should be a narrow, inert document viewer.
