@@ -32,7 +32,6 @@ The common review-and-save workflow should be:
 ```bash
 mwsync.py commit Maine -m "Update Maine"
 mwsync.py preview Maine
-mwsync.py push Maine
 ```
 
 `commit` snapshots the editable working file to
@@ -41,7 +40,14 @@ not the mutable working file. Therefore `preview` should prefer the pending
 commit when one exists, so the rendered preview matches the content `push` would
 submit.
 
-If no pending commit exists, `preview` falls back to the working `.mw` file.
+In the default interactive mode, `preview` opens the rendered page, lets the
+user review or save in the browser, then waits in the terminal. Pressing Enter
+runs verified reconciliation: if the browser save landed, local mwsync state is
+fast-forwarded; if not, the pending commit is left intact. This makes `preview`
+the normal reminder to clean up after an on-wiki save.
+
+If no pending commit exists, `preview` falls back to the working `.mw` file and
+does not offer commit reconciliation.
 
 ## Parser Fidelity
 
@@ -81,13 +87,14 @@ wikitext into the edit box. The body still travels by clipboard or manual copy.
 
 It is acceptable for the user to preview in the live Electowiki edit form and
 click **Save changes** there. That is a manual on-wiki save, not an API push by
-mwsync. The follow-up `mwsync.py push ARTICLE` must reconcile this case
-idempotently instead of submitting a duplicate edit or failing with a spurious
-edit conflict.
+mwsync. The default `mwsync.py preview ARTICLE` terminal prompt should reconcile
+this case immediately after browser review. `mwsync.py push ARTICLE` should use
+the same reconciliation logic if the user exits preview and reconciles later.
 
-Before submitting, `push` should fetch the latest upstream revision and compare
-it to the pending commit. It may fast-forward local state without submitting an
-edit only when both checks pass:
+Before submitting from `push`, or before claiming cleanup from `preview`, the
+command should fetch the latest upstream revision and compare it to the pending
+commit. It may fast-forward local state without submitting an edit only when
+both checks pass:
 
 - The latest upstream wikitext matches the pending commit body after the same
   narrow normalization MediaWiki applies on save, such as trailing whitespace
@@ -96,19 +103,20 @@ edit only when both checks pass:
   `base_revid`, so the saved revision is a direct child of the revision the user
   reviewed.
 
-When both checks pass, `push` should treat the edit as already saved upstream:
-cache the canonical saved revision, advance `refs/upstream`, `refs/base`, and
-`refs/last-pushed`, clear the pending commit, update push metadata in
-`mwsync.yaml`, and report that no edit was submitted.
+When both checks pass, the command should treat the edit as already saved
+upstream: cache the canonical saved revision, advance `refs/upstream`,
+`refs/base`, and `refs/last-pushed`, clear the pending commit, update push
+metadata in `mwsync.yaml`, and report that no edit was submitted.
 
 After this fast-forward, the working file should be rewritten to the canonical
 saved text only if it still matches the pending commit body. If the user has
 continued editing the working file since `commit`, leave it untouched so those
 new edits remain visible as local modifications against the new base.
 
-If either check fails, `push` must not claim success and must not overwrite
-local work. It should report that upstream diverged and point the user toward
-the normal `fetch` / `merge` reconciliation path.
+If either check fails, the command must not claim success and must not overwrite
+local work. If no matching browser save is found, it should say so and leave the
+pending commit intact. If upstream diverged, it should point the user toward the
+normal `fetch` / `merge` reconciliation path.
 
 ## Push With Preview
 
@@ -125,9 +133,9 @@ explicit approval, and then performs the normal authenticated API push. This
 keeps the final write inside mwsync and preserves the usual `base_revid` edit
 conflict protection and post-push cache updates.
 
-This is an alternative to the manual on-wiki save workflow, not a replacement.
-Both paths should end by running `push`, either to submit the edit or to
-reconcile an edit already saved in the browser.
+This is an alternative to the default preview-and-reconcile workflow, not a
+replacement. It is useful when the user wants the CLI to perform the final write
+rather than saving from the browser edit form.
 
 ## Reconciliation Trigger
 
