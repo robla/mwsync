@@ -48,14 +48,18 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import html
+import http.server
 import http.cookiejar
 import json
 import os
 import re
+import secrets
 import shutil
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -841,13 +845,14 @@ def _absolutize_preview_urls(rendered_html: str, site_root: str) -> str:
         attr = match.group(1)
         quote = match.group(2)
         url = match.group(3)
+        parsed = urllib.parse.urlparse(url)
+        if not url or parsed.scheme or url.startswith("#") or url.startswith("mailto:"):
+            return match.group(0)
         if url.startswith("//"):
             return f"{attr}={quote}https:{url}{quote}"
-        if url.startswith("/"):
-            return f"{attr}={quote}{root}{url}{quote}"
-        return match.group(0)
+        return f"{attr}={quote}{urllib.parse.urljoin(root + '/', url)}{quote}"
 
-    return re.sub(r'\b(href|src)=(["\'])(/[^"\']*)\2', repl, rendered_html)
+    return re.sub(r'\b(href|src)=(["\'])([^"\']*)\2', repl, rendered_html)
 
 
 def _parse_wikitext_preview(title: str, wikitext: str, api_base: str) -> dict:
@@ -860,6 +865,7 @@ def _parse_wikitext_preview(title: str, wikitext: str, api_base: str) -> dict:
         "contentmodel": "wikitext",
         "prop": "text|displaytitle|categorieshtml",
         "disableeditsection": "1",
+        "pst": "1",
     }
     data = urllib.parse.urlencode(params).encode("utf-8")
     req = urllib.request.Request(
@@ -893,8 +899,64 @@ def _preview_path(key: str) -> str:
     return os.path.join(_cache_dir(key), "preview.html")
 
 
+def _normalized_saved_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in normalized.split("\n")]
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _pending_commit_body(key: str) -> str:
+    return _read_text(_pending_commit_body_path(key))
+
+
+def _preview_source(config: dict, key: str, art: dict) -> dict:
+    pending = _pending_commit(key)
+    local = art.get("local", key + ".mw")
+    if pending is not None:
+        return {
+            "kind": "pending",
+            "text": _pending_commit_body(key),
+            "path": _pending_commit_body_path(key),
+            "pending": pending,
+        }
+    if not os.path.exists(local):
+        print(f"Error: local file not found: {local}", file=sys.stderr)
+        print(f"Run 'mwsync.py merge {key}' first, or create {local}.",
+              file=sys.stderr)
+        sys.exit(1)
+    return {
+        "kind": "working",
+        "text": _read_text(local),
+        "path": local,
+        "pending": None,
+    }
+
+
+def _index_url_from_api(config: dict, title: str, summary: str = "") -> str:
+    parsed = urllib.parse.urlparse(get_api_base(config))
+    path = parsed.path
+    if path.endswith("/api.php"):
+        index_path = path[:-len("/api.php")] + "/index.php"
+    else:
+        index_path = "/w/index.php"
+    params = {
+        "title": title,
+        "action": "edit",
+    }
+    if summary:
+        params["summary"] = summary[:500]
+    return urllib.parse.urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        index_path,
+        "",
+        urllib.parse.urlencode(params),
+        "",
+    ))
+
+
 def _preview_document(config: dict, key: str, art: dict,
-                      rendered: dict, local: str) -> str:
+                      rendered: dict, source: dict) -> str:
     api_base = get_api_base(config)
     site_root = _wiki_site_root(api_base)
     title = art.get("title", key.replace("_", " "))
@@ -906,13 +968,18 @@ def _preview_document(config: dict, key: str, art: dict,
         categories_html = categories_html.get("*", "")
     categories_html = _absolutize_preview_urls(str(categories_html), site_root)
     generated_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pending = source.get("pending")
+    summary = str((pending or {}).get("summary") or "")
+    base_revid = str((pending or {}).get("base_revid") or "")
+    source_kind = "pending commit" if source.get("kind") == "pending" else "working file"
+    edit_url = _index_url_from_api(config, title, summary)
+    source_text = source.get("text", "")
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <base href="{html.escape(site_root, quote=True)}">
   <title>Preview: {html.escape(title)}</title>
   <style>
     body {{
@@ -954,22 +1021,135 @@ def _preview_document(config: dict, key: str, art: dict,
       padding: .4rem .7rem;
       font-size: .9rem;
     }}
+    .mwsync-source {{
+      margin-top: 2rem;
+      border-top: 1px solid #a2a9b1;
+      padding-top: 1rem;
+    }}
+    .mwsync-source textarea {{
+      width: 100%;
+      min-height: 18rem;
+      font: 13px/1.45 monospace;
+      box-sizing: border-box;
+    }}
   </style>
 </head>
 <body>
   <main class="mwsync-preview-shell">
     <div class="mwsync-preview-note">
       <p><strong>Local mwsync preview only.</strong> This was rendered by the target wiki parser but was not saved.</p>
-      <p>Source: {html.escape(local)} | Generated: {html.escape(generated_at)}</p>
+      <p>Source: {html.escape(str(source.get("path") or ""))} ({html.escape(source_kind)}) | Generated: {html.escape(generated_at)}</p>
       <p>Page URL: <a href="{html.escape(url, quote=True)}">{html.escape(url)}</a></p>
+      <p>Base revid: {html.escape(base_revid or "(none)")}</p>
     </div>
     <h1>{display_title}</h1>
     {body_html}
     {categories_html}
+    <section class="mwsync-source">
+      <h2>Source wikitext</h2>
+      <p>This is the exact pre-save wikitext from the {html.escape(source_kind)}.</p>
+      <textarea readonly>{html.escape(source_text)}</textarea>
+      <h2>Edit summary</h2>
+      <p>{html.escape(summary or "(none)")}</p>
+      <p><a href="{html.escape(edit_url, quote=True)}">Open source editor</a></p>
+    </section>
   </main>
 </body>
 </html>
 """
+
+
+class _PreviewHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = False
+
+
+def _serve_preview_document(document: str, *, timeout: int = 300) -> tuple[str, object]:
+    token = secrets.token_urlsafe(32)
+    route = f"/preview/{token}"
+    payload = document.encode("utf-8")
+    ready = threading.Event()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        server_version = "mwsync-preview/1.0"
+
+        def log_message(self, format: str, *args) -> None:
+            return
+
+        def _valid_host(self) -> bool:
+            expected = f"127.0.0.1:{self.server.server_port}"
+            return self.headers.get("Host", "") == expected
+
+        def _headers(self, status: int, length: int = 0) -> None:
+            csp = (
+                "default-src 'none'; img-src https: data:; "
+                "style-src 'unsafe-inline'; base-uri 'none'; "
+                "form-action 'none'; script-src 'none'"
+            )
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(length))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", csp)
+            self.end_headers()
+
+        def _reject(self, status: int) -> None:
+            self._headers(status, 0)
+
+        def _serve(self, include_body: bool) -> None:
+            if self.path != route or not secrets.compare_digest(self.path, route):
+                self._reject(404)
+                return
+            if not self._valid_host():
+                self._reject(404)
+                return
+            self._headers(200, len(payload))
+            if include_body:
+                self.wfile.write(payload)
+                ready.set()
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+        def do_GET(self) -> None:
+            self._serve(True)
+
+        def do_HEAD(self) -> None:
+            self._serve(False)
+
+        def do_POST(self) -> None:
+            self._reject(405)
+
+    server = _PreviewHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def expire() -> None:
+        if not ready.wait(timeout):
+            server.shutdown()
+
+    threading.Thread(target=expire, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}{route}"
+    return url, server
+
+
+def _open_transient_preview(document: str) -> tuple[str, object]:
+    preview_url, server = _serve_preview_document(document)
+    print(f"#   served: {preview_url}", file=sys.stderr)
+    if webbrowser.open(preview_url):
+        print(f"# Opened {preview_url}", file=sys.stderr)
+    else:
+        print(f"# Could not open browser; open this URL manually: {preview_url}",
+              file=sys.stderr)
+    return preview_url, server
+
+
+def _close_preview_server(server: object) -> None:
+    try:
+        server.shutdown()
+        server.server_close()
+    except Exception:
+        pass
 
 
 def _atomic_write(path: str, content: str) -> bool:
@@ -1665,6 +1845,113 @@ def _write_pending_commit(key: str, meta: dict, text: str) -> bool:
     return _write_json(_pending_commit_meta_path(key), meta)
 
 
+def _record_saved_revision(config: dict, config_path: str, key: str, art: dict,
+                           local: str, result: dict, commit_text: str | None) -> bool:
+    api_base = get_api_base(config)
+    revid = int(result["revid"])
+    if not _cache_fetch_transaction(key, art, api_base, result, [], []):
+        return False
+    if not _write_ref(key, "base", revid):
+        return False
+    if not _write_ref(key, "last-pushed", revid):
+        return False
+
+    now_utc = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    wiki = config.setdefault("wiki", {})
+    articles = wiki.setdefault("articles", {})
+    current_art = articles.setdefault(key, art)
+    current_art["last_pushed_revid"] = revid
+    current_art["last_pushed_at"] = now_utc
+    _update_upstream_config(config, key, result)
+
+    if commit_text is None or _file_content_matches(local, commit_text):
+        if not _atomic_write(local, result["wikitext"]):
+            return False
+
+    _clear_pending_commit(key)
+    return save_config(config, config_path)
+
+
+def _fetch_latest_for_pending(title: str, api_base: str) -> dict | None:
+    try:
+        return _fetch_page(title, api_base)
+    except Exception:
+        return None
+
+
+def _reconcile_saved_pending(config: dict, config_path: str, key: str, art: dict,
+                             pending: dict, commit_text: str,
+                             *, quiet: bool = False) -> str:
+    title = str(pending.get("title") or art.get("title") or key)
+    local = str(pending.get("local") or art.get("local", key + ".mw"))
+    api_base = get_api_base(config)
+    baserevid = int(pending.get("base_revid") or 0)
+    create_new = bool(pending.get("create_new", False))
+
+    result = _fetch_latest_for_pending(title, api_base)
+    if result is None:
+        return "unknown"
+
+    upstream_text = _normalized_saved_text(result.get("wikitext", ""))
+    pending_text = _normalized_saved_text(commit_text)
+    parentid = int(result.get("parentid") or 0)
+    expected_parent = 0 if create_new else baserevid
+
+    if upstream_text != pending_text:
+        if not quiet:
+            print("# No matching on-wiki save found; pending commit kept.",
+                  file=sys.stderr)
+        return "not-saved"
+    if parentid != expected_parent:
+        print(
+            f"Warning: latest revision text matches pending commit, but parentid "
+            f"{parentid} != expected base {expected_parent}.",
+            file=sys.stderr,
+        )
+        print("Pending commit kept; run fetch/merge to reconcile manually.",
+              file=sys.stderr)
+        return "diverged"
+
+    if not _record_saved_revision(config, config_path, key, art, local, result, commit_text):
+        print("Error: failed to record already-saved upstream revision.", file=sys.stderr)
+        sys.exit(1)
+    if not quiet:
+        print(f"# Already saved upstream as r{int(result['revid'])} (no edit submitted)",
+              file=sys.stderr)
+    return "saved"
+
+
+def _preview_pending_commit_for_push(config: dict, key: str, art: dict,
+                                     pending: dict, commit_text: str) -> bool:
+    title = str(pending.get("title") or art.get("title") or key)
+    source = {
+        "kind": "pending",
+        "text": commit_text,
+        "path": _pending_commit_body_path(key),
+        "pending": pending,
+    }
+    try:
+        rendered = _parse_wikitext_preview(title, commit_text, get_api_base(config))
+    except Exception as e:
+        print(f"Error rendering preview for {key}: {e}", file=sys.stderr)
+        sys.exit(1)
+    document = _preview_document(config, key, art, rendered, source)
+    output = _preview_path(key)
+    if not _atomic_write(output, document):
+        sys.exit(1)
+    print(f"# Rendered preview for {_pending_commit_body_path(key)}", file=sys.stderr)
+    print(f"#   html: {output}", file=sys.stderr)
+    _preview_url, server = _open_transient_preview(document)
+    try:
+        answer = input("Push this pending commit? [y/N] ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print("\n# Push aborted; pending commit left unchanged.", file=sys.stderr)
+        return False
+    finally:
+        _close_preview_server(server)
+    return answer in {"y", "yes"}
+
+
 def _read_merge_state(key: str) -> dict | None:
     return _read_json_file(_merge_state_path(key))
 
@@ -2017,6 +2304,7 @@ def run_push(args, config: dict, config_path: str) -> None:
     url = _article_url(config, key, art)
     api_base = get_api_base(config)
     dry_run = getattr(args, "dry_run", False)
+    preview = getattr(args, "preview", False)
     pending = _pending_commit(key)
 
     if pending is None:
@@ -2073,6 +2361,27 @@ def run_push(args, config: dict, config_path: str) -> None:
                   file=sys.stderr)
         return
 
+    reconcile_result = _reconcile_saved_pending(
+        config, config_path, key, art, pending, page_text, quiet=True)
+    if reconcile_result == "saved":
+        print(f"# Already saved upstream as r{_read_ref(key, 'last-pushed')} "
+              "(no edit submitted)", file=sys.stderr)
+        return
+    if reconcile_result == "diverged":
+        sys.exit(1)
+
+    if preview:
+        if not _preview_pending_commit_for_push(config, key, art, pending, page_text):
+            sys.exit(0)
+        reconcile_result = _reconcile_saved_pending(
+            config, config_path, key, art, pending, page_text, quiet=True)
+        if reconcile_result == "saved":
+            print(f"# Already saved upstream as r{_read_ref(key, 'last-pushed')} "
+                  "(no edit submitted)", file=sys.stderr)
+            return
+        if reconcile_result == "diverged":
+            sys.exit(1)
+
     if not username or not password:
         print("Error: push requires credentials.", file=sys.stderr)
         print("Set MWSYNC_MW_USER and MWSYNC_MW_PASSWORD environment variables.",
@@ -2117,28 +2426,13 @@ def run_push(args, config: dict, config_path: str) -> None:
     if commit_url:
         print(f"# URL: {commit_url}", file=sys.stderr)
 
-    now_utc = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    wiki = config.setdefault("wiki", {})
-    articles = wiki.setdefault("articles", {})
-    art = articles.setdefault(key, {})
-    art["last_pushed_revid"] = new_revid
-    art["last_pushed_at"] = now_utc
-    if not _write_ref(key, "last-pushed", int(new_revid)):
-        sys.exit(1)
-    save_config(config, config_path)
-    _clear_pending_commit(key)
-
     # Auto-fetch to resync upstream refs with the revision we just created.
     print("# Re-fetching to sync upstream cache...", file=sys.stderr)
     try:
-        result = _fetch_page(commit_title, api_base)
-        if not _cache_fetch_transaction(key, art, api_base, result, [], []):
+        result = _fetch_revision_by_revid(int(new_revid), api_base)
+        if not _record_saved_revision(config, config_path, key, art, local,
+                                      result, page_text):
             sys.exit(1)
-        if not _write_ref(key, "base", int(result["revid"])):
-            sys.exit(1)
-        _atomic_write(local, result["wikitext"])
-        _update_upstream_config(config, key, result)
-        save_config(config, config_path)
         print(f"# Synced upstream_revid={result['revid']}", file=sys.stderr)
     except Exception as e:
         print(f"Warning: auto-fetch failed: {e}", file=sys.stderr)
@@ -2191,40 +2485,58 @@ def run_difftool(args, config: dict, config_path: str) -> None:
 def run_preview(args, config: dict, config_path: str) -> None:
     key, art = resolve_article_entry(config, args.article)
     _check_legacy_cache(key)
-    local = art.get("local", key + ".mw")
     title = art.get("title", key.replace("_", " "))
     api_base = get_api_base(config)
     url = _article_url(config, key, art)
-
-    if not os.path.exists(local):
-        print(f"Error: local file not found: {local}", file=sys.stderr)
-        print(f"Run 'mwsync.py merge {key}' first, or create {local}.",
-              file=sys.stderr)
-        sys.exit(1)
+    source = _preview_source(config, key, art)
+    pending = source.get("pending")
 
     try:
-        wikitext = _read_text(local)
-        rendered = _parse_wikitext_preview(title, wikitext, api_base)
+        rendered = _parse_wikitext_preview(title, source["text"], api_base)
     except Exception as e:
         print(f"Error rendering preview for {key}: {e}", file=sys.stderr)
         sys.exit(1)
 
     output = args.output or _preview_path(key)
-    document = _preview_document(config, key, art, rendered, local)
+    document = _preview_document(config, key, art, rendered, source)
     if not _atomic_write(output, document):
         sys.exit(1)
 
-    print(f"# Rendered preview for {local}", file=sys.stderr)
+    print(f"# Rendered preview for {source['path']}", file=sys.stderr)
     print(f"#   page: {url}", file=sys.stderr)
     print(f"#   html: {output}", file=sys.stderr)
-    if args.open:
+
+    file_mode = bool(args.output or getattr(args, "link", False) or not sys.stdin.isatty())
+    if file_mode:
         file_url = urllib.parse.urljoin(
             "file:", urllib.request.pathname2url(os.path.abspath(output)))
-        if webbrowser.open(file_url):
+        print(f"#   link: {file_url}", file=sys.stderr)
+        if args.open and webbrowser.open(file_url):
             print(f"# Opened {file_url}", file=sys.stderr)
-        else:
-            print(f"# Could not open browser; open {output} manually.",
-                  file=sys.stderr)
+        return
+
+    _preview_url, server = _open_transient_preview(document)
+
+    if pending is None:
+        return
+
+    try:
+        input("After saving in the browser, press Enter to reconcile "
+              "(Ctrl-C leaves pending commit unchanged).")
+    except (KeyboardInterrupt, EOFError):
+        print("\n# Pending commit left unchanged.", file=sys.stderr)
+        return
+    finally:
+        _close_preview_server(server)
+
+    result = _reconcile_saved_pending(
+        config, config_path, key, art, pending, source["text"])
+    if result == "saved":
+        return
+    if result == "diverged":
+        return
+    print(f"# Pending commit still exists: {_pending_commit_body_path(key)}",
+          file=sys.stderr)
 
 
 def run_merge(args, config: dict, config_path: str) -> dict | None:
@@ -2979,6 +3291,8 @@ def main() -> None:
     p_push = sub.add_parser("push", help="Submit pending local commits back to the wiki")
     p_push.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
     p_push.add_argument("--dry-run", action="store_true", help="Preview without pushing")
+    p_push.add_argument("--preview", action="store_true",
+                        help="Render pending commit and ask before pushing")
 
     # diff
     p_diff = sub.add_parser("diff", help="Compare cached revisions and local files")
@@ -3003,6 +3317,8 @@ def main() -> None:
                            help="Write preview HTML to PATH instead of _cache/ARTICLE/preview.html")
     p_preview.add_argument("--open", action="store_true",
                            help="Open the generated preview HTML in a browser")
+    p_preview.add_argument("--link", action="store_true",
+                           help="Write preview HTML and print a file:// link without serving")
 
     # merge
     p_merge = sub.add_parser("merge", help="Merge fetched upstream changes into local file")
