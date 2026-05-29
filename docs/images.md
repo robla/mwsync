@@ -1,14 +1,13 @@
 # File And Image Checkout
 
-`mwsync.py checkout File:Example.png` should fetch both parts of a MediaWiki
-file page:
+`mwsync.py` should treat a MediaWiki `File:` page as two related objects:
 
-- the File namespace page wikitext, such as description, license, and
-  categories;
-- the current uploaded binary file, such as the PNG, JPG, SVG, or PDF payload.
+- the File namespace wikitext page, which is versioned by page revision ID;
+- the uploaded media payload, which has its own upload history.
 
-The wikitext remains the tracked mwsync page. The binary payload is companion
-state, not a replacement for the `.mw` working file.
+The `.mw` file remains the normal editable working file. Media payloads are
+optional companion files. Do not download large binary files by default unless
+the user explicitly asks or confirms an interactive prompt.
 
 ## Desired Workflow
 
@@ -16,17 +15,41 @@ state, not a replacement for the `.mw` working file.
 mwsync.py checkout File:YeeBellCurveDiagram2010.png
 ```
 
-Expected local result:
+Initial behavior should fetch and merge the File page wikitext. For the media
+payload, ask interactively:
+
+```text
+Download current media file too? [y/N]
+```
+
+Non-interactive runs should default to no media download. Explicit options can
+avoid the prompt:
+
+```bash
+mwsync.py checkout File:YeeBellCurveDiagram2010.png --media
+mwsync.py checkout File:YeeBellCurveDiagram2010.png --no-media
+mwsync.py fetch File:YeeBellCurveDiagram2010.png --media
+```
+
+## Visible Layout
+
+For a downloaded media file, the visible checkout should place the payload next
+to the wikitext:
 
 ```text
 06ns_File/YeeBellCurveDiagram2010.png.mw
 06ns_File/YeeBellCurveDiagram2010.png
-_cache/File__YeeBellCurveDiagram2010.png/
 ```
 
-The `.mw` file is editable wikitext. The adjacent file without `.mw` is the
-downloaded media payload. Keeping them next to each other makes shell browsing
-simple and preserves the visible relationship between metadata and media.
+The visible media file should be a hard link to the cached media payload when
+possible. This keeps the file easy to inspect while avoiding an extra copy in
+the common Linux/Crostini case. If hard-link creation fails, the command should
+fail gracefully rather than silently switching storage models during early
+development.
+
+Hard links are an implementation choice, not a cross-platform guarantee. They
+require the cache and visible checkout to live on the same filesystem and may
+not work on every Windows, macOS, network, or sync-backed filesystem.
 
 ## Config Shape
 
@@ -39,18 +62,17 @@ wiki:
       title: File:YeeBellCurveDiagram2010.png
       namespace: 6
       namespace_name: File
-      dbkey: YeeBellCurveDiagram2010.png
+      page_dbkey: YeeBellCurveDiagram2010.png
       local: 06ns_File/YeeBellCurveDiagram2010.png.mw
       media_local: 06ns_File/YeeBellCurveDiagram2010.png
 ```
 
-`local` is always the wikitext working file. `media_local` is the current
-downloaded file payload. Main page sync logic should not infer the media path
-by stripping `.mw`; store it explicitly for clarity and future migrations.
+`local` is always the wikitext working file. `media_local` is the visible media
+payload path, if the user has downloaded one.
 
 ## Cache Layout
 
-The per-page cache should gain media files alongside revision cache files:
+Keep media state inside the same per-page cache as the File page wikitext:
 
 ```text
 _cache/File__YeeBellCurveDiagram2010.png/
@@ -60,16 +82,28 @@ _cache/File__YeeBellCurveDiagram2010.png/
   <revid>.mw
   <revid>.json
   media/
-    current.bin
-    current.json
-    sha1/<sha1>.bin
-    sha1/<sha1>.json
+    manifest.jsonl
+    refs/current
+    images/f/f8/YeeBellCurveDiagram2010.png
+    archive/f/f8/20250101000000!YeeBellCurveDiagram2010.png
 ```
 
-The `sha1/<sha1>.*` files are immutable-ish content snapshots keyed by the
-MediaWiki file SHA-1 from `imageinfo`. `media/current.*` points at the current
-payload metadata and gives simple commands a stable place to read from. If the
-same file SHA-1 is fetched again, reuse the existing cached body.
+Use MediaWiki-style hashed paths for media payloads, not a new content-addressed
+scheme. MediaWiki still defaults to `$wgHashedUploadDirectory = true`, using
+the MD5 of the filename: first hex digit for the first directory and first two
+hex digits for the second directory.
+
+The cache should mirror MediaWiki naming closely:
+
+- current file: `media/images/<md5[0]>/<md5[0:2]>/<filename>`;
+- old upload: `media/archive/<md5[0]>/<md5[0:2]>/<timestamp>!<filename>`;
+- metadata: append `.json` beside the cached payload or record it in
+  `media/manifest.jsonl`.
+
+`media/manifest.jsonl` should record every known upload version in chronological
+order when available. Each row should include filename, archive name when
+present, timestamp, user, comment, size, width, height, MIME type, SHA-1 from
+MediaWiki, source URL, local cache path, and whether the payload was downloaded.
 
 ## API Calls
 
@@ -80,30 +114,32 @@ action=query
 titles=File:YeeBellCurveDiagram2010.png
 prop=revisions|imageinfo
 rvprop=content|ids|timestamp|user|comment|sha1|size
-iiprop=url|size|sha1|mime|mediatype|metadata|timestamp|user|comment
+iiprop=url|size|sha1|mime|mediatype|metadata|timestamp|user|comment|archivename
+iiurlwidth=
 format=json
 formatversion=2
 ```
 
-Then download the binary from `imageinfo[0].url` using `urllib.request` and the
-shared `USER_AGENT`. Do not scrape the file description page HTML.
+Then download the binary from `imageinfo[0].url` only when media download was
+requested or confirmed. Do not scrape the file description page HTML.
 
 ## Command Behavior
 
 `checkout File:...` should register the File page, fetch the wikitext revision,
-download the current media payload, write both local files atomically, and then
-save `mwsync.yaml`.
+and write the `.mw` working file. It should download and hard-link the current
+media payload only when requested or confirmed.
 
-`fetch File:...` should update cache state for both the File page revision and
-the current media payload, but should not overwrite either local working file.
+`fetch File:...` should update cache metadata and the File page revision cache.
+It should not overwrite the `.mw` working file or visible media file. With
+`--media`, it should also download the current payload and update
+`media/refs/current`.
 
 `merge File:...` should update the `.mw` wikitext from `refs/upstream` as usual.
-For the media payload, the initial rule should be simple: if `media_local` is
-missing or still byte-identical to the previous cached media payload, replace it
-with the newly fetched payload; otherwise leave it untouched and report a local
-media modification.
+It should not change the visible media file unless media behavior is explicitly
+requested in a later design.
 
-`status` should report media state for File namespace entries:
+`status` should report media state for File namespace entries when a media file
+is configured:
 
 ```text
 modified-media     File__Example.png  06ns_File/Example.png
@@ -112,10 +148,10 @@ missing-media      File__Example.png  06ns_File/Example.png
 
 ## Push Scope
 
-Do not implement media upload as part of this first step. `push` should continue
-to push only the File page wikitext. If `media_local` differs from cached media,
-`push` should warn that the media payload is modified locally and is not being
-uploaded.
+Do not implement media upload as part of the first media-cache step. `push`
+should continue to push only File page wikitext. If `media_local` differs from
+the cached media payload, `push` should warn that the media payload is modified
+locally and is not being uploaded.
 
 Future media upload support needs a separate design because MediaWiki upload
 uses different API parameters, upload tokens, filename conflict rules, and
@@ -127,17 +163,20 @@ If a File page has no `imageinfo` entry, still checkout the `.mw` wikitext and
 print a warning that no current media payload was available. This can happen for
 broken file pages or deleted/missing uploads.
 
-If the media download fails after wikitext fetch succeeds, the command should
-fail before claiming checkout success. For a new checkout, clean up files
-created in that transaction when practical.
+If the media download fails after wikitext fetch succeeds, keep the wikitext
+checkout and report that the media payload was not downloaded.
+
+If hard-link creation fails, report the cache path and visible path and leave
+the cached payload in place. Do not silently copy unless a future explicit
+fallback option is added.
 
 If the local media path already exists for a new checkout, fail before writing
-unless a future explicit overwrite option is added.
+unless an explicit overwrite option is added.
 
 ## Future Directions
 
-- `mwsync.py fetch --media-only File:Example.png`
+- `mwsync.py fetch --media-history File:Example.png`
 - `mwsync.py diff --media File:Example.png`, comparing hashes and metadata
 - thumbnail download using `iiurlwidth` / `iiurlheight`
 - media upload with explicit `mwsync.py upload` or `mwsync.py push --media`
-- support for historical file revisions via `iilimit`, `iistart`, and `iiend`
+- optional copy fallback for filesystems that cannot hard-link
