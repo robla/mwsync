@@ -46,7 +46,9 @@ Credentials (for push):
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
+import hashlib
 import html
 import http.server
 import http.cookiejar
@@ -955,6 +957,37 @@ def _index_url_from_api(config: dict, title: str, summary: str = "") -> str:
     ))
 
 
+# Minimal inline copy-to-clipboard helper for the preview page. It is pinned by
+# its sha256 in the CSP (see _preview_csp), so the exact bytes here must match
+# what is embedded in the document. navigator.clipboard works on the loopback
+# secure context; execCommand is the fallback for non-secure (e.g. file://).
+_PREVIEW_COPY_SCRIPT = (
+    "var b=document.getElementById('mwsync-copy');"
+    "var t=document.getElementById('mwsync-wikitext');"
+    "b.addEventListener('click',function(){"
+    "t.focus();t.select();"
+    "var d=function(){b.textContent='Copied wikitext';"
+    "setTimeout(function(){b.textContent='Copy wikitext';},1500);};"
+    "if(navigator.clipboard&&navigator.clipboard.writeText){"
+    "navigator.clipboard.writeText(t.value).then(d,function(){"
+    "document.execCommand('copy');d();});"
+    "}else{document.execCommand('copy');d();}"
+    "});"
+)
+
+
+def _preview_csp() -> str:
+    """CSP for the preview page, pinning the inline copy helper by sha256."""
+    digest = base64.b64encode(
+        hashlib.sha256(_PREVIEW_COPY_SCRIPT.encode("utf-8")).digest()
+    ).decode("ascii")
+    return (
+        "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; "
+        "base-uri 'none'; form-action 'none'; "
+        f"script-src 'sha256-{digest}'"
+    )
+
+
 def _preview_document(config: dict, key: str, art: dict,
                       rendered: dict, source: dict) -> str:
     api_base = get_api_base(config)
@@ -974,6 +1007,7 @@ def _preview_document(config: dict, key: str, art: dict,
     source_kind = "pending commit" if source.get("kind") == "pending" else "working file"
     edit_url = _index_url_from_api(config, title, summary)
     source_text = source.get("text", "")
+    wiki_host = urllib.parse.urlparse(api_base).netloc or "the wiki"
 
     return f"""<!doctype html>
 <html lang="en">
@@ -996,14 +1030,53 @@ def _preview_document(config: dict, key: str, art: dict,
       padding: 1.5rem 2rem 4rem;
       box-shadow: 0 0 0 1px #a2a9b1;
     }}
-    .mwsync-preview-note {{
+    .mwsync-actions {{
       border: 1px solid #a2a9b1;
       background: #f8f9fa;
-      padding: .75rem 1rem;
+      padding: 1rem 1.25rem;
       margin-bottom: 1.5rem;
-      font-size: .9rem;
     }}
-    .mwsync-preview-note p {{ margin: .25rem 0; }}
+    .mwsync-actions h2 {{ margin: 0 0 .5rem; font-size: 1.1rem; }}
+    .mwsync-actions-bar {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: .75rem;
+      align-items: center;
+      margin: .5rem 0;
+    }}
+    .mwsync-edit-link {{
+      display: inline-block;
+      padding: .45rem .9rem;
+      background: #36c;
+      color: #fff;
+      border-radius: 2px;
+      text-decoration: none;
+      font-weight: bold;
+    }}
+    #mwsync-copy {{
+      padding: .45rem .9rem;
+      font: inherit;
+      cursor: pointer;
+      border: 1px solid #a2a9b1;
+      border-radius: 2px;
+      background: #fff;
+    }}
+    .mwsync-summary {{ margin: .5rem 0; font-size: .95rem; }}
+    .mwsync-actions textarea {{
+      width: 100%;
+      min-height: 14rem;
+      font: 13px/1.45 monospace;
+      box-sizing: border-box;
+    }}
+    .mwsync-meta {{ margin-top: .75rem; font-size: .85rem; color: #54595d; }}
+    .mwsync-meta p {{ margin: .25rem 0; }}
+    .mwsync-rendered-label {{
+      font-size: .85rem;
+      color: #54595d;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      margin: 0 0 .5rem;
+    }}
     h1 {{
       font-family: Georgia, 'Times New Roman', serif;
       font-weight: normal;
@@ -1021,39 +1094,32 @@ def _preview_document(config: dict, key: str, art: dict,
       padding: .4rem .7rem;
       font-size: .9rem;
     }}
-    .mwsync-source {{
-      margin-top: 2rem;
-      border-top: 1px solid #a2a9b1;
-      padding-top: 1rem;
-    }}
-    .mwsync-source textarea {{
-      width: 100%;
-      min-height: 18rem;
-      font: 13px/1.45 monospace;
-      box-sizing: border-box;
-    }}
   </style>
 </head>
 <body>
   <main class="mwsync-preview-shell">
-    <div class="mwsync-preview-note">
-      <p><strong>Local mwsync preview only.</strong> This was rendered by the target wiki parser but was not saved.</p>
-      <p>Source: {html.escape(str(source.get("path") or ""))} ({html.escape(source_kind)}) | Generated: {html.escape(generated_at)}</p>
-      <p>Page URL: <a href="{html.escape(url, quote=True)}">{html.escape(url)}</a></p>
-      <p>Base revid: {html.escape(base_revid or "(none)")}</p>
-    </div>
+    <section class="mwsync-actions">
+      <h2>Local mwsync preview &mdash; not yet saved</h2>
+      <div class="mwsync-actions-bar">
+        <a class="mwsync-edit-link" href="{html.escape(edit_url, quote=True)}">Open source editor on {html.escape(wiki_host)} &#8599;</a>
+        <button type="button" id="mwsync-copy">Copy wikitext</button>
+      </div>
+      <p class="mwsync-summary">Edit summary: <code>{html.escape(summary or "(none)")}</code></p>
+      <textarea id="mwsync-wikitext" readonly>{html.escape(source_text)}</textarea>
+      <details class="mwsync-meta">
+        <summary>Preview details</summary>
+        <p>Source: {html.escape(str(source.get("path") or ""))} ({html.escape(source_kind)})</p>
+        <p>Page URL: <a href="{html.escape(url, quote=True)}">{html.escape(url)}</a></p>
+        <p>Base revid: {html.escape(base_revid or "(none)")}</p>
+        <p>Generated: {html.escape(generated_at)}</p>
+      </details>
+    </section>
+    <p class="mwsync-rendered-label">Rendered preview (scroll for the full page)</p>
     <h1>{display_title}</h1>
     {body_html}
     {categories_html}
-    <section class="mwsync-source">
-      <h2>Source wikitext</h2>
-      <p>This is the exact pre-save wikitext from the {html.escape(source_kind)}.</p>
-      <textarea readonly>{html.escape(source_text)}</textarea>
-      <h2>Edit summary</h2>
-      <p>{html.escape(summary or "(none)")}</p>
-      <p><a href="{html.escape(edit_url, quote=True)}">Open source editor</a></p>
-    </section>
   </main>
+  <script>{_PREVIEW_COPY_SCRIPT}</script>
 </body>
 </html>
 """
@@ -1081,11 +1147,7 @@ def _serve_preview_document(document: str, *, timeout: int = 300) -> tuple[str, 
             return self.headers.get("Host", "") == expected
 
         def _headers(self, status: int, length: int = 0) -> None:
-            csp = (
-                "default-src 'none'; img-src https: data:; "
-                "style-src 'unsafe-inline'; base-uri 'none'; "
-                "form-action 'none'; script-src 'none'"
-            )
+            csp = _preview_csp()
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(length))

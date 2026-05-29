@@ -74,15 +74,30 @@ to rendering the saved revision after the edit lands.
 
 ## Preview Page
 
-The generated preview page should contain:
+The page is laid out for the common task: copy the local wikitext, open the live
+editor, paste, and eyeball the rendered result. The actionable controls come
+first, so the default `mwsync.py preview` needs no scrolling and no extra
+options to be useful.
 
-- a local-preview banner with source path, generated time, live page URL, base
-  revid, and pending-commit status;
-- rendered HTML from `action=parse&pst=1`;
-- a source wikitext panel containing the exact pre-PST wikitext that would be
-  submitted or pasted;
-- the edit summary from the pending commit, when available;
-- an "Open source editor" link for the live wiki edit form.
+The page should be ordered:
+
+1. An action panel at the top containing, in this order:
+   - an "Open source editor" link to the live wiki edit form;
+   - a **Copy wikitext** button that copies the full source field in one click;
+   - the edit summary from the pending commit, when available;
+   - a read-only source field with the exact pre-PST wikitext that would be
+     submitted or pasted.
+2. The rendered HTML from `action=parse&pst=1` below the action panel, as
+   reference to scroll through.
+
+Secondary metadata (source path, generated time, live page URL, base revid)
+belongs in a collapsed details block inside the action panel, not above the
+controls.
+
+The **Copy wikitext** button uses a tiny inline script (`navigator.clipboard`
+with an `execCommand` fallback) so the user does not have to hand-select the
+field. The script is pinned by its sha256 in the CSP (see "Secure Transient
+Local Server").
 
 The source editor link should target the wikitext editor and prefill the summary
 where MediaWiki supports it:
@@ -92,7 +107,7 @@ https://electowiki.org/w/index.php?title=Talk:Software&action=edit&summary=<url-
 ```
 
 MediaWiki does not provide a safe URL parameter for injecting arbitrary
-wikitext into the edit box. The body still travels by clipboard or manual copy.
+wikitext into the edit box. The body still travels by the copy button.
 
 ## On-Wiki Save And Reconciliation
 
@@ -221,15 +236,19 @@ The server should be inert:
 9. Do not proxy requests, re-parse pages, fetch remote content, edit the wiki,
    or mutate local mwsync state in response to browser requests.
 
-A reasonable CSP starting point is:
+The CSP is:
 
 ```text
 default-src 'none'; img-src https: data:; style-src 'unsafe-inline';
-base-uri 'none'; form-action 'none'; script-src 'none'
+base-uri 'none'; form-action 'none'; script-src 'sha256-...'
 ```
 
-If a copy-to-clipboard button is added later, replace `script-src 'none'` with a
-hash-pinned script source for only that tiny local helper.
+`script-src` pins only the sha256 of the tiny copy-to-clipboard helper. The
+server computes that hash from the exact script bytes it embeds, so the hash and
+the served script cannot drift. Because the policy is hash-pinned rather than
+`'unsafe-inline'`, any other inline script — including anything in the rendered
+wiki HTML — is still blocked. The copy helper uses no inline event handlers
+(which a hash cannot cover); it attaches its listener from the pinned block.
 
 The generated document should not use a `<base>` element. Fully absolutize
 `href` and `src` URLs instead, then keep `base-uri 'none'`.
@@ -244,4 +263,5 @@ copying draft text to the system clipboard.
 Any metadata inserted outside MediaWiki-rendered HTML must be escaped carefully,
 including page titles, local paths, edit summaries, URLs, and generated status
 messages. Rendered wiki HTML should be treated as untrusted active content:
-allow it to display, but prevent scripts and form submission with CSP.
+allow it to display, but use CSP to block form submission and every script
+except the one hash-pinned copy helper.
