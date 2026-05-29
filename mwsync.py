@@ -1101,8 +1101,8 @@ def _preview_document(config: dict, key: str, art: dict,
     <section class="mwsync-actions">
       <h2>Local mwsync preview &mdash; not yet saved</h2>
       <div class="mwsync-actions-bar">
-        <a class="mwsync-edit-link" href="{html.escape(edit_url, quote=True)}">Open source editor on {html.escape(wiki_host)} &#8599;</a>
         <button type="button" id="mwsync-copy">Copy wikitext</button>
+        <a class="mwsync-edit-link" href="{html.escape(edit_url, quote=True)}" target="_blank" rel="noopener noreferrer">Open source editor on {html.escape(wiki_host)} &#8599;</a>
       </div>
       <p class="mwsync-summary">Edit summary: <code>{html.escape(summary or "(none)")}</code></p>
       <textarea id="mwsync-wikitext" readonly>{html.escape(source_text)}</textarea>

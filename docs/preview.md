@@ -82,8 +82,11 @@ options to be useful.
 The page should be ordered:
 
 1. An action panel at the top containing, in this order:
-   - an "Open source editor" link to the live wiki edit form;
-   - a **Copy wikitext** button that copies the full source field in one click;
+   - a **Copy wikitext** button that copies the full source field in one click,
+     placed first as a reminder to copy before opening the editor;
+   - an "Open source editor" link to the live wiki edit form, opened in a new
+     tab (`target="_blank"` with `rel="noopener noreferrer"`) so the preview tab
+     stays put and the new tab cannot reach back into the preview page;
    - the edit summary from the pending commit, when available;
    - a read-only source field with the exact pre-PST wikitext that would be
      submitted or pasted.
