@@ -109,24 +109,113 @@ blue links, and `create_new` pages in particular. Previewing the pending commit
 with PST closes most of the gap; the remainder is inherent to content that has
 not been saved yet.
 
-## Future Directions
+## Browser Preview and Edit-Form Handoff
 
-A more advanced workflow could add an edit-form integration mode, such as:
+This is the planned default UX for `preview`. The page has two jobs: render the
+pending content locally so the user can see it, and hand the exact wikitext to
+Electowiki's real source editor so the final "Show preview" and save happen in
+the live site — with the user's session, skin, and gadgets.
 
-```bash
-mwsync.py preview --edit Maine
+### Default: serve and open
+
+`mwsync.py preview Maine` with no flags should:
+
+1. Render the pending content (the `commit.mw` snapshot when present, else the
+   working file) via `action=parse` with `pst=1`.
+2. Build the single self-contained HTML document described below.
+3. Start the loopback server (see "Secure Transient Local Server") and open the
+   tokenized URL in the browser.
+
+Serving over `http://127.0.0.1` rather than `file://` is not merely cosmetic: a
+loopback HTTP origin is a browser "secure context," which the clipboard copy
+button depends on, and it lets the server set real response headers. If opening
+a browser fails (headless or remote session), print the tokenized URL and keep
+the server alive for its normal timeout rather than erroring out.
+
+### Writing without opening
+
+A switch writes the HTML to `_cache/<Article_Key>/preview.html` and prints a
+clickable `file://` link *without* starting the server or launching a browser —
+for remote sessions, scripting, or simply preferring to click the link yourself.
+
+Recommended name: **`--link`** (you get a link to click). Alternatives
+considered: `--no-browser`, `--write-only`. Do not call it `--dont-open`.
+
+Under `file://` the page is degraded but still useful: with no HTTP origin there
+are no response headers, so any CSP must come from a `<meta http-equiv>` tag, and
+the clipboard button falls back to `document.execCommand('copy')` (some browsers
+will require a manual select-and-copy). The rendered preview and the edit-form
+link work unchanged.
+
+### The preview page
+
+Top to bottom, the document contains:
+
+1. The local-preview banner and metadata (source path, generated time, link to
+   the live page, base revid, and pending-commit status).
+2. The rendered HTML, from `action=parse` with `pst=1`.
+3. A **Source wikitext** panel: a large `<textarea>` holding the *exact bytes
+   that `push` would submit* — the `commit.mw` snapshot, verbatim and
+   pre-transform (this is what gets pasted; MediaWiki applies the pre-save
+   transform itself on save). A **Copy to clipboard** button sits beside it.
+4. The **edit summary**, shown as plain text so the user can read it.
+5. A prominent **Open Electowiki source editor** link and short step-by-step
+   instructions.
+
+Note the deliberate split: the rendered HTML (item 2) shows the *post-PST*
+result so the user sees what saving will produce, while the textarea (item 3)
+holds the *pre-PST* wikitext, because that is what actually gets pasted and
+saved.
+
+### Edit-form handoff
+
+The handoff link targets the wiki's source editor with the summary prefilled:
+
+```
+https://electowiki.org/w/index.php?title=Talk:Software&action=edit&summary=<url-encoded summary>
 ```
 
-That mode could open the real Electowiki edit page and help transfer local
-wikitext into the browser preview flow. It should be designed carefully because
-browser cookies, login state, CSRF tokens, and user preferences belong to the
-browser session, not to `mwsync.py`.
+- `action=edit` (not `veaction=edit`) opens the wikitext source editor, not the
+  visual editor.
+- MediaWiki prefills the edit-summary box from the `summary` URL parameter, so
+  the commit message is carried across automatically. Summaries cap at 500
+  characters, well within URL limits.
+- MediaWiki has no URL parameter to inject arbitrary wikitext into the edit box
+  (by design), so the body still travels via the clipboard. `preload` only loads
+  existing on-wiki pages and does not apply here.
 
-Another possible direction is a richer local preview page that loads target-wiki
-stylesheets, shows parser warnings more prominently, and displays metadata such
-as base revid, pending commit state, and local modification status.
+Workflow:
 
-### Secure Transient Local Server
+1. Review the rendered preview.
+2. Click **Copy to clipboard**.
+3. Click **Open Electowiki source editor** — the summary is already filled in.
+4. Select-all in the edit box and paste, replacing its contents.
+5. Use the live "Show preview" to confirm in the real skin, then save.
+
+### Summary handoff: URL parameter, not a wikitext comment
+
+An earlier sketch appended the commit message to the wikitext as a trailing
+`<!-- ... -->` comment so it would travel with the body in the clipboard. That
+works, but it has a footgun: if the user forgets to strip the comment before
+saving, it is stored into the article, and it forces a manual "copy the summary
+out of the comment" step. Carrying the summary in the `&summary=` URL parameter
+instead keeps the clipboard body clean (exactly the bytes `push` would submit)
+and removes both the cleanup and the risk. The comment approach is kept only as
+a fallback for a wiki or link path where a prefilled summary does not survive.
+
+### Clipboard button and CSP
+
+The copy button is the one element that requires JavaScript, which conflicts
+with the strict `script-src 'none'` policy. Allow exactly one inline script,
+pinned by hash or nonce (e.g. `script-src 'sha256-...'`), implementing only the
+copy action: attempt `navigator.clipboard.writeText(...)` (works in the
+localhost secure context) and fall back to selecting the textarea and
+`document.execCommand('copy')`. A hash- or nonce-pinned inline script that ships
+with `mwsync` is still inert to injection — no remote code loads, and
+wiki-supplied HTML in the rendered region still cannot execute. The rest of the
+CSP is unchanged.
+
+## Secure Transient Local Server
 
 Serving the generated HTML over loopback HTTP is a display and browser-security
 improvement over opening a `file://` URI. It does not by itself make the preview
@@ -164,9 +253,12 @@ libraries. It should be hardened:
    nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`, and a
    restrictive Content Security Policy. A reasonable starting point is
    `default-src 'none'; img-src https: data:; style-src 'unsafe-inline';
-   base-uri 'none'; form-action 'none'; script-src 'none'`. Dropping JavaScript
-   means collapsible tables, reference tooltips, and gadgets will not be
-   interactive; that is the intended inert-viewer tradeoff, not a bug.
+   base-uri 'none'; form-action 'none'; script-src 'sha256-...'`, where the
+   `script-src` hash pins the single inline copy-button script (see "Clipboard
+   button and CSP" above); use `script-src 'none'` if the copy button is
+   dropped. Wiki-supplied HTML in the rendered region still cannot execute, so
+   its collapsible tables, reference tooltips, and gadgets will not be
+   interactive — that is the intended inert-viewer tradeoff, not a bug.
 8. **Short lifetime:** Use a short wall-clock timeout and shut down after
    serving the valid preview route, bounding the lifetime regardless of how many
    requests arrive. Do not shut down after the first request blindly, because
