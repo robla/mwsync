@@ -192,6 +192,35 @@ Workflow:
 4. Select-all in the edit box and paste, replacing its contents.
 5. Use the live "Show preview" to confirm in the real skin, then save.
 
+### ChatGPT's objection to bypassing mwsync.py push
+
+Saving from the browser editor after the handoff is convenient, but it bypasses
+the core `mwsync.py push` safety model. `push` submits the pending commit
+snapshot through the Action API using the recorded `base_revid`, letting
+MediaWiki detect edit conflicts against the revision the user actually reviewed.
+After a successful save, `push` also refreshes the local cache, advances
+`refs/upstream`, `refs/base`, and `refs/last-pushed`, clears the pending commit,
+and records push metadata in `mwsync.yaml`.
+
+A manual browser save does not update that local state. It may leave mwsync
+believing a pending commit still needs to be pushed, or leave local refs pointing
+at the pre-save revision until the user manually fetches and reconciles. It also
+moves the final write outside the exact code path that was designed to keep the
+working file, pending commit, cache, and wiki revision aligned.
+
+The safer default is therefore:
+
+```bash
+mwsync.py commit Maine -m "Update Maine"
+mwsync.py push --preview Maine
+```
+
+In that design, `push --preview` renders the pending commit, opens the preview,
+waits for explicit approval, and then performs the normal `mwsync.py push`
+operation itself. Browser edit-form handoff should remain available as a manual
+escape hatch, but saving from the browser should be documented as switching
+from the mwsync-managed push path to a manual wiki edit.
+
 ### Summary handoff: URL parameter, not a wikitext comment
 
 An earlier sketch appended the commit message to the wikitext as a trailing
