@@ -7,23 +7,34 @@ mwsync state correct after any on-wiki preview or save.
 
 ## Current Behavior
 
-The current command is simple:
+The current command supports an interactive browser workflow and file-only
+fallbacks:
 
 ```bash
 mwsync.py preview Maine
-mwsync.py preview Maine --open
+mwsync.py preview Maine --link
 mwsync.py preview Maine --output /tmp/Maine-preview.html
+mwsync.py push --preview Maine
 ```
 
-It resolves the article through `mwsync.yaml`, reads the local `.mw` file, calls
-the configured Action API endpoint with `action=parse`, and writes:
+It resolves the article through `mwsync.yaml`, prefers
+`_cache/<Article_Key>/commit.mw` when a pending commit exists, otherwise reads
+the local `.mw` file, calls the configured Action API endpoint with
+`action=parse&pst=1`, and writes:
 
 ```text
 _cache/<Article_Key>/preview.html
 ```
 
-This is read-only network activity. It does not log in, request an edit token,
-or save the page.
+In an interactive terminal, `mwsync.py preview ARTICLE` serves that HTML through
+a short-lived `127.0.0.1` server, opens the browser, and if a pending commit
+exists waits for Enter before attempting verified reconciliation. `--link` and
+`--output` write the HTML and exit without serving or blocking.
+
+Preview rendering is read-only network activity. It does not log in, request an
+edit token, or save the page. `mwsync.py push --preview ARTICLE` renders the
+pending commit first, asks for approval, and then performs the normal
+authenticated push if approved.
 
 ## Design Goal
 
@@ -175,9 +186,8 @@ cannot advance refs to a revision that does not exist.
 
 The server's short lifetime (below) is independent of this block. The server may
 shut down as soon as it has served the page — the loaded page needs no further
-server contact (the copy button is client-side, the edit link points at
-Electowiki) — while the terminal prompt keeps the process alive until the user
-responds.
+server contact, and the edit link points at Electowiki — while the terminal
+prompt keeps the process alive until the user responds.
 
 `--link` and other non-interactive invocations do not block; they write the
 preview, print the link, and exit, leaving reconciliation to a later
@@ -188,7 +198,8 @@ preview, print the link, and exit, leaving reconciliation to a later
 Serving preview HTML over loopback HTTP is a display and browser-security
 improvement over `file://`. It does not by itself make the preview more
 semantically faithful; the source text and parser call do that. It does provide
-a better browser origin for clipboard support and response headers.
+a better browser origin for response headers and possible future clipboard
+support.
 
 The server should be inert:
 
@@ -214,11 +225,11 @@ A reasonable CSP starting point is:
 
 ```text
 default-src 'none'; img-src https: data:; style-src 'unsafe-inline';
-base-uri 'none'; form-action 'none'; script-src 'sha256-...'
+base-uri 'none'; form-action 'none'; script-src 'none'
 ```
 
-The script hash should pin only a tiny local copy-to-clipboard helper. If the
-copy button is omitted, use `script-src 'none'`.
+If a copy-to-clipboard button is added later, replace `script-src 'none'` with a
+hash-pinned script source for only that tiny local helper.
 
 The generated document should not use a `<base>` element. Fully absolutize
 `href` and `src` URLs instead, then keep `base-uri 'none'`.
