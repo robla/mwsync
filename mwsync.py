@@ -15,6 +15,7 @@ Subcommands:
   diff      Compare upstream cache vs working local file
   difftool  Launch meld to compare upstream cache vs working local
   merge     Merge fetched upstream changes into local file
+  preview   Render local wikitext through the wiki parser
   restore   Restore the local .mw file from refs/base
   log       Show cached revision history
   show      Print cached revision text
@@ -31,6 +32,7 @@ Usage:
   mwsync.py diff Maine
   mwsync.py diff Maine@upstream^ Maine@upstream
   mwsync.py merge Maine
+  mwsync.py preview Maine
   mwsync.py restore Maine
   mwsync.py commit Maine -m "Update Maine article"
   mwsync.py push Maine
@@ -45,15 +47,18 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import html
 import http.cookiejar
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import urllib.parse
 import urllib.request
+import webbrowser
 
 try:
     import yaml
@@ -822,6 +827,149 @@ def _fetch_revision_by_revid(revid: int, api_base: str) -> dict:
         "contentmodel": rev.get("contentmodel", ""),
         "contentformat": rev.get("contentformat", ""),
     }
+
+
+def _wiki_site_root(api_base: str) -> str:
+    parsed = urllib.parse.urlparse(api_base)
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "/", "", "", ""))
+
+
+def _absolutize_preview_urls(rendered_html: str, site_root: str) -> str:
+    root = site_root.rstrip("/")
+
+    def repl(match: re.Match) -> str:
+        attr = match.group(1)
+        quote = match.group(2)
+        url = match.group(3)
+        if url.startswith("//"):
+            return f"{attr}={quote}https:{url}{quote}"
+        if url.startswith("/"):
+            return f"{attr}={quote}{root}{url}{quote}"
+        return match.group(0)
+
+    return re.sub(r'\b(href|src)=(["\'])(/[^"\']*)\2', repl, rendered_html)
+
+
+def _parse_wikitext_preview(title: str, wikitext: str, api_base: str) -> dict:
+    params = {
+        "action": "parse",
+        "format": "json",
+        "formatversion": "2",
+        "title": title,
+        "text": wikitext,
+        "contentmodel": "wikitext",
+        "prop": "text|displaytitle|categorieshtml",
+        "disableeditsection": "1",
+    }
+    data = urllib.parse.urlencode(params).encode("utf-8")
+    req = urllib.request.Request(
+        api_base,
+        data=data,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+
+    if "error" in result:
+        err = result["error"]
+        raise ValueError(f"MediaWiki parse failed ({err.get('code', 'unknown')}): "
+                         f"{err.get('info', 'unknown error')}")
+    parsed = result.get("parse")
+    if not isinstance(parsed, dict):
+        raise ValueError("MediaWiki parse response did not include parse data")
+    text = parsed.get("text", "")
+    if isinstance(text, dict):
+        text = text.get("*", "")
+    if not isinstance(text, str):
+        raise ValueError("MediaWiki parse response did not include HTML text")
+    parsed["text"] = text
+    return parsed
+
+
+def _preview_path(key: str) -> str:
+    return os.path.join(_cache_dir(key), "preview.html")
+
+
+def _preview_document(config: dict, key: str, art: dict,
+                      rendered: dict, local: str) -> str:
+    api_base = get_api_base(config)
+    site_root = _wiki_site_root(api_base)
+    title = art.get("title", key.replace("_", " "))
+    url = _article_url(config, key, art)
+    display_title = rendered.get("displaytitle") or title
+    body_html = _absolutize_preview_urls(rendered.get("text", ""), site_root)
+    categories_html = rendered.get("categorieshtml") or ""
+    if isinstance(categories_html, dict):
+        categories_html = categories_html.get("*", "")
+    categories_html = _absolutize_preview_urls(str(categories_html), site_root)
+    generated_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="{html.escape(site_root, quote=True)}">
+  <title>Preview: {html.escape(title)}</title>
+  <style>
+    body {{
+      margin: 0;
+      background: #f8f9fa;
+      color: #202122;
+      font: 16px/1.55 sans-serif;
+    }}
+    .mwsync-preview-shell {{
+      max-width: 980px;
+      margin: 0 auto;
+      background: #fff;
+      min-height: 100vh;
+      padding: 1.5rem 2rem 4rem;
+      box-shadow: 0 0 0 1px #a2a9b1;
+    }}
+    .mwsync-preview-note {{
+      border: 1px solid #a2a9b1;
+      background: #f8f9fa;
+      padding: .75rem 1rem;
+      margin-bottom: 1.5rem;
+      font-size: .9rem;
+    }}
+    .mwsync-preview-note p {{ margin: .25rem 0; }}
+    h1 {{
+      font-family: Georgia, 'Times New Roman', serif;
+      font-weight: normal;
+      border-bottom: 1px solid #a2a9b1;
+      margin-top: 0;
+    }}
+    a {{ color: #0645ad; }}
+    pre, code {{ background: #f8f9fa; }}
+    table {{ border-collapse: collapse; }}
+    th, td {{ border: 1px solid #a2a9b1; padding: .2rem .4rem; }}
+    .catlinks {{
+      border: 1px solid #a2a9b1;
+      background: #f8f9fa;
+      margin-top: 1.5rem;
+      padding: .4rem .7rem;
+      font-size: .9rem;
+    }}
+  </style>
+</head>
+<body>
+  <main class="mwsync-preview-shell">
+    <div class="mwsync-preview-note">
+      <p><strong>Local mwsync preview only.</strong> This was rendered by the target wiki parser but was not saved.</p>
+      <p>Source: {html.escape(local)} | Generated: {html.escape(generated_at)}</p>
+      <p>Page URL: <a href="{html.escape(url, quote=True)}">{html.escape(url)}</a></p>
+    </div>
+    <h1>{display_title}</h1>
+    {body_html}
+    {categories_html}
+  </main>
+</body>
+</html>
+"""
 
 
 def _atomic_write(path: str, content: str) -> bool:
@@ -2040,6 +2188,45 @@ def run_difftool(args, config: dict, config_path: str) -> None:
     subprocess.run(["meld", snapshot, local])
 
 
+def run_preview(args, config: dict, config_path: str) -> None:
+    key, art = resolve_article_entry(config, args.article)
+    _check_legacy_cache(key)
+    local = art.get("local", key + ".mw")
+    title = art.get("title", key.replace("_", " "))
+    api_base = get_api_base(config)
+    url = _article_url(config, key, art)
+
+    if not os.path.exists(local):
+        print(f"Error: local file not found: {local}", file=sys.stderr)
+        print(f"Run 'mwsync.py merge {key}' first, or create {local}.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        wikitext = _read_text(local)
+        rendered = _parse_wikitext_preview(title, wikitext, api_base)
+    except Exception as e:
+        print(f"Error rendering preview for {key}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    output = args.output or _preview_path(key)
+    document = _preview_document(config, key, art, rendered, local)
+    if not _atomic_write(output, document):
+        sys.exit(1)
+
+    print(f"# Rendered preview for {local}", file=sys.stderr)
+    print(f"#   page: {url}", file=sys.stderr)
+    print(f"#   html: {output}", file=sys.stderr)
+    if args.open:
+        file_url = urllib.parse.urljoin(
+            "file:", urllib.request.pathname2url(os.path.abspath(output)))
+        if webbrowser.open(file_url):
+            print(f"# Opened {file_url}", file=sys.stderr)
+        else:
+            print(f"# Could not open browser; open {output} manually.",
+                  file=sys.stderr)
+
+
 def run_merge(args, config: dict, config_path: str) -> dict | None:
     key, art = resolve_article_entry(config, args.article)
     _check_legacy_cache(key)
@@ -2807,6 +2994,16 @@ def main() -> None:
                                 help="Launch meld to compare upstream cache vs local")
     p_difftool.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
 
+    # preview
+    p_preview = sub.add_parser("preview",
+                               help="Render local wikitext through the wiki parser")
+    p_preview.add_argument("article", metavar="ARTICLE",
+                           help="Article key or local file (from mwsync.yaml)")
+    p_preview.add_argument("--output", metavar="PATH",
+                           help="Write preview HTML to PATH instead of _cache/ARTICLE/preview.html")
+    p_preview.add_argument("--open", action="store_true",
+                           help="Open the generated preview HTML in a browser")
+
     # merge
     p_merge = sub.add_parser("merge", help="Merge fetched upstream changes into local file")
     p_merge.add_argument("article", metavar="ARTICLE", help="Article key (from mwsync.yaml)")
@@ -2879,6 +3076,8 @@ def main() -> None:
         run_diff(args, config, config_path)
     elif args.subcommand == "difftool":
         run_difftool(args, config, config_path)
+    elif args.subcommand == "preview":
+        run_preview(args, config, config_path)
     elif args.subcommand == "merge":
         run_merge(args, config, config_path)
     elif args.subcommand == "restore":
