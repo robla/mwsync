@@ -131,12 +131,17 @@ reconcile an edit already saved in the browser.
 
 ## Reconciliation Trigger
 
-A browser "Done" button is tempting, but it should not directly mutate the
-repository or clear pending commits. A mutating browser endpoint turns the local
-preview server into a control plane and expands the security model.
+The loopback server and the terminal prompt are the same `mwsync.py preview`
+process. The server runs on a background thread only to hand the page to the
+browser; the main thread stays in the foreground and owns reconciliation.
+Reconciliation is driven from the terminal, never from the browser.
 
-If a single-command preview-and-reconcile flow is wanted, prefer terminal
-control:
+A browser "Done" button is therefore rejected. A mutating browser endpoint would
+turn the inert preview server into a control plane over local state (see "Secure
+Transient Local Server"), and would force the server to stay alive for the whole
+browser detour. The terminal is the safe control point.
+
+So in the default serve-and-open flow, `preview` blocks before exiting:
 
 ```text
 Preview opened at http://127.0.0.1:PORT/preview/TOKEN
@@ -144,9 +149,31 @@ After saving in the browser, press Enter to reconcile, or Ctrl-C to leave the
 pending commit unchanged.
 ```
 
-The CLI process can then fetch upstream and run the same verified reconciliation
-described above. If the user did not save, no matching upstream revision is
-found and the pending commit remains intact.
+The key property: this prompt is reached no matter what happens in the browser —
+the save succeeds, the save fails, the browser crashes after **Save changes**, or
+the user never saves at all. The browser is never required to report back. On
+Enter, the CLI runs the same verified reconciliation as `push` (fetch upstream;
+require normalized-text match **and** `parentid == base_revid`):
+
+- If the on-wiki save landed, it fast-forwards local state and reports the saved
+  revision.
+- If nothing matching is found — the save failed, was abandoned, or was never
+  attempted — the pending commit is left intact, and the user can run
+  `mwsync.py push` later to submit it.
+
+Because reconciliation verifies rather than assumes, every browser outcome is
+safe: the prompt cannot clear a pending commit that was not actually saved, and
+cannot advance refs to a revision that does not exist.
+
+The server's short lifetime (below) is independent of this block. The server may
+shut down as soon as it has served the page — the loaded page needs no further
+server contact (the copy button is client-side, the edit link points at
+Electowiki) — while the terminal prompt keeps the process alive until the user
+responds.
+
+`--link` and other non-interactive invocations do not block; they write the
+preview, print the link, and exit, leaving reconciliation to a later
+`mwsync.py push`.
 
 ## Secure Transient Local Server
 
