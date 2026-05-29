@@ -79,20 +79,21 @@ final check right before `push` — because both read the same snapshot. A
 `--working` flag to force previewing the editable `.mw` file is the one escape
 hatch worth adding; it is optional and not required for the default flow.
 
-Deliberately *not* folding preview into `commit` or `push`: `commit` must stay
-offline (preview is a network parse call), and a `push --preview` gate would be
-a late, redundant option once the standalone `preview` step already reads
-`commit.mw`. Keep the commands separate and let the user place `preview` where
-they want it.
+Preview is kept out of `commit`, which must stay offline (preview is a network
+parse call). Whether `push` should also gain a `--preview` gate is a separate
+question taken up in the push debate below; either way the standalone `preview`
+step is the primary review point. See "Normative workflow" below for the
+resolved decision.
 
 ### Parser call: apply the pre-save transform
 
 The current preview calls `action=parse` with the raw wikitext and no
-pre-save transform. MediaWiki applies the pre-save transform (PST) at *save*
-time, so the wikitext `push` ultimately stores is the post-PST text: `~~~~`
+pre-save transform. `mwsync.py push` submits *pre-PST* wikitext; MediaWiki then
+applies the pre-save transform (PST) and stores the transformed revision — `~~~~`
 signatures expanded, `{{subst:...}}` substituted, trailing whitespace
-normalized. Rendering without PST therefore diverges from the saved result for
-any page using those constructs.
+normalized. So `commit.mw` stays pre-PST while the fetched post-save text can
+differ. Rendering the preview without PST therefore diverges from the saved
+result for any page using those constructs.
 
 `preview` should pass `pst=1` to `action=parse` so the rendered HTML reflects
 what the page will actually look like once saved. This is also what the wiki's
@@ -116,6 +117,22 @@ pending content locally so the user can see it, and hand the exact wikitext to
 Electowiki's real source editor so the final "Show preview" and save happen in
 the live site — with the user's session, skin, and gadgets.
 
+### Normative workflow (decision)
+
+The subsections below include a recorded design debate (the on-wiki-save
+objection and response). To keep this implementable, the resolved decision —
+reflecting the maintainer's stated preference — is:
+
+- The primary path is `commit` -> `preview` (review, then **Save changes** in the
+  live edit form) -> `push`, where `push` reconciles idempotently after the
+  on-wiki save under the strict rules in "Claude's response" below.
+- The on-wiki save is a first-class but *manual* write path, governed by those
+  reconciliation rules.
+- `push --preview` (the CLI performs the write itself) is a supported
+  *alternative* for a fully tool-managed push, not the required default.
+
+Build to this decision; the objection/response prose is retained as rationale.
+
 ### Default: serve and open
 
 `mwsync.py preview Maine` with no flags should:
@@ -127,8 +144,9 @@ the live site — with the user's session, skin, and gadgets.
    tokenized URL in the browser.
 
 Serving over `http://127.0.0.1` rather than `file://` is not merely cosmetic: a
-loopback HTTP origin is a browser "secure context," which the clipboard copy
-button depends on, and it lets the server set real response headers. If opening
+loopback origin is generally treated as a potentially trustworthy origin — a
+secure context — which the clipboard copy button depends on (exact behavior can
+vary by browser), and it lets the server set real response headers. If opening
 a browser fails (headless or remote session), print the tokenized URL and keep
 the server alive for its normal timeout rather than erroring out.
 
@@ -140,6 +158,14 @@ for remote sessions, scripting, or simply preferring to click the link yourself.
 
 Recommended name: **`--link`** (you get a link to click). Alternatives
 considered: `--no-browser`, `--write-only`. Do not call it `--dont-open`.
+
+Flag surface (proposed vs. current): today `preview` defaults to writing the
+file without opening, and exposes `--open` (open the `file://` copy) and
+`--output PATH`. Under this plan the default flips to serve-and-open, so `--open`
+becomes the default behavior — keep it as an accepted no-op alias or drop it —
+while `--link` is the new opt-out that writes and prints without opening or
+serving. `--output PATH` still controls the written path and implies the
+write-without-serving behavior. `--link` is therefore new/proposed, not current.
 
 Under `file://` the page is degraded but still useful: with no HTTP origin there
 are no response headers, so any CSP must come from a `<meta http-equiv>` tag, and
@@ -241,31 +267,49 @@ have said they will habitually do — review in the live edit form and click
 that muscle memory. The better fix keeps the on-wiki save first-class and makes
 `push` reconcile after it.
 
-**Make `push` idempotent.** When `push` runs, it should first fetch upstream and
-compare the latest revision to the pending commit body:
+**Make `push` idempotent — with strict reconciliation.** When `push` runs it
+should first fetch upstream and decide whether the latest revision is plausibly
+the on-wiki save of *this* pending commit. It may fast-forward only when **both**
+conditions hold:
 
-- If they match, the wiki already has this exact edit. `push` does *not*
-  re-submit; it advances `refs/upstream`, `refs/base`, and `refs/last-pushed`,
-  clears the pending commit, records push metadata, and reports something like
-  `already saved upstream as r19779 (no edit submitted)`. This is the same
-  bookkeeping `push` always performs — it simply recognizes that the write
-  already happened in the browser.
-- If they do not match — the user tweaked the text in the edit box, or the
-  pre-save transform expanded a `~~~~` or `{{subst:}}` — `push` reports the
-  divergence and points at `fetch` / `merge`, the ordinary upstream-moved path.
-  Nothing is overwritten.
+- **Text matches.** The latest revision's wikitext equals the pending commit
+  body after normalization. MediaWiki strips trailing whitespace and forces a
+  single final newline on save, so even an untouched page can come back differing
+  in trailing bytes; normalize before comparing. Text match is necessary but not
+  sufficient.
+- **Ancestry matches.** The latest revision's `parentid` equals the `base_revid`
+  recorded in the pending commit — it is a direct child of the revision the user
+  reviewed. This rejects a coincidental normalize-match against an unrelated
+  revision, and intervening edits: if anyone (including the user resolving a
+  browser edit-conflict) saved on top of a different base, `parentid` will not
+  match.
 
-The comparison must be normalized, not byte-exact: MediaWiki strips trailing
-whitespace and forces a single final newline on save, so even an otherwise
-untouched page can come back differing in trailing bytes. Normalizing trailing
-whitespace before comparing avoids spurious "diverged" reports for the common
-case.
+When both hold, treat it as the on-wiki save: do *not* re-submit; advance
+`refs/upstream`, `refs/base`, and `refs/last-pushed` to the new revision, cache
+its canonical (post-PST, normalized) body, clear the pending commit, record push
+metadata, and report `already saved upstream as r19779 (no edit submitted)`.
+
+Then sync the working file. After the fast-forward, `refs/base` points at the
+canonical saved text, so a pre-PST or pre-normalization working file would make
+`status` / `diff` immediately report a phantom modification or silently mask a
+PST change. Rewrite the working file to the canonical revision **only if it still
+matches the pending commit body**; if the user has kept editing it since
+`commit`, leave it untouched — those are genuine new local edits, correctly shown
+as modified against the new base. Syncing the working file where possible
+preserves the post-push invariant "working file == base == upstream"; the same
+consideration applies to a normal `push` whenever PST or normalization alters the
+saved text.
+
+When either check fails — text differs, or `parentid` does not match
+`base_revid` — `push` must not claim success. It reports the divergence and
+points at `fetch` / `merge` (manual reconcile), overwriting nothing. This is the
+conservative behavior the objection asks for.
 
 This matters because of what `push` does *today*: `run_push` submits the pending
 commit against the stored `base_revid` without re-checking upstream first, so a
 push after an on-wiki save currently fails with a spurious edit conflict. The
-idempotent behavior turns that failure into a clean fast-forward and is a
-required code change, not just documentation.
+idempotent behavior turns that failure into a clean, verified fast-forward and is
+a required code change, not just documentation.
 
 The user's habitual flow therefore stays intact and ends in aligned state:
 
@@ -275,10 +319,11 @@ mwsync.py preview Maine          # review, copy, open the edit form, Save change
 mwsync.py push Maine             # fast-forwards local refs to the saved revision
 ```
 
-`push --preview` remains worth offering as an *alternative* for users who prefer
-the CLI to perform the write, but it should not be positioned as the safer
-default. With idempotent reconciliation, the on-wiki save is not a bypass of the
-safety model — it is a supported write path that `push` cleans up after.
+`push --preview` remains a supported *alternative* for users who want the CLI to
+perform the write end to end — arguably the cleaner fully-managed path. But with
+strict reconciliation in place, the on-wiki save is a safe first-class path too,
+not a bypass of the safety model. The maintainer's chosen default is the on-wiki
+save (see "Normative workflow"); `push --preview` is offered, not required.
 
 ### Summary handoff: URL parameter, not a wikitext comment
 
