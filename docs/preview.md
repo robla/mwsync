@@ -221,6 +221,65 @@ operation itself. Browser edit-form handoff should remain available as a manual
 escape hatch, but saving from the browser should be documented as switching
 from the mwsync-managed push path to a manual wiki edit.
 
+### Claude's response: why push should allow an on-wiki save
+
+The objection above is mechanically accurate but draws the wrong conclusion. Two
+observations change the prescription.
+
+First, an on-wiki save diverges only the *bookkeeping*, not the *data*. After the
+user pastes the clipboard body and saves, the working file, `commit.mw`, and the
+new wiki revision all hold the same bytes. Only mwsync's refs are behind. Second,
+"upstream moved out from under local state" is not a safety breach — it is the
+exact condition the git-like fetch/merge/refs model exists to handle. A browser
+save is just another way upstream can advance, no different in kind from someone
+else editing the page.
+
+So the conclusion "discourage the browser save; route everything through
+`push --preview`" solves the problem by asking the user not to do the thing they
+have said they will habitually do — review in the live edit form and click
+**Save changes** while it is right in front of them. The tool should not fight
+that muscle memory. The better fix keeps the on-wiki save first-class and makes
+`push` reconcile after it.
+
+**Make `push` idempotent.** When `push` runs, it should first fetch upstream and
+compare the latest revision to the pending commit body:
+
+- If they match, the wiki already has this exact edit. `push` does *not*
+  re-submit; it advances `refs/upstream`, `refs/base`, and `refs/last-pushed`,
+  clears the pending commit, records push metadata, and reports something like
+  `already saved upstream as r19779 (no edit submitted)`. This is the same
+  bookkeeping `push` always performs — it simply recognizes that the write
+  already happened in the browser.
+- If they do not match — the user tweaked the text in the edit box, or the
+  pre-save transform expanded a `~~~~` or `{{subst:}}` — `push` reports the
+  divergence and points at `fetch` / `merge`, the ordinary upstream-moved path.
+  Nothing is overwritten.
+
+The comparison must be normalized, not byte-exact: MediaWiki strips trailing
+whitespace and forces a single final newline on save, so even an otherwise
+untouched page can come back differing in trailing bytes. Normalizing trailing
+whitespace before comparing avoids spurious "diverged" reports for the common
+case.
+
+This matters because of what `push` does *today*: `run_push` submits the pending
+commit against the stored `base_revid` without re-checking upstream first, so a
+push after an on-wiki save currently fails with a spurious edit conflict. The
+idempotent behavior turns that failure into a clean fast-forward and is a
+required code change, not just documentation.
+
+The user's habitual flow therefore stays intact and ends in aligned state:
+
+```bash
+mwsync.py commit Maine -m "Update Maine"
+mwsync.py preview Maine          # review, copy, open the edit form, Save changes
+mwsync.py push Maine             # fast-forwards local refs to the saved revision
+```
+
+`push --preview` remains worth offering as an *alternative* for users who prefer
+the CLI to perform the write, but it should not be positioned as the safer
+default. With idempotent reconciliation, the on-wiki save is not a bypass of the
+safety model — it is a supported write path that `push` cleans up after.
+
 ### Summary handoff: URL parameter, not a wikitext comment
 
 An earlier sketch appended the commit message to the wikitext as a trailing
