@@ -1,11 +1,13 @@
 # Preview Workflow
 
-`mwsync.py preview` renders a local `.mw` working file through the configured
-wiki's MediaWiki parser without saving anything to the wiki.
+`mwsync.py preview` renders draft wikitext through the configured wiki's
+MediaWiki parser without saving anything to the wiki. The goal is to make it
+easy to review the exact content that is about to be pushed, while keeping local
+mwsync state correct after any on-wiki preview or save.
 
-## Status Quo
+## Current Behavior
 
-The current preview command is intentionally simple:
+The current command is simple:
 
 ```bash
 mwsync.py preview Maine
@@ -13,46 +15,19 @@ mwsync.py preview Maine --open
 mwsync.py preview Maine --output /tmp/Maine-preview.html
 ```
 
-It resolves `Maine` through `mwsync.yaml`, reads the configured local file, and
-sends that wikitext to the configured `wiki.api_base` using the Action API
-`action=parse`. The generated HTML is written to:
+It resolves the article through `mwsync.yaml`, reads the local `.mw` file, calls
+the configured Action API endpoint with `action=parse`, and writes:
 
 ```text
 _cache/<Article_Key>/preview.html
 ```
 
-The output includes a small local preview banner, the generated timestamp, the
-source `.mw` path, and a link to the real wiki page. Links and image/resource
-URLs that are root-relative are rewritten to the target wiki host so the local
-file is more useful in a browser.
+This is read-only network activity. It does not log in, request an edit token,
+or save the page.
 
-This is a network operation, but it is read-only. It does not log in, does not
-request an edit token, and does not save the page.
+## Design Goal
 
-## Limitations
-
-This is not identical to pressing "Show preview" in the Electowiki edit form.
-It uses the same parser endpoint, but it is displayed in a local HTML wrapper
-rather than inside the live site skin with the user's browser session,
-gadgets, preferences, or edit form.
-
-The command also does not currently:
-
-- inject local CSS or JavaScript from the live wiki skin;
-- submit text into the browser's edit form;
-- preserve browser session state;
-- compare the preview against the cached upstream revision;
-- preview multiple tracked pages at once.
-
-## Near-Term Plan: Preview the Pushed Content
-
-A local web server is useful, but it is not what makes the preview meaningfully
-closer to "preview before pushing." The important semantic improvement is to
-preview the exact content that `push` would submit, rendered the way the wiki
-will render it after saving.
-
-The decided workflow keeps three small, single-purpose commands and adds no new
-options to make the common case work:
+The common review-and-save workflow should be:
 
 ```bash
 mwsync.py commit Maine -m "Update Maine"
@@ -60,355 +35,167 @@ mwsync.py preview Maine
 mwsync.py push Maine
 ```
 
-`commit` is an offline operation: it snapshots the working file to
-`_cache/<Article_Key>/commit.mw` without touching the network. `push` submits
-that snapshot, not the mutable working file. So the only change needed to make
-`preview` faithful is to align its source text and parser call with `push`.
+`commit` snapshots the editable working file to
+`_cache/<Article_Key>/commit.mw`. `push` submits that pending commit snapshot,
+not the mutable working file. Therefore `preview` should prefer the pending
+commit when one exists, so the rendered preview matches the content `push` would
+submit.
 
-### Source text: prefer the pending commit
+If no pending commit exists, `preview` falls back to the working `.mw` file.
 
-When `_cache/<Article_Key>/commit.mw` exists, `preview` should read that pending
-commit snapshot instead of the mutable working file. That makes preview match
-the push path exactly: the user previews the same bytes `mwsync.py push` will
-submit. When no pending commit exists, `preview` falls back to the working
-`.mw` file as today.
+## Parser Fidelity
 
-This single rule supports both placements the user might want — reviewing right
-after `commit` (a tight `commit` -> `preview` -> `commit --amend` loop) and a
-final check right before `push` — because both read the same snapshot. A
-`--working` flag to force previewing the editable `.mw` file is the one escape
-hatch worth adding; it is optional and not required for the default flow.
+`preview` should call `action=parse` with `pst=1`. MediaWiki applies the
+pre-save transform when saving, so a faithful preview should show the post-PST
+rendered result. This affects signatures, `{{subst:...}}`, and save-time
+normalization. For ordinary article edits, `pst=1` usually changes nothing.
 
-Preview is kept out of `commit`, which must stay offline (preview is a network
-parse call). Whether `push` should also gain a `--preview` gate is a separate
-question taken up in the push debate below; either way the standalone `preview`
-step is the primary review point. See "Normative workflow" below for the
-resolved decision.
+This still has a fidelity ceiling. Unsaved content does not yet have a real
+revision id, timestamp, revision user, or final saved-page context. Previewing
+the pending commit with PST closes most of the gap, but it is not byte-identical
+to rendering the saved revision after the edit lands.
 
-### Parser call: apply the pre-save transform
+## Preview Page
 
-The current preview calls `action=parse` with the raw wikitext and no
-pre-save transform. `mwsync.py push` submits *pre-PST* wikitext; MediaWiki then
-applies the pre-save transform (PST) and stores the transformed revision — `~~~~`
-signatures expanded, `{{subst:...}}` substituted, trailing whitespace
-normalized. So `commit.mw` stays pre-PST while the fetched post-save text can
-differ. Rendering the preview without PST therefore diverges from the saved
-result for any page using those constructs.
+The generated preview page should contain:
 
-`preview` should pass `pst=1` to `action=parse` so the rendered HTML reflects
-what the page will actually look like once saved. This is also what the wiki's
-edit-form "Show preview" does. For typical article edits with no signatures or
-`subst`, `pst=1` changes nothing, so it is a safe default.
+- a local-preview banner with source path, generated time, live page URL, base
+  revid, and pending-commit status;
+- rendered HTML from `action=parse&pst=1`;
+- a source wikitext panel containing the exact pre-PST wikitext that would be
+  submitted or pasted;
+- the edit summary from the pending commit, when available;
+- an "Open source editor" link for the live wiki edit form.
 
-### Fidelity ceiling
+The source editor link should target the wikitext editor and prefill the summary
+where MediaWiki supports it:
 
-Even previewing `commit.mw` with `pst=1` is not byte-identical to the page after
-saving. The saved revision gets a real revid, real `{{REVISIONID}}` /
-`{{REVISIONUSER}}` / timestamp values, and is rendered in the context of a page
-that actually exists — affecting self-referential category membership, red vs.
-blue links, and `create_new` pages in particular. Previewing the pending commit
-with PST closes most of the gap; the remainder is inherent to content that has
-not been saved yet.
-
-## Browser Preview and Edit-Form Handoff
-
-This is the planned default UX for `preview`. The page has two jobs: render the
-pending content locally so the user can see it, and hand the exact wikitext to
-Electowiki's real source editor so the final "Show preview" and save happen in
-the live site — with the user's session, skin, and gadgets.
-
-### Normative workflow (decision)
-
-The subsections below include a recorded design debate (the on-wiki-save
-objection and response). To keep this implementable, the resolved decision —
-reflecting the maintainer's stated preference — is:
-
-- The primary path is `commit` -> `preview` (review, then **Save changes** in the
-  live edit form) -> `push`, where `push` reconciles idempotently after the
-  on-wiki save under the strict rules in "Claude's response" below.
-- The on-wiki save is a first-class but *manual* write path, governed by those
-  reconciliation rules.
-- `push --preview` (the CLI performs the write itself) is a supported
-  *alternative* for a fully tool-managed push, not the required default.
-
-Build to this decision; the objection/response prose is retained as rationale.
-
-### Default: serve and open
-
-`mwsync.py preview Maine` with no flags should:
-
-1. Render the pending content (the `commit.mw` snapshot when present, else the
-   working file) via `action=parse` with `pst=1`.
-2. Build the single self-contained HTML document described below.
-3. Start the loopback server (see "Secure Transient Local Server") and open the
-   tokenized URL in the browser.
-
-Serving over `http://127.0.0.1` rather than `file://` is not merely cosmetic: a
-loopback origin is generally treated as a potentially trustworthy origin — a
-secure context — which the clipboard copy button depends on (exact behavior can
-vary by browser), and it lets the server set real response headers. If opening
-a browser fails (headless or remote session), print the tokenized URL and keep
-the server alive for its normal timeout rather than erroring out.
-
-### Writing without opening
-
-A switch writes the HTML to `_cache/<Article_Key>/preview.html` and prints a
-clickable `file://` link *without* starting the server or launching a browser —
-for remote sessions, scripting, or simply preferring to click the link yourself.
-
-Recommended name: **`--link`** (you get a link to click). Alternatives
-considered: `--no-browser`, `--write-only`. Do not call it `--dont-open`.
-
-Flag surface (proposed vs. current): today `preview` defaults to writing the
-file without opening, and exposes `--open` (open the `file://` copy) and
-`--output PATH`. Under this plan the default flips to serve-and-open, so `--open`
-becomes the default behavior — keep it as an accepted no-op alias or drop it —
-while `--link` is the new opt-out that writes and prints without opening or
-serving. `--output PATH` still controls the written path and implies the
-write-without-serving behavior. `--link` is therefore new/proposed, not current.
-
-Under `file://` the page is degraded but still useful: with no HTTP origin there
-are no response headers, so any CSP must come from a `<meta http-equiv>` tag, and
-the clipboard button falls back to `document.execCommand('copy')` (some browsers
-will require a manual select-and-copy). The rendered preview and the edit-form
-link work unchanged.
-
-### The preview page
-
-Top to bottom, the document contains:
-
-1. The local-preview banner and metadata (source path, generated time, link to
-   the live page, base revid, and pending-commit status).
-2. The rendered HTML, from `action=parse` with `pst=1`.
-3. A **Source wikitext** panel: a large `<textarea>` holding the *exact bytes
-   that `push` would submit* — the `commit.mw` snapshot, verbatim and
-   pre-transform (this is what gets pasted; MediaWiki applies the pre-save
-   transform itself on save). A **Copy to clipboard** button sits beside it.
-4. The **edit summary**, shown as plain text so the user can read it.
-5. A prominent **Open Electowiki source editor** link and short step-by-step
-   instructions.
-
-Note the deliberate split: the rendered HTML (item 2) shows the *post-PST*
-result so the user sees what saving will produce, while the textarea (item 3)
-holds the *pre-PST* wikitext, because that is what actually gets pasted and
-saved.
-
-### Edit-form handoff
-
-The handoff link targets the wiki's source editor with the summary prefilled:
-
-```
+```text
 https://electowiki.org/w/index.php?title=Talk:Software&action=edit&summary=<url-encoded summary>
 ```
 
-- `action=edit` (not `veaction=edit`) opens the wikitext source editor, not the
-  visual editor.
-- MediaWiki prefills the edit-summary box from the `summary` URL parameter, so
-  the commit message is carried across automatically. Summaries cap at 500
-  characters, well within URL limits.
-- MediaWiki has no URL parameter to inject arbitrary wikitext into the edit box
-  (by design), so the body still travels via the clipboard. `preload` only loads
-  existing on-wiki pages and does not apply here.
+MediaWiki does not provide a safe URL parameter for injecting arbitrary
+wikitext into the edit box. The body still travels by clipboard or manual copy.
 
-Workflow:
+## On-Wiki Save And Reconciliation
 
-1. Review the rendered preview.
-2. Click **Copy to clipboard**.
-3. Click **Open Electowiki source editor** — the summary is already filled in.
-4. Select-all in the edit box and paste, replacing its contents.
-5. Use the live "Show preview" to confirm in the real skin, then save.
+It is acceptable for the user to preview in the live Electowiki edit form and
+click **Save changes** there. That is a manual on-wiki save, not an API push by
+mwsync. The follow-up `mwsync.py push ARTICLE` must reconcile this case
+idempotently instead of submitting a duplicate edit or failing with a spurious
+edit conflict.
 
-### ChatGPT's objection to bypassing mwsync.py push
+Before submitting, `push` should fetch the latest upstream revision and compare
+it to the pending commit. It may fast-forward local state without submitting an
+edit only when both checks pass:
 
-Saving from the browser editor after the handoff is convenient, but it bypasses
-the core `mwsync.py push` safety model. `push` submits the pending commit
-snapshot through the Action API using the recorded `base_revid`, letting
-MediaWiki detect edit conflicts against the revision the user actually reviewed.
-After a successful save, `push` also refreshes the local cache, advances
-`refs/upstream`, `refs/base`, and `refs/last-pushed`, clears the pending commit,
-and records push metadata in `mwsync.yaml`.
+- The latest upstream wikitext matches the pending commit body after the same
+  narrow normalization MediaWiki applies on save, such as trailing whitespace
+  and final-newline normalization.
+- The latest upstream revision's `parentid` equals the pending commit's
+  `base_revid`, so the saved revision is a direct child of the revision the user
+  reviewed.
 
-A manual browser save does not update that local state. It may leave mwsync
-believing a pending commit still needs to be pushed, or leave local refs pointing
-at the pre-save revision until the user manually fetches and reconciles. It also
-moves the final write outside the exact code path that was designed to keep the
-working file, pending commit, cache, and wiki revision aligned.
+When both checks pass, `push` should treat the edit as already saved upstream:
+cache the canonical saved revision, advance `refs/upstream`, `refs/base`, and
+`refs/last-pushed`, clear the pending commit, update push metadata in
+`mwsync.yaml`, and report that no edit was submitted.
 
-The safer default is therefore:
+After this fast-forward, the working file should be rewritten to the canonical
+saved text only if it still matches the pending commit body. If the user has
+continued editing the working file since `commit`, leave it untouched so those
+new edits remain visible as local modifications against the new base.
+
+If either check fails, `push` must not claim success and must not overwrite
+local work. It should report that upstream diverged and point the user toward
+the normal `fetch` / `merge` reconciliation path.
+
+## Push With Preview
+
+`mwsync.py push --preview ARTICLE` is a useful alternative for a fully
+mwsync-managed write:
 
 ```bash
 mwsync.py commit Maine -m "Update Maine"
 mwsync.py push --preview Maine
 ```
 
-In that design, `push --preview` renders the pending commit, opens the preview,
-waits for explicit approval, and then performs the normal `mwsync.py push`
-operation itself. Browser edit-form handoff should remain available as a manual
-escape hatch, but saving from the browser should be documented as switching
-from the mwsync-managed push path to a manual wiki edit.
+In this mode, `push` renders the pending commit, opens the preview, waits for
+explicit approval, and then performs the normal authenticated API push. This
+keeps the final write inside mwsync and preserves the usual `base_revid` edit
+conflict protection and post-push cache updates.
 
-### Claude's response: why push should allow an on-wiki save
+This is an alternative to the manual on-wiki save workflow, not a replacement.
+Both paths should end by running `push`, either to submit the edit or to
+reconcile an edit already saved in the browser.
 
-The objection above is mechanically accurate but draws the wrong conclusion. Two
-observations change the prescription.
+## Reconciliation Trigger
 
-First, an on-wiki save diverges only the *bookkeeping*, not the *data*. After the
-user pastes the clipboard body and saves, the working file, `commit.mw`, and the
-new wiki revision all hold the same bytes. Only mwsync's refs are behind. Second,
-"upstream moved out from under local state" is not a safety breach — it is the
-exact condition the git-like fetch/merge/refs model exists to handle. A browser
-save is just another way upstream can advance, no different in kind from someone
-else editing the page.
+A browser "Done" button is tempting, but it should not directly mutate the
+repository or clear pending commits. A mutating browser endpoint turns the local
+preview server into a control plane and expands the security model.
 
-So the conclusion "discourage the browser save; route everything through
-`push --preview`" solves the problem by asking the user not to do the thing they
-have said they will habitually do — review in the live edit form and click
-**Save changes** while it is right in front of them. The tool should not fight
-that muscle memory. The better fix keeps the on-wiki save first-class and makes
-`push` reconcile after it.
+If a single-command preview-and-reconcile flow is wanted, prefer terminal
+control:
 
-**Make `push` idempotent — with strict reconciliation.** When `push` runs it
-should first fetch upstream and decide whether the latest revision is plausibly
-the on-wiki save of *this* pending commit. It may fast-forward only when **both**
-conditions hold:
-
-- **Text matches.** The latest revision's wikitext equals the pending commit
-  body after normalization. MediaWiki strips trailing whitespace and forces a
-  single final newline on save, so even an untouched page can come back differing
-  in trailing bytes; normalize before comparing. Text match is necessary but not
-  sufficient.
-- **Ancestry matches.** The latest revision's `parentid` equals the `base_revid`
-  recorded in the pending commit — it is a direct child of the revision the user
-  reviewed. This rejects a coincidental normalize-match against an unrelated
-  revision, and intervening edits: if anyone (including the user resolving a
-  browser edit-conflict) saved on top of a different base, `parentid` will not
-  match.
-
-When both hold, treat it as the on-wiki save: do *not* re-submit; advance
-`refs/upstream`, `refs/base`, and `refs/last-pushed` to the new revision, cache
-its canonical (post-PST, normalized) body, clear the pending commit, record push
-metadata, and report `already saved upstream as r19779 (no edit submitted)`.
-
-Then sync the working file. After the fast-forward, `refs/base` points at the
-canonical saved text, so a pre-PST or pre-normalization working file would make
-`status` / `diff` immediately report a phantom modification or silently mask a
-PST change. Rewrite the working file to the canonical revision **only if it still
-matches the pending commit body**; if the user has kept editing it since
-`commit`, leave it untouched — those are genuine new local edits, correctly shown
-as modified against the new base. Syncing the working file where possible
-preserves the post-push invariant "working file == base == upstream"; the same
-consideration applies to a normal `push` whenever PST or normalization alters the
-saved text.
-
-When either check fails — text differs, or `parentid` does not match
-`base_revid` — `push` must not claim success. It reports the divergence and
-points at `fetch` / `merge` (manual reconcile), overwriting nothing. This is the
-conservative behavior the objection asks for.
-
-This matters because of what `push` does *today*: `run_push` submits the pending
-commit against the stored `base_revid` without re-checking upstream first, so a
-push after an on-wiki save currently fails with a spurious edit conflict. The
-idempotent behavior turns that failure into a clean, verified fast-forward and is
-a required code change, not just documentation.
-
-The user's habitual flow therefore stays intact and ends in aligned state:
-
-```bash
-mwsync.py commit Maine -m "Update Maine"
-mwsync.py preview Maine          # review, copy, open the edit form, Save changes
-mwsync.py push Maine             # fast-forwards local refs to the saved revision
+```text
+Preview opened at http://127.0.0.1:PORT/preview/TOKEN
+After saving in the browser, press Enter to reconcile, or Ctrl-C to leave the
+pending commit unchanged.
 ```
 
-`push --preview` remains a supported *alternative* for users who want the CLI to
-perform the write end to end — arguably the cleaner fully-managed path. But with
-strict reconciliation in place, the on-wiki save is a safe first-class path too,
-not a bypass of the safety model. The maintainer's chosen default is the on-wiki
-save (see "Normative workflow"); `push --preview` is offered, not required.
-
-### Summary handoff: URL parameter, not a wikitext comment
-
-An earlier sketch appended the commit message to the wikitext as a trailing
-`<!-- ... -->` comment so it would travel with the body in the clipboard. That
-works, but it has a footgun: if the user forgets to strip the comment before
-saving, it is stored into the article, and it forces a manual "copy the summary
-out of the comment" step. Carrying the summary in the `&summary=` URL parameter
-instead keeps the clipboard body clean (exactly the bytes `push` would submit)
-and removes both the cleanup and the risk. The comment approach is kept only as
-a fallback for a wiki or link path where a prefilled summary does not survive.
-
-### Clipboard button and CSP
-
-The copy button is the one element that requires JavaScript, which conflicts
-with the strict `script-src 'none'` policy. Allow exactly one inline script,
-pinned by hash or nonce (e.g. `script-src 'sha256-...'`), implementing only the
-copy action: attempt `navigator.clipboard.writeText(...)` (works in the
-localhost secure context) and fall back to selecting the textarea and
-`document.execCommand('copy')`. A hash- or nonce-pinned inline script that ships
-with `mwsync` is still inert to injection — no remote code loads, and
-wiki-supplied HTML in the rendered region still cannot execute. The rest of the
-CSP is unchanged.
+The CLI process can then fetch upstream and run the same verified reconciliation
+described above. If the user did not save, no matching upstream revision is
+found and the pending commit remains intact.
 
 ## Secure Transient Local Server
 
-Serving the generated HTML over loopback HTTP is a display and browser-security
-improvement over opening a `file://` URI. It does not by itself make the preview
-more like Electowiki's edit-form preview; the parser call and the choice of
-source text determine that. It does, however, provide a cleaner foundation for
-opening previews in a browser.
+Serving preview HTML over loopback HTTP is a display and browser-security
+improvement over `file://`. It does not by itself make the preview more
+semantically faithful; the source text and parser call do that. It does provide
+a better browser origin for clipboard support and response headers.
 
-Instead of introducing third-party dependencies like Flask, this server can be
-implemented directly using Python's standard `http.server` and `socketserver`
-libraries. It should be hardened:
+The server should be inert:
 
-1. **In-memory only:** Serve exactly one generated HTML document from memory.
-   The request handler must never derive a filesystem path from the request, so
-   `_cache/`, the repository, and the working directory are structurally
-   unreachable — there is no file mapping to traverse.
-2. **Loopback-only binding:** Bind strictly to `127.0.0.1`, not `localhost`
-   and not `0.0.0.0`.
-3. **Randomized port:** Bind to port `0` so the operating system allocates an
-   ephemeral, conflict-free port.
-4. **Access token:** Generate a cryptographically secure token (e.g.
-   `secrets.token_urlsafe(32)`) and put it in the path, such as
-   `http://127.0.0.1:PORT/preview/TOKEN`. Compare the path token against the
-   expected value with `secrets.compare_digest`, not `==`, to avoid a timing
-   oracle.
-5. **Exact-path, GET-only:** Serve only the exact `/preview/TOKEN` path and only
-   `GET` (and `HEAD`). Respond `404` to any other path — including
-   `/favicon.ico` — and `405` to any other method. This keeps the inert viewer
-   from being poked with `POST` or path probing.
-6. **Validate the Host header:** Require `Host: 127.0.0.1:PORT` and reject
-   anything else. With an ephemeral port and a secret token this is already
-   near-impossible to reach, but it is the cheap defense against DNS-rebinding
-   from a page the user happens to have open in the same browser.
-7. **Strict response headers:** Serve with an explicit
-   `Content-Type: text/html; charset=utf-8`, plus `X-Content-Type-Options:
-   nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`, and a
-   restrictive Content Security Policy. A reasonable starting point is
-   `default-src 'none'; img-src https: data:; style-src 'unsafe-inline';
-   base-uri 'none'; form-action 'none'; script-src 'sha256-...'`, where the
-   `script-src` hash pins the single inline copy-button script (see "Clipboard
-   button and CSP" above); use `script-src 'none'` if the copy button is
-   dropped. Wiki-supplied HTML in the rendered region still cannot execute, so
-   its collapsible tables, reference tooltips, and gadgets will not be
-   interactive — that is the intended inert-viewer tradeoff, not a bug.
-8. **Short lifetime:** Use a short wall-clock timeout and shut down after
-   serving the valid preview route, bounding the lifetime regardless of how many
-   requests arrive. Do not shut down after the first request blindly, because
-   browser requests for `/favicon.ico` or prefetches could consume it.
-9. **No proxying or side effects:** Do not proxy arbitrary requests to
-   Electowiki or other hosts, and never perform any action (re-parse, fetch,
-   edit) in response to a request. The server only hands back one prepared
-   document.
+1. Serve exactly one generated HTML document from memory. Never map request
+   paths to local files.
+2. Bind strictly to `127.0.0.1`, not `localhost` and not `0.0.0.0`.
+3. Use an ephemeral OS-assigned port.
+4. Generate a `secrets.token_urlsafe(32)` token and place it in the path, such
+   as `/preview/TOKEN`; compare with `secrets.compare_digest`.
+5. Serve only the exact tokenized path with `GET` and `HEAD`; return `404` or
+   `405` for everything else.
+6. Validate `Host: 127.0.0.1:PORT` to reduce DNS-rebinding exposure.
+7. Send `Content-Type: text/html; charset=utf-8`,
+   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+   `Cache-Control: no-store`, and a restrictive CSP.
+8. Use a short wall-clock timeout and shut down after serving the valid preview
+   route; do not shut down after the first request blindly because browsers may
+   request `/favicon.ico`.
+9. Do not proxy requests, re-parse pages, fetch remote content, edit the wiki,
+   or mutate local mwsync state in response to browser requests.
 
-**CSP and the `<base>` element.** The current preview HTML emits
-`<base href="...">` to resolve relative URLs against the wiki host, but CSP
-`base-uri 'none'` blocks the `<base>` element, so the browser ignores it and any
-URL not already absolutized breaks. Resolve this by fully absolutizing `href`
-and `src` URLs in the generated document (the existing `_absolutize_preview_urls`
-helper already does this for root-relative URLs) and dropping `<base>`
-altogether, keeping the strict `base-uri 'none'`.
+A reasonable CSP starting point is:
 
-The main risk is accidentally turning preview HTML into an active local web app
-that can execute scripts or interact with other localhost services. The server
-should be a narrow, inert document viewer.
+```text
+default-src 'none'; img-src https: data:; style-src 'unsafe-inline';
+base-uri 'none'; form-action 'none'; script-src 'sha256-...'
+```
+
+The script hash should pin only a tiny local copy-to-clipboard helper. If the
+copy button is omitted, use `script-src 'none'`.
+
+The generated document should not use a `<base>` element. Fully absolutize
+`href` and `src` URLs instead, then keep `base-uri 'none'`.
+
+## Security Notes
+
+The local preview contains unpublished draft text. The loopback server protects
+against casual network exposure and accidental filesystem serving, but it does
+not protect against malicious browser extensions, local malware, or the user
+copying draft text to the system clipboard.
+
+Any metadata inserted outside MediaWiki-rendered HTML must be escaped carefully,
+including page titles, local paths, edit summaries, URLs, and generated status
+messages. Rendered wiki HTML should be treated as untrusted active content:
+allow it to display, but prevent scripts and form submission with CSP.
