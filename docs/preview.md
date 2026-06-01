@@ -120,32 +120,112 @@ mwsync. The default `mwsync.py preview ARTICLE` terminal prompt should reconcile
 this case immediately after browser review. `mwsync.py push ARTICLE` should use
 the same reconciliation logic if the user exits preview and reconciles later.
 
-Before submitting from `push`, or before claiming cleanup from `preview`, the
-command should fetch the latest upstream revision and compare it to the pending
-commit. It may fast-forward local state without submitting an edit only when
-both checks pass:
+### Two Governing Principles
 
-- The latest upstream wikitext matches the pending commit body after the same
-  narrow normalization MediaWiki applies on save, such as trailing whitespace
-  and final-newline normalization.
-- The latest upstream revision's `parentid` equals the pending commit's
-  `base_revid`, so the saved revision is a direct child of the revision the user
-  reviewed.
+**1. The remote copy reigns supreme.** Once a revision exists on the wiki, that
+revision — not the pending commit, not the working file — is the source of
+truth. The pending commit (`commit.mw`) and the `ledecopy`-produced working file
+are *proposals*. The moment the user saves on-wiki, possibly after editing the
+text or the edit summary in the browser, the proposal has been superseded by the
+saved revision. Reconciliation must converge local state onto that saved
+revision, not defend the now-stale proposal against it.
 
-When both checks pass, the command should treat the edit as already saved
-upstream: cache the canonical saved revision, advance `refs/upstream`,
-`refs/base`, and `refs/last-pushed`, clear the pending commit, update push
-metadata in `mwsync.yaml`, and report that no edit was submitted.
+**2. Reconciliation must never leave the local copy unusable.** This is an
+invariant on *every* exit path of `preview` and `push`, including the paths that
+decline to submit an edit:
 
-After this fast-forward, the working file should be rewritten to the canonical
-saved text only if it still matches the pending commit body. If the user has
-continued editing the working file since `commit`, leave it untouched so those
-new edits remain visible as local modifications against the new base.
+> When the command returns, the working `.mw` file must be present and must
+> correspond to a known base revision, and `refs/upstream`, `refs/base`,
+> `refs/last-pushed`, the pending commit, and the `mwsync.yaml` push metadata
+> must be mutually consistent. The command may legitimately decline to *submit*
+> an edit. It may not decline to leave a *coherent* state.
 
-If either check fails, the command must not claim success and must not overwrite
-local work. If no matching browser save is found, it should say so and leave the
-pending commit intact. If upstream diverged, it should point the user toward the
-normal `fetch` / `merge` reconciliation path.
+The previous spec violated this invariant: it fast-forwarded only on an exact
+text match and otherwise did nothing. "Do nothing" is unsafe, because a save
+*did* happen — so `refs/upstream` can advance (via the auto-fetch or a later
+`mwsync.py fetch`) while `refs/base`, the pending commit, and `mwsync.yaml` stay
+frozen at "never pushed." The result is a half-reconciled cache: the page exists
+upstream, a `create_new` commit still points at it as if it did not, and the
+working file still carries text (for example, redlinks the user deleted in the
+browser) that no longer matches the wiki. That is the unusable state this
+section exists to prevent.
+
+### Recognizing The User's Own Save (Lineage, Not Byte-Equality)
+
+Byte-equality of the upstream text against the pending commit is the wrong test
+to *gate* reconciliation, because the user is expected to edit during preview.
+Recognition should be based on **lineage**, which answers "is the latest upstream
+revision a save the user just made from the revision they reviewed?":
+
+- For an edit to an existing page: the latest upstream revision's `parentid`
+  equals the pending commit's `base_revid`.
+- For a new page (`create_new`, `base_revid == 0`): the page did not exist when
+  the commit was staged and now does, and its creating revision has
+  `parentid == 0`.
+
+When lineage holds, the saved revision is the user's own work — whether or not
+its text or summary matches the staged proposal — and **remote reigns supreme**:
+mwsync adopts it wholesale. Byte-equality is then used only to *classify* the
+outcome for reporting, not to decide whether to converge.
+
+### Reconciliation Outcomes
+
+Reconciliation should always terminate in exactly one of three states, and all
+three satisfy the never-unusable invariant.
+
+1. **Clean fast-forward** — lineage holds and the upstream text matches the
+   pending commit after the narrow normalization MediaWiki applies on save
+   (trailing-whitespace and final-newline). The save is the proposal, unchanged.
+   Cache the canonical saved revision, advance `refs/upstream`, `refs/base`, and
+   `refs/last-pushed` together, clear the pending commit, update `mwsync.yaml`
+   push metadata, and report that no edit was submitted.
+
+2. **Adopt-upstream (the divergent save)** — lineage holds but the upstream text
+   or summary differs from the proposal, because the user edited in the browser
+   (delinked redlinks, reworded prose, changed the edit summary, accepted a
+   `ledecopy` category rewrite, etc.). This is the case that used to strand the
+   user. Under "remote reigns supreme," mwsync adopts the saved revision exactly
+   as the clean fast-forward does — cache it, advance all three refs together,
+   update `mwsync.yaml`, clear the pending commit — and additionally **rewrites
+   the working `.mw` file to the canonical saved text** so the local copy is
+   immediately usable and matches the wiki. It should report that it adopted an
+   on-wiki revision that differed from the staged commit, and ideally show a
+   short diff so the divergence is not silent.
+
+   A `create_new` commit is retired here, not preserved: the page now exists, so
+   leaving `create_new: true` staged would make the next `push` attempt to create
+   an existing title. Retiring the stale `create_new` proposal is part of
+   converging onto the remote.
+
+3. **Keep-pending / hand-off** — no descendant save is found (the save failed,
+   was abandoned, or was never attempted), or the latest upstream revision does
+   *not* descend from `base_revid` (someone else edited the page). Here mwsync
+   must not claim success and must not overwrite local work: it leaves the
+   pending commit intact for a later `mwsync.py push`. But it must still leave a
+   coherent state — it must not leave `refs/upstream` advanced past `refs/base`
+   with a stale `create_new` commit dangling. If a foreign upstream revision is
+   detected, it should point the user at the normal `fetch` / `merge`
+   reconciliation path rather than silently absorbing someone else's edit.
+
+### Working-File Handling
+
+- In **clean fast-forward**, rewrite the working file to the canonical saved text
+  only if it still matches the pending commit body. If the user kept editing the
+  working file after `commit`, leave it untouched so those edits remain visible
+  as local modifications against the new base.
+- In **adopt-upstream**, the working file should be brought to the canonical
+  saved text, because remote is authoritative and the proposal it was based on is
+  gone. If — and only if — the working file contains edits made *after* `commit`
+  that are not part of the saved revision, treat that as a merge situation
+  (preserve the local edits against the new base and route through `merge`)
+  rather than discarding them. The default and common case (the working file
+  still equals the `ledecopy`/`commit` proposal) is a straight rewrite to the
+  saved text.
+
+The distinction that protects the user: mwsync may overwrite the working file
+with the *remote* version when the working file is still the superseded
+proposal, but it must never discard *post-commit local edits* without routing
+them through `merge`.
 
 ## Push With Preview
 
@@ -190,17 +270,25 @@ The key property: this prompt is reached no matter what happens in the browser �
 the save succeeds, the save fails, the browser crashes after **Save changes**, or
 the user never saves at all. The browser is never required to report back. On
 Enter, the CLI runs the same verified reconciliation as `push` (fetch upstream;
-require normalized-text match **and** `parentid == base_revid`):
+recognize the user's own save by **lineage** — `parentid == base_revid`, or a
+now-existing page with `parentid == 0` for `create_new` — see "On-Wiki Save And
+Reconciliation"):
 
-- If the on-wiki save landed, it fast-forwards local state and reports the saved
-  revision.
-- If nothing matching is found — the save failed, was abandoned, or was never
-  attempted — the pending commit is left intact, and the user can run
-  `mwsync.py push` later to submit it.
+- If the on-wiki save landed and matches the proposal, it fast-forwards local
+  state and reports the saved revision.
+- If the on-wiki save landed but the user edited the text or summary in the
+  browser, remote reigns supreme: it adopts the saved revision, rewrites the
+  working file to the canonical saved text, and reports the divergence — it does
+  not strand the user with a stale `create_new` commit.
+- If nothing descending from `base_revid` is found — the save failed, was
+  abandoned, or was never attempted — the pending commit is left intact (in a
+  coherent state), and the user can run `mwsync.py push` later to submit it.
 
-Because reconciliation verifies rather than assumes, every browser outcome is
-safe: the prompt cannot clear a pending commit that was not actually saved, and
-cannot advance refs to a revision that does not exist.
+Because reconciliation verifies lineage rather than assuming, every browser
+outcome is safe: the prompt cannot clear a pending commit for a save that did not
+land, cannot advance refs to a revision that does not exist, and — equally
+important — cannot exit leaving the working file or refs in an inconsistent,
+unusable state.
 
 The server's short lifetime (below) is independent of this block. The server may
 shut down as soon as it has served the page — the loaded page needs no further
