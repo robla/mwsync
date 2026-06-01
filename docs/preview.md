@@ -227,6 +227,73 @@ with the *remote* version when the working file is still the superseded
 proposal, but it must never discard *post-commit local edits* without routing
 them through `merge`.
 
+### Implementation Gotchas
+
+These are not obvious from the happy-path description above. Each one was a
+concrete trap when reconciling an `adopt-upstream` case by hand; an implementer
+should treat them as requirements, not tips.
+
+**Canonical form is the raw API wikitext, and `upstream_sha1` is the oracle.**
+The working file and the cached `<revid>.mw` body must be written from the *raw*
+`result["wikitext"]`, byte-for-byte — not from the normalization used to
+*compare* text. Those are two different strings: wiki content frequently has no
+trailing newline, while the narrow save-time normalization (trailing-whitespace
+and final-newline) appends one. Writing the normalized form to the working file
+would make it differ from its own cached body and from the recorded checksum.
+The recorded `upstream_sha1` is `sha1` over the raw wikitext bytes, so the
+post-condition after any fast-forward or adopt-upstream is exact and cheap to
+assert:
+
+```text
+sha1(working_file_bytes) == upstream_sha1   AND   working_file == <revid>.mw
+```
+
+`fsck` should check this too. If it fails, the working file was written from the
+wrong (normalized) form.
+
+**Reconciliation is a convergence/repair operation, not a one-shot forward
+transaction — so it must be idempotent.** It will routinely run against a
+*partially* applied state, because the post-push auto-fetch (or a manual
+`mwsync.py fetch`) may already have cached the saved revision, advanced
+`refs/upstream`, and appended the `history.jsonl` entry *before* reconciliation
+proper runs. (That is exactly the half-state that strands the user.)
+Reconciliation must therefore derive the desired end state from the authoritative
+upstream revision and bring each artifact to it, treating already-correct
+artifacts as no-ops — never assuming a clean "nothing cached yet" start.
+
+In particular, **caching the canonical revision must dedupe `history.jsonl` by
+revid.** Appending a revision that is already recorded must not add a second
+line. The current `_cache_fetch_transaction` skips re-staging the body/meta
+*files* when they already exist but still appends a history entry
+unconditionally, then concatenates onto the existing history — so re-running it
+for an already-cached revid duplicates the line. Fix that dedupe before reusing
+the fetch transaction on the reconcile path, or the heal itself corrupts history.
+
+**Clear the pending commit LAST, after the metadata is durably saved.** The
+pending commit (`commit.json` / `commit.mw`) is the recovery anchor: while it
+exists, the whole operation is re-runnable. The durable-write order must be:
+
+1. cache the canonical revision (idempotently, per above);
+2. write `refs/base` and `refs/last-pushed`;
+3. persist `mwsync.yaml` push metadata to disk;
+4. *only then* delete the pending commit.
+
+Everything in steps 1–3 must be safe to repeat. If the pending commit is cleared
+before `mwsync.yaml` is flushed — as the current `_record_saved_revision` does,
+calling `_clear_pending_commit` immediately before `save_config` — a failure in
+between destroys the anchor *and* leaves the metadata unwritten, producing a
+worse, unrecoverable half-state than the one reconciliation set out to fix.
+
+**`create_new` lineage recognition only holds while the created revision is still
+the latest.** The "page now exists with `parentid == 0`" test recognizes the
+user's create only when no further edit has landed on top of it. If the page was
+created and then edited again (by the user or anyone), the latest revision's
+`parentid` is the create's revid, not `0`, and reconciliation should fall to the
+keep-pending / hand-off case and route to `fetch` / `merge` rather than adopt.
+Whenever a create *is* adopted, retire the `create_new` flag as part of
+converging onto the remote: a surviving `create_new` makes the next `push`
+attempt to create an already-existing title, which the wiki rejects.
+
 ## Push With Preview
 
 `mwsync.py push --preview ARTICLE` is a useful alternative for a fully
