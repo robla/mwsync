@@ -1932,20 +1932,24 @@ def _record_saved_revision(config: dict, config_path: str, key: str, art: dict,
     if not _write_ref(key, "last-pushed", revid):
         return False
 
-    now_utc = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     wiki = config.setdefault("wiki", {})
     articles = wiki.setdefault("articles", {})
     current_art = articles.setdefault(key, art)
     current_art["last_pushed_revid"] = revid
-    current_art["last_pushed_at"] = now_utc
+    current_art["last_pushed_at"] = (
+        result.get("timestamp")
+        or dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
     _update_upstream_config(config, key, result)
 
     if commit_text is None or _file_content_matches(local, commit_text):
         if not _atomic_write(local, result["wikitext"]):
             return False
 
+    if not save_config(config, config_path):
+        return False
     _clear_pending_commit(key)
-    return save_config(config, config_path)
+    return True
 
 
 def _fetch_latest_for_pending(title: str, api_base: str) -> dict | None:
@@ -1955,46 +1959,96 @@ def _fetch_latest_for_pending(title: str, api_base: str) -> dict | None:
         return None
 
 
-def _reconcile_saved_pending(config: dict, config_path: str, key: str, art: dict,
-                             pending: dict, commit_text: str,
-                             *, quiet: bool = False) -> str:
-    title = str(pending.get("title") or art.get("title") or key)
-    local = str(pending.get("local") or art.get("local", key + ".mw"))
+def _preview_proposal(config: dict, key: str, art: dict, source: dict) -> dict:
+    pending = source.get("pending")
+    if pending:
+        return {
+            "kind": "pending",
+            "title": str(pending.get("title") or art.get("title") or key),
+            "local": str(pending.get("local") or art.get("local", key + ".mw")),
+            "text": source["text"],
+            "base_revid": int(pending.get("base_revid") or 0),
+            "create_new": bool(pending.get("create_new", False)),
+        }
+    base_revid = _read_ref(key, "base")
+    upstream_revid = _read_ref(key, "upstream")
+    return {
+        "kind": "working",
+        "title": str(art.get("title") or key),
+        "local": str(art.get("local", key + ".mw")),
+        "text": source["text"],
+        "base_revid": int(base_revid or 0),
+        "create_new": base_revid is None and upstream_revid is None,
+    }
+
+
+def _reconcile_saved_preview_proposal(config: dict, config_path: str, key: str,
+                                      art: dict, proposal: dict,
+                                      *, quiet: bool = False) -> str:
+    title = str(proposal["title"])
+    local = str(proposal["local"])
     api_base = get_api_base(config)
-    baserevid = int(pending.get("base_revid") or 0)
-    create_new = bool(pending.get("create_new", False))
+    baserevid = int(proposal.get("base_revid") or 0)
+    create_new = bool(proposal.get("create_new", False))
+    proposal_kind = str(proposal.get("kind") or "preview")
+
+    if not baserevid and not create_new:
+        if not quiet:
+            print("# No base revision recorded; preview proposal kept.",
+                  file=sys.stderr)
+        return "not-saved"
 
     result = _fetch_latest_for_pending(title, api_base)
     if result is None:
         return "unknown"
 
     upstream_text = _normalized_saved_text(result.get("wikitext", ""))
-    pending_text = _normalized_saved_text(commit_text)
+    proposal_text = _normalized_saved_text(str(proposal.get("text") or ""))
+    latest_revid = int(result.get("revid") or 0)
     parentid = int(result.get("parentid") or 0)
     expected_parent = 0 if create_new else baserevid
 
-    if upstream_text != pending_text:
+    if not create_new and latest_revid == baserevid:
         if not quiet:
-            print("# No matching on-wiki save found; pending commit kept.",
+            print("# No matching on-wiki save found; preview proposal kept.",
                   file=sys.stderr)
         return "not-saved"
+
     if parentid != expected_parent:
         print(
-            f"Warning: latest revision text matches pending commit, but parentid "
-            f"{parentid} != expected base {expected_parent}.",
+            f"Warning: latest revision parentid {parentid} != expected base "
+            f"{expected_parent}.",
             file=sys.stderr,
         )
-        print("Pending commit kept; run fetch/merge to reconcile manually.",
+        print("Preview proposal kept; run fetch/merge to reconcile manually.",
               file=sys.stderr)
         return "diverged"
 
-    if not _record_saved_revision(config, config_path, key, art, local, result, commit_text):
+    if not _record_saved_revision(
+            config, config_path, key, art, local, result, str(proposal.get("text") or "")):
         print("Error: failed to record already-saved upstream revision.", file=sys.stderr)
         sys.exit(1)
     if not quiet:
-        print(f"# Already saved upstream as r{int(result['revid'])} (no edit submitted)",
-              file=sys.stderr)
+        if upstream_text == proposal_text:
+            print(f"# Already saved upstream as r{int(result['revid'])} "
+                  "(no edit submitted)", file=sys.stderr)
+        else:
+            print(f"# Adopted upstream r{int(result['revid'])}; "
+                  f"saved text differs from {proposal_kind} proposal",
+                  file=sys.stderr)
     return "saved"
+
+
+def _reconcile_saved_pending(config: dict, config_path: str, key: str, art: dict,
+                             pending: dict, commit_text: str,
+                             *, quiet: bool = False) -> str:
+    proposal = _preview_proposal(config, key, art, {
+        "kind": "pending",
+        "text": commit_text,
+        "pending": pending,
+    })
+    return _reconcile_saved_preview_proposal(
+        config, config_path, key, art, proposal, quiet=quiet)
 
 
 def _preview_pending_commit_for_push(config: dict, key: str, art: dict,
@@ -2628,26 +2682,25 @@ def run_preview(args, config: dict, config_path: str) -> None:
 
     _preview_url, server = _open_transient_preview(document)
 
-    if pending is None:
-        return
-
     try:
         input("After saving in the browser, press Enter to reconcile "
-              "(Ctrl-C leaves pending commit unchanged).")
+              "(Ctrl-C leaves preview proposal unchanged).")
     except (KeyboardInterrupt, EOFError):
-        print("\n# Pending commit left unchanged.", file=sys.stderr)
+        print("\n# Preview proposal left unchanged.", file=sys.stderr)
         return
     finally:
         _close_preview_server(server)
 
-    result = _reconcile_saved_pending(
-        config, config_path, key, art, pending, source["text"])
+    proposal = _preview_proposal(config, key, art, source)
+    result = _reconcile_saved_preview_proposal(
+        config, config_path, key, art, proposal)
     if result == "saved":
         return
     if result == "diverged":
         return
-    print(f"# Pending commit still exists: {_pending_commit_body_path(key)}",
-          file=sys.stderr)
+    if pending is not None:
+        print(f"# Pending commit still exists: {_pending_commit_body_path(key)}",
+              file=sys.stderr)
 
 
 def run_merge(args, config: dict, config_path: str) -> dict | None:

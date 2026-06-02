@@ -27,9 +27,10 @@ _cache/<Article_Key>/preview.html
 ```
 
 In an interactive terminal, `mwsync.py preview ARTICLE` serves that HTML through
-a short-lived `127.0.0.1` server, opens the browser, and if a pending commit
-exists waits for Enter before attempting verified reconciliation. `--link` and
-`--output` write the HTML and exit without serving or blocking.
+a short-lived `127.0.0.1` server, opens the browser, and waits for Enter before
+attempting verified reconciliation. This should work whether the preview source
+is a pending commit or the uncommitted working file. `--link` and `--output`
+write the HTML and exit without serving or blocking.
 
 Preview rendering is read-only network activity. It does not log in, request an
 edit token, or save the page. `mwsync.py push --preview ARTICLE` renders the
@@ -38,7 +39,7 @@ authenticated push if approved.
 
 ## Design Goal
 
-The common review-and-save workflow should be:
+One review-and-save workflow is:
 
 ```bash
 mwsync.py commit Maine -m "Update Maine"
@@ -54,11 +55,51 @@ submit.
 In the default interactive mode, `preview` opens the rendered page, lets the
 user review or save in the browser, then waits in the terminal. Pressing Enter
 runs verified reconciliation: if the browser save landed, local mwsync state is
-fast-forwarded; if not, the pending commit is left intact. This makes `preview`
-the normal reminder to clean up after an on-wiki save.
+fast-forwarded; if not, the preview proposal is left intact. For a pending
+commit, that means `commit.mw` remains available for `push`; for an uncommitted
+working-file preview, that means the working file and refs remain unchanged.
+This makes `preview` the normal reminder to clean up after an on-wiki save.
 
 If no pending commit exists, `preview` falls back to the working `.mw` file and
-does not offer commit reconciliation.
+treats that text as an implicit preview proposal. If the user saves from the
+browser and reconciliation recognizes the saved revision, mwsync should create
+the corresponding local committed state from the remote revision instead of
+requiring a prior local `mwsync.py commit`.
+
+## Skipping The Local Commit Step
+
+The shorter workflow should also be valid:
+
+```bash
+mwsync.py preview Maine
+```
+
+In this mode, `preview` renders the current working file, opens the live editor
+path, and blocks in the terminal exactly as it does for a pending commit. If the
+user saves on-wiki, reconciliation should fetch the saved revision and adopt it
+as the local committed state.
+
+This is intentionally not the same as creating a local `commit.mw` before
+opening the browser. The user may change the text and edit summary in the live
+editor. After a recognized browser save, the remote revision is authoritative:
+
+- cache the saved revision body and metadata;
+- advance `refs/upstream`, `refs/base`, and `refs/last-pushed` together;
+- update `mwsync.yaml` `upstream_*` and `last_pushed_*` fields;
+- rewrite the working file to the canonical saved wikitext;
+- record the edit summary from the remote revision, not a guessed local
+  summary.
+
+The practical result is git-like: the browser save becomes the committed local
+state, using the actual revision id, timestamp, editor, SHA-1, and comment that
+the wiki recorded. There may be no persistent `commit.mw` artifact in this path;
+the local "commit" is represented by the advanced refs, cached revision, and
+updated `mwsync.yaml`.
+
+Recognition is still verified, not assumed. For an existing page, the saved
+revision must descend from the current `refs/base`. For a new page, the page
+must have been absent before preview and then created with `parentid == 0`.
+If no matching save is found, leave the working file and refs unchanged.
 
 ## Parser Fidelity
 
@@ -69,8 +110,8 @@ normalization. For ordinary article edits, `pst=1` usually changes nothing.
 
 This still has a fidelity ceiling. Unsaved content does not yet have a real
 revision id, timestamp, revision user, or final saved-page context. Previewing
-the pending commit with PST closes most of the gap, but it is not byte-identical
-to rendering the saved revision after the edit lands.
+the proposal with PST closes most of the gap, but it is not byte-identical to
+rendering the saved revision after the edit lands.
 
 ## Preview Page
 
@@ -88,6 +129,8 @@ The page should be ordered:
      tab (`target="_blank"` with `rel="noopener noreferrer"`) so the preview tab
      stays put and the new tab cannot reach back into the preview page;
    - the edit summary from the pending commit, when available;
+   - no prefilled summary when previewing an uncommitted working file, unless a
+     future option explicitly supplies one;
    - a read-only source field with the exact pre-PST wikitext that would be
      submitted or pasted.
 2. The rendered HTML from `action=parse&pst=1` below the action panel, as
@@ -124,8 +167,8 @@ the same reconciliation logic if the user exits preview and reconciles later.
 
 **1. The remote copy reigns supreme.** Once a revision exists on the wiki, that
 revision — not the pending commit, not the working file — is the source of
-truth. The pending commit (`commit.mw`) and the `ledecopy`-produced working file
-are *proposals*. The moment the user saves on-wiki, possibly after editing the
+truth. The pending commit (`commit.mw`) and the uncommitted working file are both
+preview proposals. The moment the user saves on-wiki, possibly after editing the
 text or the edit summary in the browser, the proposal has been superseded by the
 saved revision. Reconciliation must converge local state onto that saved
 revision, not defend the now-stale proposal against it.
@@ -136,7 +179,7 @@ decline to submit an edit:
 
 > When the command returns, the working `.mw` file must be present and must
 > correspond to a known base revision, and `refs/upstream`, `refs/base`,
-> `refs/last-pushed`, the pending commit, and the `mwsync.yaml` push metadata
+> `refs/last-pushed`, any pending commit, and the `mwsync.yaml` push metadata
 > must be mutually consistent. The command may legitimately decline to *submit*
 > an edit. It may not decline to leave a *coherent* state.
 
@@ -152,13 +195,16 @@ section exists to prevent.
 
 ### Recognizing The User's Own Save (Lineage, Not Byte-Equality)
 
-Byte-equality of the upstream text against the pending commit is the wrong test
-to *gate* reconciliation, because the user is expected to edit during preview.
-Recognition should be based on **lineage**, which answers "is the latest upstream
-revision a save the user just made from the revision they reviewed?":
+Byte-equality of the upstream text against the preview proposal is the wrong
+test to *gate* reconciliation, because the user is expected to edit during
+preview. Recognition should be based on **lineage**, which answers "is the
+latest upstream revision a save the user just made from the revision they
+reviewed?":
 
 - For an edit to an existing page: the latest upstream revision's `parentid`
-  equals the pending commit's `base_revid`.
+  equals the proposal's base revision. For a pending commit, that is
+  `commit.json` `base_revid`; for an uncommitted working-file preview, that is
+  `refs/base`.
 - For a new page (`create_new`, `base_revid == 0`): the page did not exist when
   the commit was staged and now does, and its creating revision has
   `parentid == 0`.
@@ -174,11 +220,11 @@ Reconciliation should always terminate in exactly one of three states, and all
 three satisfy the never-unusable invariant.
 
 1. **Clean fast-forward** — lineage holds and the upstream text matches the
-   pending commit after the narrow normalization MediaWiki applies on save
+   preview proposal after the narrow normalization MediaWiki applies on save
    (trailing-whitespace and final-newline). The save is the proposal, unchanged.
    Cache the canonical saved revision, advance `refs/upstream`, `refs/base`, and
-   `refs/last-pushed` together, clear the pending commit, update `mwsync.yaml`
-   push metadata, and report that no edit was submitted.
+   `refs/last-pushed` together, clear the pending commit if one exists, update
+   `mwsync.yaml` push metadata, and report that no edit was submitted.
 
 2. **Adopt-upstream (the divergent save)** — lineage holds but the upstream text
    or summary differs from the proposal, because the user edited in the browser
@@ -186,40 +232,41 @@ three satisfy the never-unusable invariant.
    `ledecopy` category rewrite, etc.). This is the case that used to strand the
    user. Under "remote reigns supreme," mwsync adopts the saved revision exactly
    as the clean fast-forward does — cache it, advance all three refs together,
-   update `mwsync.yaml`, clear the pending commit — and additionally **rewrites
-   the working `.mw` file to the canonical saved text** so the local copy is
-   immediately usable and matches the wiki. It should report that it adopted an
-   on-wiki revision that differed from the staged commit, and ideally show a
-   short diff so the divergence is not silent.
+   update `mwsync.yaml`, clear the pending commit if one exists — and
+   additionally **rewrites the working `.mw` file to the canonical saved text**
+   so the local copy is immediately usable and matches the wiki. It should
+   record the remote edit summary from the saved revision, report that it adopted
+   an on-wiki revision that differed from the preview proposal, and ideally show
+   a short diff so the divergence is not silent.
 
    A `create_new` commit is retired here, not preserved: the page now exists, so
    leaving `create_new: true` staged would make the next `push` attempt to create
    an existing title. Retiring the stale `create_new` proposal is part of
    converging onto the remote.
 
-3. **Keep-pending / hand-off** — no descendant save is found (the save failed,
+3. **Keep-proposal / hand-off** — no descendant save is found (the save failed,
    was abandoned, or was never attempted), or the latest upstream revision does
-   *not* descend from `base_revid` (someone else edited the page). Here mwsync
-   must not claim success and must not overwrite local work: it leaves the
-   pending commit intact for a later `mwsync.py push`. But it must still leave a
-   coherent state — it must not leave `refs/upstream` advanced past `refs/base`
-   with a stale `create_new` commit dangling. If a foreign upstream revision is
-   detected, it should point the user at the normal `fetch` / `merge`
-   reconciliation path rather than silently absorbing someone else's edit.
+   *not* descend from the proposal base (someone else edited the page). Here
+   mwsync must not claim success and must not overwrite local work. If there was
+   a pending commit, it leaves the pending commit intact for a later
+   `mwsync.py push`; if there was no pending commit, it leaves the working file
+   and refs unchanged. If a foreign upstream revision is detected, it should
+   point the user at the normal `fetch` / `merge` reconciliation path rather
+   than silently absorbing someone else's edit.
 
 ### Working-File Handling
 
 - In **clean fast-forward**, rewrite the working file to the canonical saved text
-  only if it still matches the pending commit body. If the user kept editing the
-  working file after `commit`, leave it untouched so those edits remain visible
-  as local modifications against the new base.
+  only if it still matches the preview proposal. If the user kept editing the
+  working file after `commit` or after opening preview, leave it untouched so
+  those edits remain visible as local modifications against the new base.
 - In **adopt-upstream**, the working file should be brought to the canonical
   saved text, because remote is authoritative and the proposal it was based on is
-  gone. If — and only if — the working file contains edits made *after* `commit`
-  that are not part of the saved revision, treat that as a merge situation
-  (preserve the local edits against the new base and route through `merge`)
-  rather than discarding them. The default and common case (the working file
-  still equals the `ledecopy`/`commit` proposal) is a straight rewrite to the
+  gone. If — and only if — the working file contains edits made *after* the
+  preview proposal that are not part of the saved revision, treat that as a
+  merge situation (preserve the local edits against the new base and route
+  through `merge`) rather than discarding them. The default and common case (the
+  working file still equals the preview proposal) is a straight rewrite to the
   saved text.
 
 The distinction that protects the user: mwsync may overwrite the working file
@@ -330,16 +377,16 @@ So in the default serve-and-open flow, `preview` blocks before exiting:
 ```text
 Preview opened at http://127.0.0.1:PORT/preview/TOKEN
 After saving in the browser, press Enter to reconcile, or Ctrl-C to leave the
-pending commit unchanged.
+preview proposal unchanged.
 ```
 
 The key property: this prompt is reached no matter what happens in the browser —
 the save succeeds, the save fails, the browser crashes after **Save changes**, or
 the user never saves at all. The browser is never required to report back. On
-Enter, the CLI runs the same verified reconciliation as `push` (fetch upstream;
-recognize the user's own save by **lineage** — `parentid == base_revid`, or a
-now-existing page with `parentid == 0` for `create_new` — see "On-Wiki Save And
-Reconciliation"):
+Enter, the CLI runs verified reconciliation (fetch upstream; recognize the
+user's own save by **lineage** — `parentid == base_revid` / `refs/base`, or a
+now-existing page with `parentid == 0` for a new-page proposal — see "On-Wiki
+Save And Reconciliation"):
 
 - If the on-wiki save landed and matches the proposal, it fast-forwards local
   state and reports the saved revision.
@@ -347,15 +394,16 @@ Reconciliation"):
   browser, remote reigns supreme: it adopts the saved revision, rewrites the
   working file to the canonical saved text, and reports the divergence — it does
   not strand the user with a stale `create_new` commit.
-- If nothing descending from `base_revid` is found — the save failed, was
-  abandoned, or was never attempted — the pending commit is left intact (in a
-  coherent state), and the user can run `mwsync.py push` later to submit it.
+- If nothing descending from the proposal base is found — the save failed, was
+  abandoned, or was never attempted — the proposal is left intact in a coherent
+  state. A pending commit can still be pushed later; an uncommitted working file
+  remains a normal local modification.
 
 Because reconciliation verifies lineage rather than assuming, every browser
-outcome is safe: the prompt cannot clear a pending commit for a save that did not
-land, cannot advance refs to a revision that does not exist, and — equally
-important — cannot exit leaving the working file or refs in an inconsistent,
-unusable state.
+outcome is safe: the prompt cannot clear or overwrite a proposal for a save that
+did not land, cannot advance refs to a revision that does not exist, and —
+equally important — cannot exit leaving the working file or refs in an
+inconsistent, unusable state.
 
 The server's short lifetime (below) is independent of this block. The server may
 shut down as soon as it has served the page — the loaded page needs no further
