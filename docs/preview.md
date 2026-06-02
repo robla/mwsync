@@ -90,6 +90,11 @@ editor. After a recognized browser save, the remote revision is authoritative:
 - record the edit summary from the remote revision, not a guessed local
   summary.
 
+The reconciliation output should always print the remote change message from
+the saved revision. This is true even when the saved text exactly matches the
+preview proposal, because the browser-authored edit summary is part of the
+authoritative remote state.
+
 The practical result is git-like: the browser save becomes the committed local
 state, using the actual revision id, timestamp, editor, SHA-1, and comment that
 the wiki recorded. There may be no persistent `commit.mw` artifact in this path;

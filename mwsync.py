@@ -1959,6 +1959,14 @@ def _fetch_latest_for_pending(title: str, api_base: str) -> dict | None:
         return None
 
 
+def _print_remote_change_message(result: dict) -> None:
+    comment = str(result.get("comment") or "")
+    if comment:
+        print(f"# Remote change message: {comment}", file=sys.stderr)
+    else:
+        print("# Remote change message: (empty)", file=sys.stderr)
+
+
 def _preview_proposal(config: dict, key: str, art: dict, source: dict) -> dict:
     pending = source.get("pending")
     if pending:
@@ -2028,6 +2036,7 @@ def _reconcile_saved_preview_proposal(config: dict, config_path: str, key: str,
             config, config_path, key, art, local, result, str(proposal.get("text") or "")):
         print("Error: failed to record already-saved upstream revision.", file=sys.stderr)
         sys.exit(1)
+    _print_remote_change_message(result)
     if not quiet:
         if upstream_text == proposal_text:
             print(f"# Already saved upstream as r{int(result['revid'])} "
