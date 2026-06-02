@@ -2517,6 +2517,41 @@ def run_push(args, config: dict, config_path: str) -> None:
 def run_diff(args, config: dict, config_path: str) -> None:
     left_arg = args.left
     right_arg = args.right
+    if left_arg is None:
+        if right_arg is not None:
+            print("Error: RIGHT cannot be provided without LEFT.", file=sys.stderr)
+            sys.exit(1)
+        if getattr(args, "remote", False):
+            print("Error: --remote requires an article argument.", file=sys.stderr)
+            sys.exit(1)
+        articles = config.get("wiki", {}).get("articles", {})
+        if not articles:
+            print("No articles registered. Use 'mwsync.py add URL' to add one.",
+                  file=sys.stderr)
+            return
+
+        error_code = 0
+        for key, art in articles.items():
+            _check_legacy_cache(key)
+            local = art.get("local", key + ".mw")
+            pending = _pending_commit(key)
+            if pending and os.path.exists(_pending_commit_body_path(key)):
+                left_path = _pending_commit_body_path(key)
+            else:
+                base_revid = _read_ref(key, "base")
+                if base_revid is None:
+                    continue
+                left_path = _revision_body_path(key, base_revid)
+                if not os.path.exists(left_path):
+                    continue
+            right_path = local if os.path.exists(local) else "/dev/null"
+            res = subprocess.run(["git", "diff", "--no-index", left_path, right_path])
+            if res.returncode not in (0, 1):
+                error_code = res.returncode
+        if error_code:
+            sys.exit(error_code)
+        return
+
     key, art = resolve_article_entry(config, left_arg.split("@", 1)[0])
     _check_legacy_cache(key)
     local = art.get("local", key + ".mw")
@@ -3378,7 +3413,7 @@ def main() -> None:
 
     # diff
     p_diff = sub.add_parser("diff", help="Compare cached revisions and local files")
-    p_diff.add_argument("left", metavar="LEFT",
+    p_diff.add_argument("left", metavar="LEFT", nargs="?",
                         help="Article key/local file, or ARTICLE@REV")
     p_diff.add_argument("right", metavar="RIGHT", nargs="?",
                         help="Optional article key/local file, or ARTICLE@REV")
