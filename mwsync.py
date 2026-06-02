@@ -1820,6 +1820,20 @@ def _file_content_matches(path: str, content: str) -> bool:
         return False
 
 
+def _file_differs_only_by_final_newline(path: str, content: str) -> bool:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            local_text = f.read()
+    except (FileNotFoundError, OSError):
+        return False
+    if local_text == content:
+        return False
+    return (
+        (local_text.endswith("\n") and local_text[:-1] == content)
+        or (content.endswith("\n") and content[:-1] == local_text)
+    )
+
+
 def _read_text(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
@@ -2651,6 +2665,12 @@ def run_merge(args, config: dict, config_path: str) -> dict | None:
     base_text = _read_text(base_path)
 
     if int(base_revid) == int(upstream_revid):
+        if _file_differs_only_by_final_newline(local, upstream_text):
+            if not _atomic_write(local, upstream_text):
+                sys.exit(1)
+            if not quiet:
+                print(f"# Normalized {local} to cached revid {upstream_revid} "
+                      "(trailing newline only)", file=sys.stderr)
         if not quiet:
             print(f"# Already up to date at revid {upstream_revid}", file=sys.stderr)
         _clear_merge_state(key)
