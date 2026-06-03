@@ -20,16 +20,11 @@ The core abstraction is a **map**: a set of rules describing how wiki objects co
 
 ## Relationship to mwsync
 
-`mwsync` syncs selected MediaWiki pages as local MediaWiki-wikitext files.
+This is still unclear.  As of June 2026, `mwsync` syncs selected MediaWiki pages as local MediaWiki-wikitext files, and maintains a 1:1 mapping between the two.
 
-`mwmap` is intended to go further: it syncs MediaWiki content with other wiki-like formats, while preserving page identity, links, structure, and enough revision information to support safe merging.
+`mwmap` will go further: it syncs MediaWiki content with other wiki-like formats, while preserving page identity, links, structure, and enough revision information to support safe merging.
 
-In short:
-
-```text
-mwsync = MediaWiki ↔ local .mw files
-mwmap  = MediaWiki ↔ another wiki-like system
-```
+That said, `mwmap` may become a plugin/extension to `mwsync`, and/or may get rolled into `mwsync`.  Or we may want to start off with `mwmap` being part of `mwsync`, using this as an opportunity for a broader rearchitecture of `mwsync`.  TBD.
 
 ## Planned command style
 
@@ -51,6 +46,8 @@ mwmap merge
 mwmap push
 mwmap unpair
 ```
+
+However, in designing `mwmap`, we should bear in mind that we may want to turn all new `mwmap` verbs into `mwsync` verbs.  "mwmap init" may become "mwsync.py mapinit".  We should avoid reusing verbs that won't be easy to merge into `mwsync`'s verb set, though that may be easy enough to mitigate with switches (e.g. `mwmap push` may become `mwsync push --full`)
 
 ## Goals
 
