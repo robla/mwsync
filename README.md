@@ -24,55 +24,7 @@ This is still unclear.  As of June 2026, `mwsync` syncs selected MediaWiki pages
 
 `mwmap` will go further: it syncs MediaWiki content with other wiki-like formats, while preserving page identity, links, structure, and enough revision information to support safe merging.
 
-That said, `mwmap` may become a plugin/extension to `mwsync`, and/or may get rolled into `mwsync`.  Or we may want to start off with `mwmap` being part of `mwsync`, using this as an opportunity for a broader rearchitecture of `mwsync`.  TBD.
-
-## Planned command style
-
-`mwmap` is expected to use verb-style subcommands, for example:
-
-```sh
-mwmap init
-mwmap source add electowiki mediawiki https://electowiki.org/w/
-mwmap source add notes zim ~/Notes/electowiki
-
-mwmap pair page electowiki:ElectoramaNews notes:ElectoramaNews
-mwmap pair subtree electowiki:ElectoramaNews/ notes:ElectoramaNews/
-mwmap pair wiki electowiki notes
-
-mwmap fetch
-mwmap status
-mwmap diff
-mwmap merge
-mwmap push
-mwmap unpair
-```
-
-However, in designing `mwmap`, we should bear in mind that we may want to turn all new `mwmap` verbs into `mwsync` verbs.  "mwmap init" may become "mwsync.py mapinit".  We should avoid reusing verbs that won't be easy to merge into `mwsync`'s verb set, though that may be easy enough to mitigate with switches (e.g. `mwmap push` may become `mwsync push --full`)
-
-## Architecture
-
-`mwsync.py` is a rather opaque monolith.  `mwmap` should have a bigger architecture, perhaps something like this:
-
-```
-src/
-  mwmap/
-    cli.py
-    context.py
-    commands/
-      __init__.py
-      init.py
-      pair.py
-      source.py
-      status.py
-      sync.py
-      unpair.py
-    core/
-      __init__.py
-      context.py
-      misc.py
-```
-
-Do not treat the structure above as etched in stone.  In fact, keep YAGNI in mind, and only expand this far when it's really needed.  Still, the subcommands almost certainly belong in their own files rather than being part of a mwmap.py monolith.  If `mwmap` is successful, it will become "mwsync 2.0".
+That said, `mwmap` may become a plugin/extension to `mwsync`, may get rolled into `mwsync`, or may become the basis for a broader `mwsync` rearchitecture.
 
 ## Goals
 
@@ -90,3 +42,8 @@ Do not treat the structure above as etched in stone.  In fact, keep YAGNI in min
 ## Status
 
 This project is currently an idea/prototype-stage companion to `mwsync`.
+
+## Documentation
+
+* [Architecture](docs/architecture.md)
+* [Testing](docs/testing.md)
