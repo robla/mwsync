@@ -6,6 +6,39 @@ mostly happens in the sibling `mwmap` repo (`/home/robla/src/mwmap`, reachable
 through the untracked `mwmap` symlink). Do not edit `mwmap` through that symlink;
 that repo has its own `AGENTS.md` and history.
 
+## Guidance For Future Claude Work
+
+Read `docs/mwsync-ng.md` first. It is the current merged plan combining Rob's
+notes, this Claude plan, Gemini's migration note, and ChatGPT's architecture
+proposal. Treat this file as supporting context, not the canonical plan.
+
+When working on this migration:
+
+- Preserve the core direction: `mwmap` is the next-generation implementation
+  path, but the final public tool and repository are expected to become
+  `mwsync` again.
+- Do not turn `mwmap` into another monolith. Keep the source/mapping topology
+  separate from the MediaWiki sync engine.
+- Port page-to-`.mw` parity before designing broad namespace, subtree, Zim, Org,
+  Markdown, or whole-wiki behavior.
+- Keep old `_cache` / `mwsync.yaml` compatibility isolated in migration code.
+  Do not make normal sync paths permanent dual-readers.
+- Allow old `_cache` and new `_mwmap` or `_mwsync` state to coexist during the
+  transition, because Rob wants to test both systems in one working checkout.
+- Do not edit `/home/robla/src/mwmap` through the `mwmap` symlink in this repo.
+  Work in the real sibling repository when changing `mwmap`.
+
+Repository-history guidance:
+
+- Rob is leaning toward making `https://github.com/robla/mwsync` the final public
+  repository for the new implementation.
+- Keep the temporary `mwmap` repository separate until page-to-`.mw` parity is
+  credible. Avoid forcing an early history merge just because code is moving.
+- Do not choose subtree merge, graft/filter-repo, archival branches, or a branch
+  replacement strategy without Rob's explicit decision. Document tradeoffs first.
+- Preserve both histories if practical: old `mwsync` history matters, and the
+  new architecture's `mwmap` history should not be discarded casually.
+
 ## 1. What "next-gen" means here
 
 `mwsync.py` works, but it is a ~3,600-line single-file monolith with one fixed
