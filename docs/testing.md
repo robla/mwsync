@@ -16,6 +16,8 @@ Run the current tests with:
 python3 -m pytest -q
 ```
 
+The current tests use PyYAML to inspect `_mwmap/config.yaml`.
+
 ## Future Test Suite
 
 Prefer `pytest` unless the project adopts a different framework. Name tests by observable behavior, for example:

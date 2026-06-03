@@ -10,6 +10,22 @@ The relationship between `mwmap` and `mwsync` is still unresolved. `mwmap` may b
 
 Design choices should preserve that flexibility. Avoid command names, data models, or package boundaries that would make future integration with `mwsync` unnecessarily awkward.
 
+## Project File Layout
+
+The file layout is a central part of the architecture. The first local project directory should be:
+
+```text
+_mwmap/
+  config.yaml
+  cache/
+```
+
+`_mwmap/config.yaml` is durable user-facing map configuration. It should store source definitions, mapping rules, and other state that defines the user's intended relationship between systems.
+
+`_mwmap/cache/` is disposable storage. It may hold remote-derived metadata, fetched page bodies, local-store indexes, or other data that can be repopulated from sources if deleted.
+
+Do not create `_mwmap/refs/` for now. The name implies a git-like reference store, and `mwmap` should not inherit that expectation unless the storage model truly needs it. If revision storage becomes necessary, prefer a plain name such as `_mwmap/revisions/`.
+
 ## Planned Command Style
 
 `mwmap` is expected to use verb-style subcommands:

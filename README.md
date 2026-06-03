@@ -60,8 +60,15 @@ Required behavior:
 
 * Accept a global `--root PATH` option, defaulting to the current directory.
 * Show `init`, `source`, and `status` in `--help`.
-* Create `.mwmap/config.json` on `init`.
-* Store an initial config as `{"version": 1, "sources": {}, "mappings": []}`.
+* Create `_mwmap/config.yaml` and `_mwmap/cache/` on `init`.
+* Store an initial config equivalent to:
+
+```yaml
+version: 1
+sources: {}
+mappings: []
+```
+
 * Implement `source add NAME TYPE LOCATION` by recording a source in the config.
 * Implement `status` by reporting configured sources and the mapping count.
 * Exit nonzero with a clear message if commands that need config run before `init`.
