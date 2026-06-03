@@ -19,6 +19,7 @@ def run_mwmap(*args):
 
 
 def test_help_lists_first_version_commands():
+    # Documents the first CLI surface users should see before any workspace exists.
     result = run_mwmap("--help")
 
     assert result.returncode == 0, result.stderr
@@ -30,6 +31,7 @@ def test_help_lists_first_version_commands():
 
 
 def test_init_creates_empty_workspace_config(tmp_path):
+    # Verifies init creates the durable config file and disposable cache directory.
     result = run_mwmap("--root", str(tmp_path), "init")
 
     assert result.returncode == 0, result.stderr
@@ -45,6 +47,7 @@ def test_init_creates_empty_workspace_config(tmp_path):
 
 
 def test_source_add_and_status_report_configured_source(tmp_path):
+    # Verifies a source can be stored in config and then reported by status.
     init_result = run_mwmap("--root", str(tmp_path), "init")
     assert init_result.returncode == 0, init_result.stderr
 

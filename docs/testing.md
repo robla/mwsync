@@ -28,4 +28,6 @@ test_merge_preserves_page_identity.py
 test_push_refuses_stale_revision.py
 ```
 
+Every test should start with a short comment, under 500 characters, describing what the test hopes to accomplish.
+
 Unit tests should cover pure mapping and merge logic without network access. Tests that require MediaWiki credentials, local notebooks, or external services should be documented clearly and separated from fast local tests.
