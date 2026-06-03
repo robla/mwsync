@@ -1,6 +1,6 @@
 # Testing
 
-No test suite exists yet. This repository is currently focused on design and early architecture.
+The current test suite is a small `pytest` suite that describes the first `mwmap.py` CLI milestone. These tests are expected to fail until that implementation exists.
 
 ## Working Policy
 
@@ -8,9 +8,17 @@ Do not write tests concurrently with implementation unless explicitly requested.
 
 This is especially important for synchronization behavior, merge behavior, page identity handling, and anything involving MediaWiki revision state.
 
+## Running Tests
+
+Run the current tests with:
+
+```sh
+python3 -m pytest -q
+```
+
 ## Future Test Suite
 
-If a test suite is introduced, prefer `pytest` unless the project adopts a different framework. Name tests by observable behavior, for example:
+Prefer `pytest` unless the project adopts a different framework. Name tests by observable behavior, for example:
 
 ```text
 test_status_reports_unpaired_pages.py

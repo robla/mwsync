@@ -43,6 +43,29 @@ That said, `mwmap` may become a plugin/extension to `mwsync`, may get rolled int
 
 This project is currently an idea/prototype-stage companion to `mwsync`.
 
+## First version target
+
+The first version of `mwmap.py` should be a small Python CLI runnable from the repository root:
+
+```sh
+python3 mwmap.py --help
+python3 mwmap.py --root ~/Notes/electowiki init
+python3 mwmap.py --root ~/Notes/electowiki source add electowiki mediawiki https://electowiki.org/w/
+python3 mwmap.py --root ~/Notes/electowiki status
+```
+
+It should not contact MediaWiki or synchronize content yet. It should only create and inspect local mapping metadata.
+
+Required behavior:
+
+* Accept a global `--root PATH` option, defaulting to the current directory.
+* Show `init`, `source`, and `status` in `--help`.
+* Create `.mwmap/config.json` on `init`.
+* Store an initial config as `{"version": 1, "sources": {}, "mappings": []}`.
+* Implement `source add NAME TYPE LOCATION` by recording a source in the config.
+* Implement `status` by reporting configured sources and the mapping count.
+* Exit nonzero with a clear message if commands that need config run before `init`.
+
 ## Documentation
 
 * [Architecture](docs/architecture.md)
