@@ -28,6 +28,25 @@ When working on this migration:
 - Do not edit `/home/robla/src/mwmap` through the `mwmap` symlink in this repo.
   Work in the real sibling repository when changing `mwmap`.
 
+Settled since this file was first written (see `docs/mwsync-ng.md`, "Settled
+Decisions"):
+
+- The final metadata directory is `_mwsync/`. The `mwmap.py` prototype still
+  creates `_mwmap/`; treat that as transitional and plan a rename at adoption.
+- The first executable is `mwmap.py`; the destination command is `mwsync`, with
+  `map` possibly surviving as an `mwsync` verb. Keep the familiar verbs
+  (`init`, `checkout`, `fetch`, `merge`, `diff`, `preview`, `push`) — do not
+  propose renaming them. Prototype spellings like `pair page`/`mapinit` are
+  scaffolding, not the target.
+- `robla/mwsync` is the canonical repo and should eventually carry the new
+  implementation on `main`.
+- Multiple tracked remotes are a goal. Rob wants git-like behavior: fetch/merge
+  from one remote, push to another, possibly clone a Zim directory as a remote
+  with a linear history. Relax the single-wiki guard rather than reimplementing
+  it, and prefer genuinely git-compatible storage so `refs`/`remote`/`clone`
+  vocabulary stays honest.
+- `mwsync migrate` is distant-future work, not an early milestone.
+
 Repository-history guidance:
 
 - Rob is leaning toward making `https://github.com/robla/mwsync` the final public
@@ -112,9 +131,12 @@ recommendation:
   ancestor (`base`), latest fetched (`upstream`), last pushed (`last-pushed`), a
   revision ledger, and pending `commit`/`merge` state.
 - Store it *per mapping* under the disposable cache, e.g.
-  `_mwmap/cache/<source>/<page-key>/{revisions/,refs/,history.jsonl,…}`.
-  `mwmap`'s own doc already allows `_mwmap/revisions/` as the non-`refs`-flavored
-  name if the git connotation is unwelcome.
+  `_mwsync/cache/<source>/<page-key>/{revisions/,refs/,history.jsonl,…}`
+  (`_mwmap/` during the prototype). `mwmap`'s own doc floated
+  `_mwmap/revisions/` as a non-`refs` name, but Rob has since said the git
+  vocabulary is welcome where the structure is genuinely git-compatible — and he
+  wants exactly that (clone, linear history, tracked remotes). Keep `refs/`
+  unless a specific piece of state turns out not to be git-compatible.
 - Treat this as the moment `mwmap` graduates from "local mapping metadata only"
   (its v0.01 target, which must *not* contact MediaWiki) to actually syncing.
 
@@ -124,11 +146,13 @@ monolith rather than reimplemented (see §6).
 ## 5. Feature-parity matrix (the porting checklist)
 
 Each `mwsync` verb needs an `mwmap` home before `mwsync.py` can be retired.
-`mwmap`'s architecture note already anticipates some verb renames (`init` →
-`mapinit`, `push` → `push --full`); the table picks concrete targets, all
-*(tentative)*.
+`mwmap`'s architecture note floated verb renames (`init` → `mapinit`, `push` →
+`push --full`), but Rob wants the familiar user-facing verbs kept once the tool
+is `mwsync` again. So the prototype spellings below are scaffolding for building
+the mapping model, not the destination; the shipped verbs should stay `init` /
+`checkout` / `fetch` / `merge` / `diff` / `preview` / `push`.
 
-| `mwsync` | `mwmap` target | Notes |
+| `mwsync` | prototype spelling | Notes |
 | :--- | :--- | :--- |
 | `init` | `mwmap init` | exists in v0.01 target |
 | `add` / `checkout` | `mwmap pair page …` | registration + first fetch/merge |
@@ -136,12 +160,13 @@ Each `mwsync` verb needs an `mwmap` home before `mwsync.py` can be retired.
 | `merge` | `mwmap merge` | three-way reconcile into local |
 | `restore` | `mwmap restore` | discard local edits to `base` |
 | `commit` | `mwmap commit -m` | stage pending edit |
+| `preview` | `mwmap preview` | reconciliation, see `docs/preview.md` |
 | `push` | `mwmap push` | publish + re-fetch |
 | `diff` / `difftool` | `mwmap diff` | `git diff --no-index`, `meld` |
 | `log` / `show` | `mwmap log` / `show` | from the revision ledger |
 | `status` | `mwmap status` | already in v0.01 target |
 | `fsck` | `mwmap fsck` | cache/ref consistency |
-| `migrate` | `mwmap migrate` | now *also* converts `mwsync.yaml`+`_cache` (see §7) |
+| `migrate` | `mwmap migrate` | distant-future; converts `mwsync.yaml`+`_cache` (see §7) |
 
 Sister tools matter too: `ledecopy.py` imports `mwsync` private helpers
 (`_parse_article_name`, `_atomic_write`, `_fetch_page`, `load_config`, …) by
@@ -196,19 +221,32 @@ shims* — this should be a one-shot converter, not a permanent dual-reader:
   `mwmap` is formally adopted as next-gen `mwsync`, `_mwsync` is the more honest
   name; `mwmap`'s own migration note already flags this rename as pending.
 
-## 8. Open questions to resolve before committing
+## 8. Question status (resolved vs. still open)
 
-- **Project name & on-disk dir.** Is the shipped tool `mwmap`, `mwsync` 2.0, or
-  both (one binary, two entry points)? What is the dir — `_mwmap` or `_mwsync`?
-- **Repo topology.** `mwmap` is a separate git repo today. Does it stay separate,
-  get merged into `mwsync`, or absorb `mwsync`? The sister-tool import coupling
-  (§5) pushes toward a single repo eventually.
-- **Multi-source in one project.** `mwsync` enforces one wiki per directory on
-  purpose. `mwmap` allows many sources. Decide whether the 1:1 migration keeps
-  the single-wiki guard or relaxes it from day one.
-- **`refs/` vs `revisions/` naming** for the ported sync state (§4).
-- **How much new cardinality is in scope for "next-gen v1"** versus parity-only
-  first. Recommendation: ship parity first; defer `subtree`/`namespace`/`wiki`.
+Resolved by Rob (see `docs/mwsync-ng.md`, "Settled Decisions"):
+
+- **Project name & on-disk dir.** First executable `mwmap.py`, destination
+  command `mwsync` (with `map` possibly an `mwsync` verb). Final dir `_mwsync/`;
+  `_mwmap/` is the transitional prototype dir.
+- **Canonical repo.** `robla/mwsync` carries the new implementation on `main`.
+- **Multi-source in one project.** Rob wants it — a git-like multi-remote model
+  (fetch/merge from one remote, push to another, even clone a Zim dir as a
+  remote). Relax the single-wiki guard rather than reimplementing it.
+- **`refs/` vs `revisions/` naming.** Keep `refs/` where the structure is
+  genuinely git-compatible (which Rob wants); rename only the pieces that are
+  not.
+
+Still open:
+
+- **Repo topology / history combination.** `mwmap` is a separate git repo today.
+  Whether to merge it in early (Q5) and which git technique preserves both
+  histories (Q4) are undecided — document tradeoffs, do not pick silently. The
+  sister-tool import coupling (§5) pushes toward a single repo eventually.
+- **Compatibility lifetime.** How long old `_cache`/`mwsync.yaml` stays readable
+  after `mwsync migrate` exists (Q8). Rob's lean: once `mwsync migrate` works,
+  old `_cache/` should be deletable.
+- **New-cardinality scope for v1.** Recommendation stands: ship page parity
+  first; defer `subtree`/`namespace`/`wiki`.
 
 ## 9. Smallest sensible next step
 
