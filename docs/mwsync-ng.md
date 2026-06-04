@@ -141,20 +141,14 @@ package layout once it grows beyond the first prototype:
 src/mwmap/
   cli.py
   config.py
-  workspace.py
   sources/
     mediawiki.py
     mwfiles.py
-  sync/
-    refs.py
-    history.py
-    merge.py
-    commit.py
-    push.py
-    preview.py
+  core/
+    revmgr.py
+    synchronizer.py
   commands/
     init.py
-    source.py
     checkout.py
     fetch.py
     status.py
@@ -163,7 +157,7 @@ src/mwmap/
 The sync code should raise exceptions and return structured results. The CLI
 layer should do printing and `sys.exit()`. This is a deliberate correction from
 current `mwsync.py`, where many helpers are hard to reuse because they directly
-print and exit.
+print and exit.  None of the `core/` files should have names that look like verbs used for subcommands.
 
 ## Command Parity Target
 
@@ -261,32 +255,33 @@ Zim, Org, Markdown, and richer category/file workflows.
 
 Please answer these before implementation gets too far:
 
-1. Should the final metadata directory be `_mwsync/`, `_mwmap/`, or something
-   else?
+1. Should the final metadata directory be `_mwsync/`, `_mwmap/`, or something else?
+The final metadata directory should be `_mwsync/`.
 2. Should the final executable be `mwsync`, `mwsync.py`, `mwmap`, or should
    `mwmap` remain as an alias/subcommand during transition?
-3. Should the GitHub repository at `robla/mwsync` eventually contain the new
-   implementation on its main branch?
-4. How should histories be preserved: subtree merge, graft/filter-repo,
-   archival branches, or another approach?
-5. Should `mwmap` be merged into this repo early, or stay separate until page
-   parity is reached?
-6. Should next-gen `mwsync` keep the old one-wiki-per-working-directory rule,
-   or should multiple MediaWiki sources be allowed in one workspace?
-7. During migration, should `_cache` be copied, moved, or left in place with the
-   new cache rebuilt from it?
-8. How long should old `mwsync.yaml` / `_cache` compatibility remain after the
-   migration command exists?
-9. Should `ledecopy.py`, `catmgr.py`, and `wikimgr.py` become subcommands of
-   next-gen `mwsync`, or remain separate helper scripts?
-10. Is page-to-`.mw` parity the only scope for the first replacement release, or
-    should category/title indexes also be included?
-11. Should `refs/` remain the sync-state name in the new cache, or should the
-    project avoid Git-flavored names such as `refs`?
-12. Should the first migration tool be implemented in old `mwsync.py`, new
-    `mwmap`, or a one-off standalone script?
+Eventually, "map" may become a next-generation verb.  "mwmap.py" should be the initial executable, though.
+3. Should the GitHub repository at `robla/mwsync` eventually contain the new implementation on its main branch?
+Yes
+4. How should histories be preserved: subtree merge, graft/filter-repo, archival branches, or another approach?
+I don't know.  Let's document this as a decision that needs to be made.
+5. Should `mwmap` be merged into this repo early, or stay separate until page parity is reached?
+Unsure.
+6. Should next-gen `mwsync` keep the old one-wiki-per-working-directory rule, or should multiple MediaWiki sources be allowed in one workspace?
+I'm not sure.  I would love to make it so that multiple sources can be allowed in one workspace, so that it's possible to fetch/merge from one remote _mwsync repo, and push to a different _mwsync repo.  I think I want this to work like git somehow, with multiple remotes that get tracked.
+7. During migration, should `_cache` be copied, moved, or left in place with the new cache rebuilt from it?
+I will eventually want to make "mwsync migrate" work for a one-time migration of _cache to _mwsync, but we are miles from that day.
+8. How long should old `mwsync.yaml` / `_cache` compatibility remain after the migration command exists?
+I'm not sure.  I think once "mwsync migrate" is completed, then the old "_cache" directory should be deletable.
+9. Should `ledecopy.py`, `catmgr.py`, and `wikimgr.py` become subcommands of next-gen `mwsync`, or remain separate helper scripts?
+Separate helper scripts for now.  It may be that mwmap.py becomes a new helper script in the suite.
+10. Is page-to-`.mw` parity the only scope for the first replacement release, or should category/title indexes also be included?
+I'm not sure I understand this question
+11. Should `refs/` remain the sync-state name in the new cache, or should the project avoid Git-flavored names such as `refs`?
+Avoid git-flavored names if the underlying data structures are not git compatible.  I may want to turn a zimwiki directory into a "remote" that can be "clone"d by mwsync (where the clone includes a linear git history of some sort)
+12. Should the first migration tool be implemented in old `mwsync.py`, new `mwmap`, or a one-off standalone script?
+Probably part of `mwsync migrate`.  TBD.  That should be the distant future.
 
-## Current Recommendation
+## Current Recommendation from ChatGPT
 
 Keep `mwmap` separate for now, finish its local metadata prototype, and start
 extracting reusable sync modules from `mwsync.py`. Do not merge repository
