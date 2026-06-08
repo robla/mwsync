@@ -330,6 +330,87 @@ inclusive and `--until` is exclusive.
 
 ## Future Directions
 
+These are split by priority. The **high-priority** items are the ones a real
+consumer needs *now*: the monthly [[ElectoramaNews]] newsletter has an
+"electowiki" section that is an editor-grouped activity summary built directly
+from this cache, and the May 2026 edition exposed exactly what the tool is
+missing to generate it. Everything under **lower priority** is durability,
+recovery, and convenience work that the cache's never-nuke design already keeps
+the door open for; none of it blocks the newsletter.
+
+### High priority — generating the ElectoramaNews "electowiki" summary
+
+The newsletter's electowiki section groups a month of changes by editor:
+
+```text
+* '''[[User:RobLa|RobLa]]''': [[Software]], [[Ohio]], … — 2026-05-01 – 2026-05-30, 105 edits, 24 new pages
+* '''[[User:Kristomun|Kristomun]]''': [[Borda count]], … — 2026-05-05 – 2026-05-31, 8 edits, 2 new pages
+…
+'''May totals''': 8 editors made 130 edits across 65 pages (29 newly created).
+New accounts registered in May: Carlo Estefano and FedeP.  Files uploaded: … (by RobLa).
+```
+
+(The per-editor line may also gain a distinct-page count, e.g. "8 edits to 7
+pages, 2 new pages" — so the rollup must carry that count too.)
+
+For the May edition this was produced **by hand with `jq` over the partition
+JSONL**, because `log`'s plain text can't be parsed reliably and there is no
+rollup. The pieces the tool needs to own this end-to-end:
+
+1. **Machine-readable `log` output** — `log --format json|jsonl|tsv`. The
+   plain-text columns can't be parsed when a comment contains padding or runs of
+   spaces, so any generator has to bypass `log` and read the raw partitions. A
+   structured emitter is the single biggest unlock and a prerequisite for the
+   rest. (This is the data-format generalization of the wikitext-`log` future
+   direction below: emit a data shape, not just a wiki-paste shape.)
+
+2. **A `summary` rollup mode** — `rcmgr.py summary --since … --until …
+   --group-by editor|page`, structured output, returning deduped aggregates
+   instead of raw rows:
+   - `--group-by editor`: per editor — distinct pages touched (titles + count),
+     edit count, new-page count, and first/last edit timestamp *within the
+     window*.
+   - `--group-by page`: per page — distinct editors, created-vs-edited, first/
+     last edit timestamp.
+   - Window-level totals: distinct editors, total edits, distinct pages, new
+     pages.
+
+   Example `summary --group-by editor --format json` row:
+
+   ```json
+   {"user":"Kristomun","edits":8,"new_pages":2,"pages":["Borda count","InfMC","…"],
+    "page_count":7,"first":"2026-05-05T…","last":"2026-05-31T…"}
+   ```
+
+3. **Multi-namespace selection in one call.** The summary spans main + user
+   space (ns 0 and ns 2); `--ns` is currently single-valued. Allow repeated
+   `--ns` (or `--ns 0,2`, or an "all namespaces" default) so one `summary` call
+   covers the section instead of N calls stitched together.
+
+4. **Noise controls, with edit-vs-log separation.** `--no-categorize` (the
+   automatic category-membership rows — arguably default-off for `summary`) and
+   `--no-bots` (the `bot` flag). Critically, a rollup's *edit* counts must count
+   only `edit`/`new` rows; `categorize` and `log` rows must be excluded from
+   per-editor edit tallies — even though `log` rows are needed for item 5.
+
+5. **Log-derived participation stats.** The totals line needs two `type=log`
+   aggregates surfaced *separately* from edit counts: `newusers` (account
+   registrations → the "new accounts registered" list) and `upload` (files
+   uploaded). Both are already cached as `type=log` with
+   `logtype`/`logaction`; `summary` should expose their counts and affected
+   users/titles so the totals line is generated, not hand-assembled.
+
+**Explicitly *not* wanted: a "new editor" / first-edit flag.** An earlier draft
+of the section starred editors whose first cached row fell in the window. It was
+dropped because the cache only reaches back to its first run (the Core
+Constraint), so "no rows before this month" cannot distinguish a genuinely new
+editor from a long-time editor returning after a quiet stretch. We will not add a
+`prop=revisions`/registration lookup just for this. The reliable new-editor
+signal is the `newusers` log in item 5; that is the only newcomer signal the
+summary should emit.
+
+### Lower priority
+
 - **Coverage tracking and gap detection.** A `coverage` field in the manifest
   recording the contiguous time intervals actually held, a `gaps` command, and a
   fetch-time warning when a run discovers the RC window has rolled past the
@@ -340,9 +421,16 @@ inclusive and `--until` is exclusive.
   wrong daily partition, and `api_base` drift. Detect only; pair with `migrate`
   for repair.
 - **Wikitext `log` output** approximating `Special:RecentChanges` (grouped by
-  date, with `Special:Diff` / history links) for pasting into a wiki page.
+  date, with `Special:Diff` / history links) for pasting into a wiki page. (The
+  high-priority structured `--format` emitter above is the more general need;
+  this is the wiki-paste presentation of the same data.)
 - **`rcmgr.py migrate`** to rewrite the store across `schema_version` bumps
   without nuking.
+- **Redirect awareness in rollups.** To split new *redirects* from new *articles*
+  in a new-page count, a record needs a redirect/content-type marker; the title
+  cache does not currently supply one (its `redirect` field reads `false` across
+  the board). Not needed for the current newsletter format, which counts new
+  pages without distinguishing redirects.
 - Backfilling coverage gaps and pre-first-run history from `prop=revisions` /
   `list=allrevisions` / `Special:Export`, the only sources that reach past the RC
   window.
@@ -352,7 +440,6 @@ inclusive and `--until` is exclusive.
 - A `--watch` / polling mode that runs `fetch` on an interval.
 - Integration with `mwsync.py status` to flag tracked articles with recent
   upstream activity.
-- Per-user and per-page activity summaries derived from the cache.
 - Optional `external` change-type capture if it proves useful. The MVP caches
   `edit|new|log|categorize`.
 - Optional authenticated capture of `patrolled` / `autopatrolled` flags. The MVP
