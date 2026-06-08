@@ -222,8 +222,10 @@ If a fetch returns no records, update `last_fetch_at` and leave the watermark an
 rcmgr.py fetch
 rcmgr.py status
 rcmgr.py log
+rcmgr.py log --format jsonl
 rcmgr.py log --since 2026-06-01 --ns 0 --type edit
 rcmgr.py log Approval_voting
+rcmgr.py summary --since 2026-05-01 --until 2026-05-31 --group-by editor --format json
 ```
 
 Meanings:
@@ -239,11 +241,26 @@ Meanings:
     such as `2026-06-01` are interpreted as UTC calendar days. `--since` is
     inclusive; `--until` is exclusive, and a date-only `--until 2026-06-01`
     means before `2026-06-02T00:00:00Z`.
-  - `--ns N`: restrict by namespace.
+  - `--ns N`: restrict by namespace. Repeat `--ns` or pass comma-separated
+    values such as `--ns 0,2`.
   - `--type TYPE`: restrict by change type (`edit`, `new`, `log`, ...).
   - `--user NAME`: restrict by editor.
   - `--limit N`: cap output.
+  - `--format plain|json|jsonl|tsv`: choose human-readable or
+    machine-readable output. `plain` is the default.
+  - `--no-categorize`: omit automatic category-membership rows.
+  - `--no-bots`: omit rows flagged as bot edits.
   - A positional article key/title filters to changes touching that page.
+- `summary`: print aggregate activity for a time window as `json`, `jsonl`, or
+  `tsv`. `--group-by editor` reports each editor's edit count, new-page count,
+  distinct pages touched, and first/last edit timestamp. `--group-by page`
+  reports each page's edit count, editor list, created-vs-edited status, and
+  first/last edit timestamp. Edit counts include only `edit` and `new` rows.
+  `newusers` and `upload` log stats are surfaced separately under `logs` and are
+  not counted as edits. Namespace filters apply to the edit/new rollup; the
+  separate log stats still scan matching `type=log` rows in the requested time
+  window so account registrations and uploads remain available for the totals
+  line.
 
 If the cache is missing, commands other than `fetch` should fail with:
 
@@ -328,17 +345,15 @@ because a working directory is dedicated to one wiki. Date-only `--since` and
 `--until` values are accepted as UTC calendar-day boundaries; `--since` is
 inclusive and `--until` is exclusive.
 
-## Future Directions
+## Newsletter Summary Features
 
-These are split by priority. The **high-priority** items are the ones a real
-consumer needs *now*: the monthly [[ElectoramaNews]] newsletter has an
-"electowiki" section that is an editor-grouped activity summary built directly
-from this cache, and the May 2026 edition exposed exactly what the tool is
-missing to generate it. Everything under **lower priority** is durability,
-recovery, and convenience work that the cache's never-nuke design already keeps
-the door open for; none of it blocks the newsletter.
+The first post-MVP feature set supports a real consumer: the monthly
+[[ElectoramaNews]] newsletter has an "electowiki" section that is an
+editor-grouped activity summary built directly from this cache, and the May 2026
+edition exposed what the tool needed to generate it instead of requiring manual
+`jq` work over the partition JSONL.
 
-### High priority — generating the ElectoramaNews "electowiki" summary
+### ElectoramaNews "electowiki" summary
 
 The newsletter's electowiki section groups a month of changes by editor:
 
@@ -354,8 +369,8 @@ New accounts registered in May: Carlo Estefano and FedeP.  Files uploaded: … (
 pages, 2 new pages" — so the rollup must carry that count too.)
 
 For the May edition this was produced **by hand with `jq` over the partition
-JSONL**, because `log`'s plain text can't be parsed reliably and there is no
-rollup. The pieces the tool needs to own this end-to-end:
+JSONL**, because `log`'s plain text couldn't be parsed reliably and there was no
+rollup. The tool now owns these pieces end-to-end:
 
 1. **Machine-readable `log` output** — `log --format json|jsonl|tsv`. The
    plain-text columns can't be parsed when a comment contains padding or runs of
@@ -383,9 +398,9 @@ rollup. The pieces the tool needs to own this end-to-end:
    ```
 
 3. **Multi-namespace selection in one call.** The summary spans main + user
-   space (ns 0 and ns 2); `--ns` is currently single-valued. Allow repeated
-   `--ns` (or `--ns 0,2`, or an "all namespaces" default) so one `summary` call
-   covers the section instead of N calls stitched together.
+   space (ns 0 and ns 2). Repeated `--ns` and comma-separated values such as
+   `--ns 0,2` allow one `summary` call to cover the section instead of N calls
+   stitched together.
 
 4. **Noise controls, with edit-vs-log separation.** `--no-categorize` (the
    automatic category-membership rows — arguably default-off for `summary`) and
@@ -409,7 +424,11 @@ editor from a long-time editor returning after a quiet stretch. We will not add 
 signal is the `newusers` log in item 5; that is the only newcomer signal the
 summary should emit.
 
-### Lower priority
+## Future Directions
+
+Lower-priority durability, recovery, and convenience work remains open. The
+cache's never-nuke design keeps the door open for these, but none of them blocks
+the newsletter summary workflow.
 
 - **Coverage tracking and gap detection.** A `coverage` field in the manifest
   recording the contiguous time intervals actually held, a `gaps` command, and a

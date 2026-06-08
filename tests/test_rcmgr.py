@@ -54,10 +54,22 @@ def _fetch_args():
 
 
 def _log_args(article=None, since=None, until=None, namespace=None,
-              change_type=None, user=None, limit=None):
+              change_type=None, user=None, limit=None, output_format="plain",
+              no_categorize=False, no_bots=False):
     return argparse.Namespace(article=article, since=since, until=until,
                               namespace=namespace, change_type=change_type,
-                              user=user, limit=limit)
+                              user=user, limit=limit,
+                              output_format=output_format,
+                              no_categorize=no_categorize, no_bots=no_bots)
+
+
+def _summary_args(since="2026-05-01", until="2026-05-02", namespace=None,
+                  user=None, group_by="editor", output_format="json",
+                  no_categorize=False, no_bots=False):
+    return argparse.Namespace(since=since, until=until, namespace=namespace,
+                              user=user, group_by=group_by,
+                              output_format=output_format,
+                              no_categorize=no_categorize, no_bots=no_bots)
 
 
 def _run_fetch(rows, config=None):
@@ -149,6 +161,67 @@ def test_log_filters_and_orders(capsys):
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 1
     assert lines[0].startswith("2026-05-02T09:00:00Z")  # newest of the three
+
+
+def test_log_structured_formats_and_repeated_namespace(capsys):
+    _run_fetch(_rows())
+
+    rcmgr.run_log(_log_args(namespace=["0,1"], output_format="json"), _config())
+    payload = json.loads(capsys.readouterr().out)
+    assert [row["rcid"] for row in payload] == [102, 101]
+
+    rcmgr.run_log(_log_args(namespace=[0], output_format="jsonl"), _config())
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["rcid"] == 101
+
+    rcmgr.run_log(_log_args(output_format="tsv", no_categorize=True), _config())
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].startswith("timestamp\trcid\ttype")
+
+
+def test_summary_by_editor_with_log_stats(capsys):
+    rows = _rows() + [
+        {"rcid": 104, "type": "new", "ns": 0, "title": "Score voting",
+         "timestamp": "2026-05-01T12:00:00Z", "user": "Alice", "comment": "new"},
+        {"rcid": 105, "type": "categorize", "ns": 0, "title": "Score voting",
+         "timestamp": "2026-05-01T13:00:00Z", "user": "Alice"},
+        {"rcid": 106, "type": "log", "ns": 2, "title": "User:NewPerson",
+         "timestamp": "2026-05-01T14:00:00Z", "user": "NewPerson",
+         "logtype": "newusers", "logaction": "create"},
+    ]
+    _run_fetch(rows)
+
+    rcmgr.run_summary(
+        _summary_args(since="2026-05-01", until="2026-05-02", namespace=["0,1"]),
+        _config(),
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["totals"] == {
+        "editors": 2,
+        "edits": 3,
+        "new_pages": 2,
+        "pages": 3,
+    }
+    alice = next(row for row in payload["rows"] if row["user"] == "Alice")
+    assert alice["edits"] == 2
+    assert alice["new_pages"] == 1
+    assert alice["page_count"] == 2
+    assert payload["logs"]["newusers"]["users"] == ["NewPerson"]
+    assert payload["logs"]["uploads"]["titles"] == ["File:Chart.png"]
+
+
+def test_summary_by_page_tsv(capsys):
+    _run_fetch(_rows())
+
+    rcmgr.run_summary(
+        _summary_args(group_by="page", output_format="tsv"),
+        _config(),
+    )
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("kind\tkey\tedits")
+    assert any(line.startswith("page\tApproval voting\t1") for line in lines)
+    assert any(line.startswith("totals\twindow\t2") for line in lines)
 
 
 # 6. cache-less status and log fail cleanly ---------------------------------

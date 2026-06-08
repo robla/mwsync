@@ -392,14 +392,42 @@ def _article_title_filter(config: dict, raw: str | None) -> str | None:
     return raw.replace("_", " ").strip()
 
 
+def _parse_namespaces(raw: object) -> set[int] | None:
+    if raw is None:
+        return None
+    values = raw if isinstance(raw, list) else [raw]
+    namespaces: set[int] = set()
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, int):
+            namespaces.add(value)
+            continue
+        for part in str(value).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                namespaces.add(int(part))
+            except ValueError:
+                raise ValueError(f"invalid namespace ID: {part}") from None
+    return namespaces or None
+
+
+def _is_bot_record(record: dict) -> bool:
+    return "bot" in record and record.get("bot") is not False
+
+
 def _record_matches(record: dict,
                     *,
                     since: dt.datetime | None,
                     until: dt.datetime | None,
-                    namespace: int | None,
+                    namespaces: set[int] | None,
                     change_type: str | None,
                     user: str | None,
-                    title: str | None) -> bool:
+                    title: str | None,
+                    no_categorize: bool = False,
+                    no_bots: bool = False) -> bool:
     try:
         timestamp = _parse_timestamp(record.get("timestamp"), label="cached timestamp")
     except ValueError as e:
@@ -409,9 +437,9 @@ def _record_matches(record: dict,
         return False
     if until is not None and timestamp >= until:
         return False
-    if namespace is not None:
+    if namespaces is not None:
         try:
-            if int(record.get("ns")) != namespace:
+            if int(record.get("ns")) not in namespaces:
                 return False
         except (TypeError, ValueError):
             return False
@@ -420,6 +448,10 @@ def _record_matches(record: dict,
     if user is not None and record.get("user") != user:
         return False
     if title is not None and _normalize_title(str(record.get("title", ""))) != title:
+        return False
+    if no_categorize and record.get("type") == "categorize":
+        return False
+    if no_bots and _is_bot_record(record):
         return False
     return True
 
@@ -449,6 +481,371 @@ def _format_log_records(records: list[dict]) -> list[str]:
             f"{title:<{title_width}}  {user}  {comment}"
         )
     return lines
+
+
+def _tsv_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple, set)):
+        value = ",".join(str(item) for item in value)
+    return str(value).replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+
+def _emit_json(data: object) -> None:
+    print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _emit_jsonl(rows: list[dict]) -> None:
+    for row in rows:
+        print(json.dumps(row, ensure_ascii=False, sort_keys=True))
+
+
+def _emit_log_tsv(records: list[dict]) -> None:
+    fields = [
+        "timestamp",
+        "rcid",
+        "type",
+        "ns",
+        "title",
+        "user",
+        "comment",
+        "logtype",
+        "logaction",
+    ]
+    print("\t".join(fields))
+    for row in records:
+        print("\t".join(_tsv_value(row.get(field)) for field in fields))
+
+
+def _emit_log(records: list[dict], output_format: str) -> None:
+    if output_format == "plain":
+        for line in _format_log_records(records):
+            print(line)
+    elif output_format == "json":
+        _emit_json(records)
+    elif output_format == "jsonl":
+        _emit_jsonl(records)
+    elif output_format == "tsv":
+        _emit_log_tsv(records)
+    else:
+        print(f"Error: unsupported log format: {output_format}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _window_records(args, config: dict, *, include_title: bool = False) -> tuple[
+        list[dict],
+        dt.datetime | None,
+        dt.datetime | None,
+        set[int] | None]:
+    try:
+        since = _parse_boundary(getattr(args, "since", None), until=False)
+        until = _parse_boundary(getattr(args, "until", None), until=True)
+        namespaces = _parse_namespaces(getattr(args, "namespace", None))
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    if since is not None and until is not None and until <= since:
+        print("Error: --until must be later than --since", file=sys.stderr)
+        sys.exit(1)
+
+    title_norm = None
+    if include_title:
+        title = _article_title_filter(config, getattr(args, "article", None))
+        title_norm = _normalize_title(title) if title else None
+
+    rows = []
+    for record in _load_log_records():
+        if _record_matches(
+            record,
+            since=since,
+            until=until,
+            namespaces=namespaces,
+            change_type=getattr(args, "change_type", None),
+            user=getattr(args, "user", None),
+            title=title_norm,
+            no_categorize=getattr(args, "no_categorize", False),
+            no_bots=getattr(args, "no_bots", False),
+        ):
+            rows.append(record)
+    return rows, since, until, namespaces
+
+
+def _is_edit_count_record(record: dict) -> bool:
+    return record.get("type") in {"edit", "new"}
+
+
+def _record_user(record: dict) -> str:
+    user = record.get("user")
+    return str(user) if user is not None else ""
+
+
+def _record_title(record: dict) -> str:
+    title = record.get("title")
+    return str(title) if title is not None else ""
+
+
+def _newuser_from_record(record: dict) -> str:
+    title = _record_title(record)
+    if title.lower().startswith("user:"):
+        return title.split(":", 1)[1].replace("_", " ").strip()
+    params = record.get("logparams")
+    if isinstance(params, dict):
+        for key in ("user", "username", "4::userid"):
+            value = params.get(key)
+            if value:
+                return str(value)
+    return _record_user(record)
+
+
+def _timestamp_range(records: list[dict]) -> tuple[str | None, str | None]:
+    if not records:
+        return None, None
+    ordered = sorted(records, key=_record_sort_key)
+    return str(ordered[0].get("timestamp")), str(ordered[-1].get("timestamp"))
+
+
+def _summary_log_stats(records: list[dict]) -> dict:
+    log_rows = [row for row in records if row.get("type") == "log"]
+    newuser_rows = [
+        row for row in log_rows
+        if row.get("logtype") == "newusers"
+    ]
+    upload_rows = [
+        row for row in log_rows
+        if row.get("logtype") == "upload"
+    ]
+
+    newuser_entries = [
+        {
+            "timestamp": row.get("timestamp"),
+            "user": _newuser_from_record(row),
+            "title": row.get("title"),
+            "logaction": row.get("logaction"),
+        }
+        for row in sorted(newuser_rows, key=_record_sort_key)
+    ]
+    upload_entries = [
+        {
+            "timestamp": row.get("timestamp"),
+            "title": row.get("title"),
+            "user": row.get("user"),
+            "logaction": row.get("logaction"),
+        }
+        for row in sorted(upload_rows, key=_record_sort_key)
+    ]
+    return {
+        "newusers": {
+            "count": len(newuser_rows),
+            "users": sorted({entry["user"] for entry in newuser_entries
+                             if entry.get("user")}),
+            "records": newuser_entries,
+        },
+        "uploads": {
+            "count": len(upload_rows),
+            "titles": sorted({str(row.get("title")) for row in upload_rows
+                              if row.get("title")}),
+            "users": sorted({str(row.get("user")) for row in upload_rows
+                             if row.get("user")}),
+            "records": upload_entries,
+        },
+    }
+
+
+def _summary_log_source_records(args, since: dt.datetime | None,
+                                until: dt.datetime | None) -> list[dict]:
+    rows = []
+    for record in _load_log_records():
+        if _record_matches(
+            record,
+            since=since,
+            until=until,
+            namespaces=None,
+            change_type=None,
+            user=getattr(args, "user", None),
+            title=None,
+            no_categorize=False,
+            no_bots=getattr(args, "no_bots", False),
+        ):
+            rows.append(record)
+    return rows
+
+
+def _summary_by_editor(records: list[dict]) -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    for row in records:
+        groups.setdefault(_record_user(row), []).append(row)
+
+    rows = []
+    for user, items in groups.items():
+        first, last = _timestamp_range(items)
+        pages = sorted({_record_title(item) for item in items if _record_title(item)})
+        rows.append({
+            "user": user,
+            "edits": len(items),
+            "new_pages": sum(1 for item in items if item.get("type") == "new"),
+            "pages": pages,
+            "page_count": len(pages),
+            "first": first,
+            "last": last,
+        })
+    return sorted(rows, key=lambda row: (-int(row["edits"]), str(row["user"]).casefold()))
+
+
+def _summary_by_page(records: list[dict]) -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    for row in records:
+        groups.setdefault(_record_title(row), []).append(row)
+
+    rows = []
+    for title, items in groups.items():
+        first, last = _timestamp_range(items)
+        editors = sorted({_record_user(item) for item in items if _record_user(item)})
+        created = any(item.get("type") == "new" for item in items)
+        rows.append({
+            "title": title,
+            "edits": len(items),
+            "created": created,
+            "editors": editors,
+            "editor_count": len(editors),
+            "first": first,
+            "last": last,
+        })
+    return sorted(rows, key=lambda row: (-int(row["edits"]), str(row["title"]).casefold()))
+
+
+def _summary_payload(args, config: dict) -> dict:
+    all_rows, since, until, namespaces = _window_records(args, config)
+    edit_rows = [row for row in all_rows if _is_edit_count_record(row)]
+    log_source_rows = _summary_log_source_records(args, since, until)
+
+    group_by = getattr(args, "group_by", "editor")
+    if group_by == "editor":
+        rows = _summary_by_editor(edit_rows)
+    elif group_by == "page":
+        rows = _summary_by_page(edit_rows)
+    else:
+        print(f"Error: unsupported summary group: {group_by}", file=sys.stderr)
+        sys.exit(1)
+
+    editors = {_record_user(row) for row in edit_rows if _record_user(row)}
+    pages = {_record_title(row) for row in edit_rows if _record_title(row)}
+    payload = {
+        "group_by": group_by,
+        "since": _format_timestamp(since) if since else None,
+        "until": _format_timestamp(until) if until else None,
+        "namespaces": sorted(namespaces) if namespaces is not None else None,
+        "rows": rows,
+        "totals": {
+            "editors": len(editors),
+            "edits": len(edit_rows),
+            "pages": len(pages),
+            "new_pages": sum(1 for row in edit_rows if row.get("type") == "new"),
+        },
+        "logs": _summary_log_stats(log_source_rows),
+    }
+    return payload
+
+
+def _emit_summary_tsv(payload: dict) -> None:
+    fields = [
+        "kind",
+        "key",
+        "edits",
+        "new_pages",
+        "page_count",
+        "editor_count",
+        "created",
+        "first",
+        "last",
+        "pages",
+        "editors",
+        "count",
+        "users",
+        "titles",
+    ]
+    print("\t".join(fields))
+    group_by = payload.get("group_by")
+    for row in payload.get("rows", []):
+        if group_by == "editor":
+            values = {
+                "kind": "editor",
+                "key": row.get("user"),
+                "edits": row.get("edits"),
+                "new_pages": row.get("new_pages"),
+                "page_count": row.get("page_count"),
+                "first": row.get("first"),
+                "last": row.get("last"),
+                "pages": row.get("pages"),
+            }
+        else:
+            values = {
+                "kind": "page",
+                "key": row.get("title"),
+                "edits": row.get("edits"),
+                "editor_count": row.get("editor_count"),
+                "created": row.get("created"),
+                "first": row.get("first"),
+                "last": row.get("last"),
+                "editors": row.get("editors"),
+            }
+        print("\t".join(_tsv_value(values.get(field)) for field in fields))
+
+    totals = payload.get("totals", {})
+    total_values = {
+        "kind": "totals",
+        "key": "window",
+        "edits": totals.get("edits"),
+        "new_pages": totals.get("new_pages"),
+        "page_count": totals.get("pages"),
+        "editor_count": totals.get("editors"),
+    }
+    print("\t".join(_tsv_value(total_values.get(field)) for field in fields))
+
+    logs = payload.get("logs", {})
+    newusers = logs.get("newusers", {})
+    newuser_values = {
+        "kind": "newusers",
+        "key": "newusers",
+        "count": newusers.get("count"),
+        "users": newusers.get("users"),
+    }
+    print("\t".join(_tsv_value(newuser_values.get(field)) for field in fields))
+    uploads = logs.get("uploads", {})
+    upload_values = {
+        "kind": "uploads",
+        "key": "uploads",
+        "count": uploads.get("count"),
+        "users": uploads.get("users"),
+        "titles": uploads.get("titles"),
+    }
+    print("\t".join(_tsv_value(upload_values.get(field)) for field in fields))
+
+
+def _emit_summary_jsonl(payload: dict) -> None:
+    group_by = payload.get("group_by")
+    for row in payload.get("rows", []):
+        item = dict(row)
+        item["kind"] = group_by
+        print(json.dumps(item, ensure_ascii=False, sort_keys=True))
+    print(json.dumps({"kind": "totals", **payload.get("totals", {})},
+                     ensure_ascii=False, sort_keys=True))
+    logs = payload.get("logs", {})
+    print(json.dumps({"kind": "newusers", **logs.get("newusers", {})},
+                     ensure_ascii=False, sort_keys=True))
+    print(json.dumps({"kind": "uploads", **logs.get("uploads", {})},
+                     ensure_ascii=False, sort_keys=True))
+
+
+def _emit_summary(payload: dict, output_format: str) -> None:
+    if output_format == "json":
+        _emit_json(payload)
+    elif output_format == "jsonl":
+        _emit_summary_jsonl(payload)
+    elif output_format == "tsv":
+        _emit_summary_tsv(payload)
+    else:
+        print(f"Error: unsupported summary format: {output_format}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _manifest_for_empty_fetch(existing: dict | None, api_base: str, fetched_at: str) -> dict:
@@ -537,6 +934,7 @@ def run_log(args, config: dict) -> None:
     try:
         since = _parse_boundary(args.since, until=False)
         until = _parse_boundary(args.until, until=True)
+        namespaces = _parse_namespaces(getattr(args, "namespace", None))
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -552,17 +950,23 @@ def run_log(args, config: dict) -> None:
             record,
             since=since,
             until=until,
-            namespace=args.namespace,
-            change_type=args.change_type,
-            user=args.user,
+            namespaces=namespaces,
+            change_type=getattr(args, "change_type", None),
+            user=getattr(args, "user", None),
             title=title_norm,
+            no_categorize=getattr(args, "no_categorize", False),
+            no_bots=getattr(args, "no_bots", False),
         ):
             rows.append(record)
     rows.sort(key=_record_sort_key, reverse=True)
     if args.limit is not None:
         rows = rows[:args.limit]
-    for line in _format_log_records(rows):
-        print(line)
+    _emit_log(rows, getattr(args, "output_format", "plain"))
+
+
+def run_summary(args, config: dict) -> None:
+    payload = _summary_payload(args, config)
+    _emit_summary(payload, getattr(args, "output_format", "json"))
 
 
 def main() -> None:
@@ -589,10 +993,68 @@ def main() -> None:
     p_log.add_argument("article", nargs="?", help="Article key or title to filter")
     p_log.add_argument("--since", help="Include changes at or after this UTC date/time")
     p_log.add_argument("--until", help="Include changes before this UTC date/time")
-    p_log.add_argument("--ns", dest="namespace", type=int, help="Filter by namespace ID")
+    p_log.add_argument(
+        "--ns",
+        dest="namespace",
+        action="append",
+        help="Filter by namespace ID; repeat or comma-separate values",
+    )
     p_log.add_argument("--type", dest="change_type", help="Filter by change type")
     p_log.add_argument("--user", help="Filter by editor username")
     p_log.add_argument("--limit", type=_positive_int, help="Maximum rows to print")
+    p_log.add_argument(
+        "--format",
+        dest="output_format",
+        choices=["plain", "json", "jsonl", "tsv"],
+        default="plain",
+        help="Output format (default: plain)",
+    )
+    p_log.add_argument(
+        "--no-categorize",
+        action="store_true",
+        help="Exclude automatic categorize rows",
+    )
+    p_log.add_argument(
+        "--no-bots",
+        action="store_true",
+        help="Exclude rows flagged as bot edits",
+    )
+
+    p_summary = sub.add_parser("summary", help="Summarize cached recent changes")
+    p_summary.add_argument("--since", required=True,
+                           help="Include changes at or after this UTC date/time")
+    p_summary.add_argument("--until", required=True,
+                           help="Include changes before this UTC date/time")
+    p_summary.add_argument(
+        "--group-by",
+        choices=["editor", "page"],
+        default="editor",
+        help="Aggregate by editor or page (default: editor)",
+    )
+    p_summary.add_argument(
+        "--format",
+        dest="output_format",
+        choices=["json", "jsonl", "tsv"],
+        default="json",
+        help="Output format (default: json)",
+    )
+    p_summary.add_argument(
+        "--ns",
+        dest="namespace",
+        action="append",
+        help="Filter edit/new rollups by namespace ID; repeat or comma-separate values",
+    )
+    p_summary.add_argument("--user", help="Filter by editor username")
+    p_summary.add_argument(
+        "--no-categorize",
+        action="store_true",
+        help="Exclude automatic categorize rows before aggregation",
+    )
+    p_summary.add_argument(
+        "--no-bots",
+        action="store_true",
+        help="Exclude rows flagged as bot edits",
+    )
 
     args = ap.parse_args()
     if not args.subcommand:
@@ -606,6 +1068,8 @@ def main() -> None:
         run_status(args, config)
     elif args.subcommand == "log":
         run_log(args, config)
+    elif args.subcommand == "summary":
+        run_summary(args, config)
 
 
 if __name__ == "__main__":
