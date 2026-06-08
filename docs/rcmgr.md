@@ -1,9 +1,10 @@
 # rcmgr.py Specification
 
 `rcmgr.py` is the recent-changes companion tool for the MediaWiki instance
-managed by the current `mwsync.yaml`. It builds and maintains a durable local
-cache of the target wiki's recent-changes feed that accumulates across runs, so
-that over time the cache covers the full stream from the first run forward.
+managed by the current `mwsync.yaml`. It builds and maintains a durable, partitioned
+local cache of the target wiki's recent-changes feed. Instead of using a single persistent
+file, it partitions changes across multiple daily files that accumulate over time, so
+that the cache covers the full stream from the first run forward.
 
 Like `catmgr.py`, `rcmgr.py` is a wiki-level tool, not a per-article tool. It
 reads `wiki.api_base` from `mwsync.yaml` and caches state under `_cache/` in the
@@ -24,8 +25,10 @@ The consequence shapes the whole tool:
   window. It cannot reach back before the window, and on the very first run it
   cannot reach back before that window either.
 - "All the way back to the first time I run this" is achievable only by
-  **accumulating** across runs into an append-only local store. Each run adds
-  whatever is new since the last run; old captured changes are never discarded.
+  **accumulating** across runs into a partitioned on-disk structure. Each run merges
+  new changes into the corresponding daily partition files. Historical changes are
+  durable: they are collected and preserved in their respective files forever, even
+  after they disappear from the remote wiki's transient `recentchanges` feed.
 - If runs are spaced farther apart than the wiki's RC retention window,
   successive RC windows will not overlap and a permanent **gap** forms in local
   coverage. `rcmgr.py` cannot retroactively fill such a gap from
@@ -57,17 +60,20 @@ the `_cache/_categories/` / `_cache/_titles/` convention in
 `docs/architecture-mwsync.md`:
 
 ```text
-_cache/_recentchanges/
-_cache/_recentchanges/manifest.json
-_cache/_recentchanges/changes/2026-05.jsonl
-_cache/_recentchanges/changes/2026-06.jsonl
+_cache/_recent_changes/
+_cache/_recent_changes/manifest.json
+_cache/_recent_changes/changes/2026-06-05.jsonl
+_cache/_recent_changes/changes/2026-06-06.jsonl
 ```
 
-Changes are partitioned into monthly JSONL files named `YYYY-MM.jsonl` by the
-UTC month of each change's `timestamp`. Partitioning keeps individual files
-bounded, keeps git diffs small (a fetch usually only rewrites the newest one or
-two partitions), and makes the store easy to inspect by hand. Within a
-partition file, one change is stored per line, sorted by `(timestamp, rcid)`.
+Changes are partitioned into daily JSONL files named `YYYY-MM-DD.jsonl` by the
+UTC day of each change's `timestamp` (the first 10 characters of the timestamp).
+Daily partitioning is highly robust: it avoids complex week-boundary calculations,
+keeps git diffs extremely surgical (usually only today's file is modified during
+daily runs), and keeps individual files small. Within a partition file, one change
+is stored per line, sorted by `(timestamp, rcid)`. When a fetch retrieves overlapping
+or older changes, they are merged and deduped by `rcid` into their corresponding files,
+allowing files to be updated continuously while keeping historical data intact.
 
 Writes use the same discipline as the rest of the toolkit:
 
@@ -151,7 +157,7 @@ Steps:
    query returns the wiki's entire available RC window (oldest-first).
 3. Buffer returned records into a per-command staging area, not the live
    partition files.
-4. Merge into the affected monthly partitions: load the existing partition,
+4. Merge into the affected daily partitions: load the existing partition,
    index by `rcid`, add new records, re-sort by `(timestamp, rcid)`, and write
    the partition atomically. Existing records with the same `rcid` are left as
    they were (a change is immutable once it has happened), so overlapping
@@ -219,7 +225,7 @@ Meanings:
 - `fsck`: check cache consistency without repairing. It reports a missing or
   malformed manifest, partition files whose contents disagree with the manifest
   (`total_changes`, `watermark`, `coverage`), duplicate `rcid`s, out-of-order
-  records, records filed in the wrong monthly partition, and `api_base` drift
+  records, records filed in the wrong daily partition, and `api_base` drift
   between the manifest and `mwsync.yaml`. Following the toolkit convention
   (`docs/migrate.md`, `docs/fsck.md`), `fsck` detects only; a future
   `rcmgr.py migrate` would repair.
@@ -260,13 +266,13 @@ spec supports that as follows:
   than blindly appended, the store stays canonical and a migration can rebuild
   any single partition deterministically.
 
-A true nuke (deleting `_cache/_recentchanges/`) should only ever be needed if
+A true nuke (deleting `_cache/_recent_changes/`) should only ever be needed if
 the format changes in a way no migration can bridge. The format above is chosen
 specifically to avoid that.
 
 ## Relationship to Other Tools
 
-- `rcmgr.py` owns `_cache/_recentchanges/` exclusively. It does not modify
+- `rcmgr.py` owns `_cache/_recent_changes/` exclusively. It does not modify
   `mwsync.yaml`, article caches, or `catmap.yaml`.
 - It shares `mwsync.py`'s config helpers and HTTP conventions. Like
   `ledecopy.py` and `catmgr.py`, it may import `load_config`, `get_api_base`,
@@ -286,8 +292,9 @@ specifically to avoid that.
   necessary.
 - Should the cache store `patrolled` / `autopatrolled` flags, which require
   appropriate rights and may be absent for anonymous fetches?
-- Should partition granularity be monthly, or daily for very active wikis?
-  Monthly is proposed because Electowiki is small.
+- Should partition granularity be daily by default, or should there be an option
+  to aggregate into weekly or monthly archives for low-traffic wikis? Daily is
+  proposed as the most robust default because of its simplicity and small git diff footprint.
 - Should recent-changes cache files be committed to git, or treated like other
   refreshable `_cache/` runtime state? (Same open question as `catmgr.md`.)
 
