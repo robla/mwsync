@@ -336,6 +336,34 @@ specifically to avoid that.
   `mwsync.py` workflows (for example, "which tracked articles changed upstream
   recently?") is a Future Direction, not part of v0.01.
 
+## Open Questions
+
+These are non-blocking for a first implementation; an implementer may pick a
+reasonable default and note it. They are recorded here so the choices are
+deliberate rather than accidental.
+
+- **`--since` / `--until` format.** Should these accept date-only values
+  (`2026-06-01`, interpreted as UTC midnight) as well as full ISO timestamps,
+  and is `--until` inclusive or exclusive of its boundary?
+- **`api_base` drift on fetch.** What should `fetch` do when
+  `manifest.api_base` differs from `mwsync.yaml`'s `api_base`? Because a working
+  directory is dedicated to one wiki, a mismatch most likely means the cache was
+  built against a different wiki. Refuse with a clear error, or treat it as a
+  fresh wiki? (`fsck` already reports the drift; this is specifically about
+  `fetch` behavior.)
+- **Non-wikitext `log` output.** `log` currently emits wikitext only. Should it
+  also offer a `--format=plain|wikitext|json` option for terminal reading and
+  scripting, or is wikitext-only acceptable for v0.01?
+- **Suppressed / deleted revisions.** A revision can be hidden via
+  RevisionDelete or oversight *after* `rcmgr.py` has cached it, leaving the
+  original user, comment, or size in the local cache. Such changes also fall out
+  of `recentchanges`, so the cache cannot notice the suppression on its own.
+  Should `rcmgr.py` attempt to re-validate and scrub previously cached entries
+  the wiki now reports as deleted, and if so, by what mechanism?
+- **Overlap sizing.** Is a fixed 10-minute overlap before the watermark always
+  sufficient given client/server clock skew or a long-running fetch, or should
+  the overlap be configurable or derived from the previous fetch's duration?
+
 ## Future Directions
 
 - `rcmgr.py migrate` to rewrite the store across `schema_version` bumps without
