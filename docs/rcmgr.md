@@ -235,7 +235,10 @@ Meanings:
   count. Report cache age, like `catmgr.py status`.
 - `log`: print cached changes newest-first as plain text lines. Supports filters
   that read only local cache state:
-  - `--since DATE` / `--until DATE`: restrict by timestamp.
+  - `--since DATE` / `--until DATE`: restrict by timestamp. Date-only values
+    such as `2026-06-01` are interpreted as UTC calendar days. `--since` is
+    inclusive; `--until` is exclusive, and a date-only `--until 2026-06-01`
+    means before `2026-06-02T00:00:00Z`.
   - `--ns N`: restrict by namespace.
   - `--type TYPE`: restrict by change type (`edit`, `new`, `log`, ...).
   - `--user NAME`: restrict by editor.
@@ -310,13 +313,6 @@ specifically to avoid that.
 These are non-blocking for a first implementation; an implementer may pick a
 reasonable default and note it.
 
-- **`--since` / `--until` format.** Should these accept date-only values
-  (`2026-06-01`, interpreted as UTC midnight) as well as full ISO timestamps, and
-  is `--until` inclusive or exclusive of its boundary?
-- **`api_base` drift on fetch.** What should `fetch` do when `manifest.api_base`
-  differs from `mwsync.yaml`'s `api_base`? Because a working directory is
-  dedicated to one wiki, a mismatch most likely means the cache was built against
-  a different wiki. Refuse with a clear error, or treat it as a fresh wiki?
 - **Suppressed / deleted revisions.** A revision can be hidden via
   RevisionDelete or oversight *after* `rcmgr.py` has cached it, leaving the
   original user, comment, or size in the local cache. Such changes also fall out
@@ -326,6 +322,11 @@ reasonable default and note it.
 - **Overlap sizing.** Is a fixed 10-minute overlap before the watermark always
   sufficient given client/server clock skew or a long-running fetch, or should
   the overlap be configurable or derived from the previous fetch's duration?
+
+MVP implementation defaults: `fetch` refuses `api_base` drift with a clear error
+because a working directory is dedicated to one wiki. Date-only `--since` and
+`--until` values are accepted as UTC calendar-day boundaries; `--since` is
+inclusive and `--until` is exclusive.
 
 ## Future Directions
 
