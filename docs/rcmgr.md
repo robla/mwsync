@@ -1,10 +1,10 @@
 # rcmgr.py Specification
 
 `rcmgr.py` is the recent-changes companion tool for the MediaWiki instance
-managed by the current `mwsync.yaml`. It builds and maintains a durable, partitioned
-local cache of the target wiki's recent-changes feed. Instead of using a single persistent
-file, it partitions changes across multiple daily files that accumulate over time, so
-that the cache covers the full stream from the first run forward.
+managed by the current `mwsync.yaml`. It builds and maintains a durable,
+partitioned local cache of the target wiki's recent-changes feed. Instead of a
+single persistent file, it partitions changes across daily files that accumulate
+over time, so the cache covers the full stream from the first run forward.
 
 Like `catmgr.py`, `rcmgr.py` is a wiki-level tool, not a per-article tool. It
 reads `wiki.api_base` from `mwsync.yaml` and caches state under `_cache/` in the
@@ -14,10 +14,10 @@ wiki, so the recent-changes cache is scoped to that wiki.
 ## The Core Constraint
 
 This spec exists because of one fact about MediaWiki: the `list=recentchanges`
-API does not return all history. It serves only a bounded recent window
-governed by the wiki's `$wgRCMaxAge` (commonly 30 or 90 days). Changes older
-than that window are purged from the `recentchanges` table and are simply not
-available from this API, even though the underlying revisions still exist.
+API does not return all history. It serves only a bounded recent window governed
+by the wiki's `$wgRCMaxAge` (commonly 30 or 90 days). Changes older than that
+window are purged from the `recentchanges` table and are simply not available
+from this API, even though the underlying revisions still exist.
 
 The consequence shapes the whole tool:
 
@@ -25,20 +25,43 @@ The consequence shapes the whole tool:
   window. It cannot reach back before the window, and on the very first run it
   cannot reach back before that window either.
 - "All the way back to the first time I run this" is achievable only by
-  **accumulating** across runs into a partitioned on-disk structure. Each run merges
-  new changes into the corresponding daily partition files. Historical changes are
-  durable: they are collected and preserved in their respective files forever, even
-  after they disappear from the remote wiki's transient `recentchanges` feed.
+  **accumulating** across runs into a partitioned on-disk structure. Each run
+  merges new changes into the corresponding daily partition files. Historical
+  changes are durable: once collected they are preserved forever, even after they
+  disappear from the wiki's transient `recentchanges` feed.
 - If runs are spaced farther apart than the wiki's RC retention window,
   successive RC windows will not overlap and a permanent **gap** forms in local
-  coverage. `rcmgr.py` cannot retroactively fill such a gap from
-  `recentchanges`; it can only detect and record it. Frequent runs are the way
-  to guarantee gapless coverage.
+  coverage. Frequent runs are the way to guarantee gapless coverage. The MVP does
+  not detect or report such gaps (see Future Directions); the accumulated data
+  stays correct, it may just be non-contiguous.
 
-Reaching further back than the first run, or backfilling a detected gap, would
-require a different API surface (per-page `prop=revisions`, `list=allrevisions`,
-or `Special:Export`). That is explicitly out of scope for v0.01 and is listed
-under Future Directions.
+Reaching further back than the first run, or backfilling a gap, would require a
+different API surface (per-page `prop=revisions`, `list=allrevisions`, or
+`Special:Export`). That is out of scope.
+
+## MVP Scope
+
+The first version is deliberately minimal. It delivers the core promise —
+accumulate recent changes across runs into durable storage that survives the RC
+window — and nothing more.
+
+**In the MVP:**
+
+- Commands: `fetch`, `status`, and a plain-text `log`.
+- Daily-partitioned JSONL storage under `_cache/_recent_changes/`.
+- A small `manifest.json` with a `schema_version`, a watermark, and fetch
+  timestamps.
+- Incremental fetch from the watermark with a short overlap, deduped by `rcid`.
+- The never-nuke format primitives (stable `rcid` keys, verbatim rows,
+  `schema_version`).
+
+**Deferred (see Future Directions):**
+
+- Coverage tracking and gap detection (the `coverage` manifest field, a `gaps`
+  command, and fetch-time gap warnings).
+- An `fsck` consistency checker.
+- A wikitext `log` formatter that approximates `Special:RecentChanges`.
+- An `rcmgr.py migrate` command for `schema_version` bumps.
 
 ## Design Goals
 
@@ -49,9 +72,6 @@ under Future Directions.
   forward-compatible enough that future caching-strategy changes are handled by
   migration rather than by discarding accumulated history. Nuking the cache
   should be an aspiration we never reach, not a routine recovery step.
-- **Honest about coverage.** The cache should always be able to answer "what
-  time ranges do I actually have?" and "where are the gaps?" rather than
-  silently presenting partial data as complete.
 
 ## Cache Layout
 
@@ -67,24 +87,23 @@ _cache/_recent_changes/changes/2026-06-06.jsonl
 ```
 
 Use `_cache/_recent_changes/` immediately for `rcmgr.py`, even though the
-current implemented `catmgr.py` still uses `_cache/categories/`. This follows
-the intended wiki-level cache naming convention rather than copying the older
+current implemented `catmgr.py` still uses `_cache/categories/`. This follows the
+intended wiki-level cache naming convention rather than copying the older
 category-cache path.
 
 Treat `_cache/_recent_changes/` as refreshable runtime state by default, not as
-state users are expected to commit to the visible project git repository. The
-cache should still be deterministic and diff-friendly because users may inspect
-it directly, but normal recovery should come from `fetch`, `fsck`, and future
-`migrate` support rather than from committed cache files.
+state users are expected to commit to the project git repository. The cache
+should still be deterministic and diff-friendly because users may inspect it
+directly, but normal recovery should come from re-running `fetch`.
 
 Changes are partitioned into daily JSONL files named `YYYY-MM-DD.jsonl` by the
 UTC day of each change's `timestamp` (the first 10 characters of the timestamp).
-Daily partitioning is highly robust: it avoids complex week-boundary calculations,
-keeps git diffs extremely surgical (usually only today's file is modified during
-daily runs), and keeps individual files small. Within a partition file, one change
-is stored per line, sorted by `(timestamp, rcid)`. When a fetch retrieves overlapping
-or older changes, they are merged and deduped by `rcid` into their corresponding files,
-allowing files to be updated continuously while keeping historical data intact.
+Daily partitioning avoids week/month boundary math, keeps git diffs surgical
+(usually only today's file changes during daily runs), and keeps individual files
+small. Within a partition, one change is stored per line, sorted by
+`(timestamp, rcid)`. When a fetch retrieves overlapping or older changes, they
+are merged and deduped by `rcid` into their corresponding files, so files are
+updated continuously while historical data stays intact.
 
 Writes use the same discipline as the rest of the toolkit:
 
@@ -111,15 +130,15 @@ migrations instead of nukes.
 - `type` is one of `edit`, `new`, `log`, `categorize`, `external`.
 - For `type:"log"` entries, also store `logid`, `logtype`, `logaction`, and
   `logparams` as returned. Log entries may have `revid:0`; that is expected.
-- Records missing `rcid`, `timestamp`, or `type` are malformed for this cache
-  and should make `fetch` fail rather than storing a row that cannot be deduped,
+- Records missing `rcid`, `timestamp`, or `type` are malformed for this cache and
+  should make `fetch` fail rather than storing a row that cannot be deduped,
   partitioned, or interpreted.
 - Unknown / future API fields encountered during a fetch should be preserved
   rather than dropped, so the record can round-trip across schema revisions.
 
 ### Manifest
 
-`manifest.json` records cache-wide metadata and, critically, coverage:
+`manifest.json` records cache-wide metadata:
 
 ```json
 {
@@ -128,25 +147,21 @@ migrations instead of nukes.
   "first_fetch_at": "2026-05-15T00:00:00Z",
   "last_fetch_at": "2026-06-07T00:00:00Z",
   "watermark": {"timestamp": "2026-06-07T17:55:12Z", "rcid": 884901},
-  "coverage": [
-    {"start": "2026-04-16T00:00:00Z", "end": "2026-05-20T12:00:00Z"},
-    {"start": "2026-05-25T00:00:00Z", "end": "2026-06-07T17:55:12Z"}
-  ],
   "total_changes": 5123
 }
 ```
 
-- `schema_version` gates migration. It is bumped only when the on-disk format
-  changes in a way that older readers cannot handle.
-- `watermark` is the newest `(timestamp, rcid)` captured so far. It is the
-  logical starting point for the next incremental fetch. The actual API query
-  overlaps 10 minutes before this timestamp, but the watermark remains the
-  newest committed change.
-- `coverage` is the list of contiguous time intervals the cache actually holds,
-  oldest first, with gaps between intervals. A single interval means gapless
-  coverage from `coverage[0].start` to the watermark. More than one interval
-  means at least one gap. `coverage[0].start` is the earliest change the cache
-  has ever seen; nothing before it is knowable from `recentchanges`.
+- `schema_version` gates future migration. It is bumped only when the on-disk
+  format changes in a way that older readers cannot handle.
+- `watermark` is the newest `(timestamp, rcid)` captured so far and the logical
+  starting point for the next incremental fetch. The actual API query overlaps a
+  short interval before this timestamp (see Fetch Algorithm), but the watermark
+  remains the newest committed change.
+- `total_changes` is the count of unique changes stored across all partitions.
+
+Coverage intervals and gap tracking are intentionally not part of the MVP
+manifest; adding a `coverage` field later is a forward-compatible change that
+older readers can ignore.
 
 ## Fetch Algorithm
 
@@ -173,62 +188,35 @@ Steps:
 2. Query with a 10-minute overlap before the watermark (`rcdir=newer`,
    `rcstart=watermark.timestamp - 10 minutes`), following `continue` until
    exhausted. On the first run, omit `rcstart` so the query returns the wiki's
-   entire available RC window (oldest-first).
-3. If the API rejects or cannot satisfy the requested `rcstart` because it is
-   older than the wiki's recent-changes retention window, retry once without
-   `rcstart`. If that retry returns changes whose oldest timestamp is newer
-   than the previous watermark, record a coverage gap from the previous
-   watermark to the retry's oldest returned change and warn the user. If the
-   retry reaches back to the previous watermark or earlier, merge normally; the
-   overlap was too old, but no gap was observed.
-4. Buffer returned records into memory or a per-command staging area, not the
+   entire available RC window (oldest-first). If `rcstart` predates the wiki's
+   retention window the API simply returns from the oldest available change; no
+   special handling is required in the MVP.
+3. Buffer returned records into memory or a per-command staging area, not the
    live partition files. Validate that every record has at least `rcid`,
    `timestamp`, and `type`.
-5. Build merged versions of the affected daily partitions in staging: load the
+4. Build merged versions of the affected daily partitions in staging: load the
    existing live partition, index by `rcid`, add new records, re-sort by
    `(timestamp, rcid)`, and serialize deterministic JSONL. Existing records with
    the same `rcid` are left as they were (a change is immutable once it has
    happened), so overlapping windows dedup cleanly.
-6. Recompute manifest fields: advance `watermark`, set `last_fetch_at`, set
-   `first_fetch_at` if unset, update `total_changes`, and update `coverage`
-   (below).
-7. Atomically replace affected live partitions, then write `manifest.json` last,
+5. Recompute manifest fields: advance `watermark` to the newest committed
+   `(timestamp, rcid)`, set `last_fetch_at`, set `first_fetch_at` if unset, and
+   update `total_changes` by the number of newly added unique records.
+6. Atomically replace affected live partitions, then write `manifest.json` last,
    atomically.
 
-For v0.01, `manifest.json` is the authoritative commit marker. A failed `fetch`
-must not advance the manifest watermark or coverage. The implementation should
-clean up staging files on failure, but it does not need a heavier
-generation/current-pointer layout. If a failure occurs after one or more
-partition files were replaced but before `manifest.json` was written, readers
-must treat records outside the manifest's committed coverage and watermark as
-uncommitted. `fsck` should report such extra partition records instead of
-silently treating them as committed cache history.
+`manifest.json` is the authoritative commit marker. A failed `fetch` must not
+advance the manifest watermark. The implementation should clean up staging files
+on failure. If a failure occurs after one or more partition files were replaced
+but before `manifest.json` was written, the next successful `fetch` re-merges the
+same changes idempotently (dedup by `rcid`), so the only effect is harmless
+extra rows that the next run reconciles.
 
-### Coverage and Gap Detection
+If a fetch returns no records, update `last_fetch_at` and leave the watermark and
+`total_changes` unchanged. On an empty first run, set `first_fetch_at` and
+`last_fetch_at`, leave `watermark` unset, and set `total_changes` to `0`.
 
-After a successful fetch, compute the time range the fetch actually covered:
-`[oldest_returned_timestamp, newest_returned_timestamp]` (for the first run,
-`oldest_returned_timestamp` is the earliest change the wiki's RC window still
-holds). Merge that interval into `coverage`:
-
-- If it overlaps or is contiguous with the previous newest interval, extend that
-  interval. This is the normal case for frequent runs.
-- If the fetch's oldest returned change is **newer** than the previous
-  watermark, the RC window has rolled past the previous watermark since the last
-  run: a gap exists between the previous watermark and this fetch's oldest
-  change. Record it as a new, separate coverage interval and surface it.
-
-Gap detection is empirical rather than relying on `$wgRCMaxAge`, which the API
-does not reliably expose: the cache infers the available window from the oldest
-change actually returned. When a gap is detected, `fetch` prints a warning that
-names the gap range and recommends running more frequently.
-
-If a fetch returns no records, update `last_fetch_at` and leave the watermark,
-coverage, and `total_changes` unchanged. On an empty first run, set
-`first_fetch_at` and `last_fetch_at`, leave `watermark` unset, use an empty
-`coverage` list, and set `total_changes` to `0`.
-
-## Proposed Commands
+## Commands
 
 ```bash
 rcmgr.py fetch
@@ -236,8 +224,6 @@ rcmgr.py status
 rcmgr.py log
 rcmgr.py log --since 2026-06-01 --ns 0 --type edit
 rcmgr.py log Approval_voting
-rcmgr.py gaps
-rcmgr.py fsck
 ```
 
 Meanings:
@@ -245,30 +231,16 @@ Meanings:
 - `fetch`: pull changes since the watermark and merge them into the cache. With
   `--dry-run`, report what would be fetched (the query window and watermark)
   without writing.
-- `status`: print `api_base`, first/last fetch times, watermark, total change
-  count, coverage span, and the number of gaps. Report cache age, like
-  `catmgr.py status`.
-- `log`: print cached changes newest-first as valid MediaWiki list markup,
-  suitable for pasting into a wiki article or draft. The default display should
-  approximate `Special:RecentChanges` where reasonable while remaining plain
-  wikitext: group changes by UTC date, use one `*` list item per change, include
-  UTC time, page title, diff/history links when a revision ID exists, user, and
-  comment. Supports filters that read only local cache state:
+- `status`: print `api_base`, first/last fetch times, watermark, and total change
+  count. Report cache age, like `catmgr.py status`.
+- `log`: print cached changes newest-first as plain text lines. Supports filters
+  that read only local cache state:
   - `--since DATE` / `--until DATE`: restrict by timestamp.
   - `--ns N`: restrict by namespace.
   - `--type TYPE`: restrict by change type (`edit`, `new`, `log`, ...).
   - `--user NAME`: restrict by editor.
   - `--limit N`: cap output.
   - A positional article key/title filters to changes touching that page.
-- `gaps`: list detected coverage gaps (the ranges between `coverage` intervals)
-  and the unknowable range before `coverage[0].start`.
-- `fsck`: check cache consistency without repairing. It reports a missing or
-  malformed manifest, partition files whose contents disagree with the manifest
-  (`total_changes`, `watermark`, `coverage`), duplicate `rcid`s, out-of-order
-  records, records filed in the wrong daily partition, and `api_base` drift
-  between the manifest and `mwsync.yaml`. Following the toolkit convention
-  (`docs/migrate.md`, `docs/fsck.md`), `fsck` detects only; a future
-  `rcmgr.py migrate` would repair.
 
 If the cache is missing, commands other than `fetch` should fail with:
 
@@ -284,28 +256,25 @@ Recent-changes cache for https://electowiki.org/w/api.php
   last fetch:   2026-06-07T00:00:00Z (today)
   watermark:    2026-06-07T17:55:12Z (rcid 884901)
   changes:      5123
-  coverage:     2026-04-16 .. 2026-06-07  (1 gap)
-  run rcmgr.py gaps for details
 ```
 
 ### Example `log` Output
 
+Plain text, one change per line, newest first:
+
 ```text
-== 2026-06-07 ==
-* 17:55 [[Approval voting]] ([[Special:Diff/19901|diff]] | [[Special:PageHistory/Approval voting|hist]]) . . [[User:Example|Example]] . . fix typo
-* 17:42 [[Instant-runoff voting]] ([[Special:Diff/19900|diff]] | [[Special:PageHistory/Instant-runoff voting|hist]]) . . [[User:Example|Example]] . . expand references
-* 17:20 log [[Approval voting]] . . [[User:Admin|Admin]] . . protected page
+2026-06-07T17:55:12Z  edit  Approval voting        Example  fix typo
+2026-06-07T17:42:01Z  edit  Instant-runoff voting  Example  expand references
+2026-06-07T17:20:33Z  log   Approval voting        Admin    protect
 ```
 
-If a field needed for one of those links is missing from the cached API row,
-omit that link rather than fabricating a value. The output should not use ANSI
-color, terminal tables, or other formatting that would make the text invalid
-wikitext.
+A wikitext-formatted `log` (diff/history links, grouped by date) is a Future
+Direction; the MVP keeps the output simple and terminal-friendly.
 
 ## Never-Nuke Discipline
 
 The user's stated aspiration is to never have to discard the local cache. The
-spec supports that as follows:
+MVP format supports that:
 
 - **Stable keys.** Records are keyed by immutable `rcid`; a change never needs to
   be rewritten once captured, so re-fetching is always safe.
@@ -315,7 +284,7 @@ spec supports that as follows:
 - **Versioned format.** `schema_version` in the manifest lets a future
   `rcmgr.py migrate` rewrite partitions in place when the layout changes, rather
   than forcing a nuke. This matches the repository's stated preference for
-  migration over compatibility shims: `fsck` detects drift, `migrate` fixes it.
+  migration over compatibility shims.
 - **Append-only partitions.** Because partitions are sorted-and-merged rather
   than blindly appended, the store stays canonical and a migration can rebuild
   any single partition deterministically.
@@ -332,45 +301,50 @@ specifically to avoid that.
   `ledecopy.py` and `catmgr.py`, it may import `load_config`, `get_api_base`,
   `_atomic_write`, and the `USER_AGENT` from `mwsync.py` rather than duplicating
   them.
-- The recent-changes cache is informational for now. Wiring it into
-  `mwsync.py` workflows (for example, "which tracked articles changed upstream
-  recently?") is a Future Direction, not part of v0.01.
+- The recent-changes cache is informational for now. Wiring it into `mwsync.py`
+  workflows (for example, "which tracked articles changed upstream recently?")
+  is a Future Direction.
 
 ## Open Questions
 
 These are non-blocking for a first implementation; an implementer may pick a
-reasonable default and note it. They are recorded here so the choices are
-deliberate rather than accidental.
+reasonable default and note it.
 
 - **`--since` / `--until` format.** Should these accept date-only values
-  (`2026-06-01`, interpreted as UTC midnight) as well as full ISO timestamps,
-  and is `--until` inclusive or exclusive of its boundary?
-- **`api_base` drift on fetch.** What should `fetch` do when
-  `manifest.api_base` differs from `mwsync.yaml`'s `api_base`? Because a working
-  directory is dedicated to one wiki, a mismatch most likely means the cache was
-  built against a different wiki. Refuse with a clear error, or treat it as a
-  fresh wiki? (`fsck` already reports the drift; this is specifically about
-  `fetch` behavior.)
-- **Non-wikitext `log` output.** `log` currently emits wikitext only. Should it
-  also offer a `--format=plain|wikitext|json` option for terminal reading and
-  scripting, or is wikitext-only acceptable for v0.01?
+  (`2026-06-01`, interpreted as UTC midnight) as well as full ISO timestamps, and
+  is `--until` inclusive or exclusive of its boundary?
+- **`api_base` drift on fetch.** What should `fetch` do when `manifest.api_base`
+  differs from `mwsync.yaml`'s `api_base`? Because a working directory is
+  dedicated to one wiki, a mismatch most likely means the cache was built against
+  a different wiki. Refuse with a clear error, or treat it as a fresh wiki?
 - **Suppressed / deleted revisions.** A revision can be hidden via
   RevisionDelete or oversight *after* `rcmgr.py` has cached it, leaving the
   original user, comment, or size in the local cache. Such changes also fall out
   of `recentchanges`, so the cache cannot notice the suppression on its own.
-  Should `rcmgr.py` attempt to re-validate and scrub previously cached entries
-  the wiki now reports as deleted, and if so, by what mechanism?
+  Should a future version attempt to re-validate and scrub previously cached
+  entries the wiki now reports as deleted, and by what mechanism?
 - **Overlap sizing.** Is a fixed 10-minute overlap before the watermark always
   sufficient given client/server clock skew or a long-running fetch, or should
   the overlap be configurable or derived from the previous fetch's duration?
 
 ## Future Directions
 
-- `rcmgr.py migrate` to rewrite the store across `schema_version` bumps without
-  nuking.
+- **Coverage tracking and gap detection.** A `coverage` field in the manifest
+  recording the contiguous time intervals actually held, a `gaps` command, and a
+  fetch-time warning when a run discovers the RC window has rolled past the
+  previous watermark.
+- **`fsck`.** A consistency checker that reports a missing or malformed manifest,
+  partition contents that disagree with the manifest (`watermark`,
+  `total_changes`), duplicate `rcid`s, out-of-order records, records filed in the
+  wrong daily partition, and `api_base` drift. Detect only; pair with `migrate`
+  for repair.
+- **Wikitext `log` output** approximating `Special:RecentChanges` (grouped by
+  date, with `Special:Diff` / history links) for pasting into a wiki page.
+- **`rcmgr.py migrate`** to rewrite the store across `schema_version` bumps
+  without nuking.
 - Backfilling coverage gaps and pre-first-run history from `prop=revisions` /
-  `list=allrevisions` / `Special:Export`, the only sources that reach past the
-  RC window.
+  `list=allrevisions` / `Special:Export`, the only sources that reach past the RC
+  window.
 - Hidden internal git storage for `_cache/_recent_changes/`, so the tool can
   recover from local runtime corruption without requiring users to commit
   refreshable cache files to the visible project repository.
@@ -378,9 +352,9 @@ deliberate rather than accidental.
 - Integration with `mwsync.py status` to flag tracked articles with recent
   upstream activity.
 - Per-user and per-page activity summaries derived from the cache.
-- Optional `external` change-type capture if it proves useful. v0.01 caches
-  `edit|new|log|categorize` by default.
-- Optional authenticated capture of `patrolled` / `autopatrolled` flags. v0.01
+- Optional `external` change-type capture if it proves useful. The MVP caches
+  `edit|new|log|categorize`.
+- Optional authenticated capture of `patrolled` / `autopatrolled` flags. The MVP
   does not request those fields because they require rights and can make
   anonymous fetches fail.
 - Optional warning when the cache is older than a configurable threshold, as
