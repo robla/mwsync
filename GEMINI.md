@@ -8,28 +8,34 @@
 - **Tools:**
     - `mwsync.py`: Main tool for syncing articles between local and MediaWiki.
     - `ledecopy.py`: Helper tool for importing English Wikipedia ledes into Electowiki drafts. Also handles interactive category mapping (`catmap.yaml`).
-    - `catmgr.py`: (Proposed) Helper for caching and inspecting the target wiki's category system.
+    - `catmgr.py`: Category-management tool for caching and inspecting target-wiki category structures.
+    - `rcmgr.py`: Recent-changes management tool for accumulating and filtering the target-wiki's recent changes.
+    - `wikimgr.py`: Title-management tool for listing target-wiki page titles by namespace.
 - **Architecture:** 
-    - Single-file CLI scripts that share logic (ledecopy imports from mwsync).
+    - CLI scripts that share utilities from `mwsync.py`.
     - Configuration stored in `mwsync.yaml`.
     - Per-article revision cache in `_cache/<Article_Key>/`.
     - Category cache in `_cache/categories/` (managed by `catmgr.py`).
+    - Recent-changes cache in `_cache/_recent_changes/` (managed by `rcmgr.py`).
+    - Wiki titles cache in `_cache/_titles/` (managed by `wikimgr.py`).
     - Durable category mappings in `catmap.yaml` (managed by `ledecopy.py`).
     - Uses MediaWiki Action API (`w/api.php`).
 - **Key Concepts:**
     - **Three Identities:** Article Key (canonical), Page Title (API), and Local Filename (usually `<Article_Key>.mw`).
     - **Cache Layout:** `history.jsonl` manifest, revid-named `.mw` bodies and `.json` sidecars, and state pointers in `refs/` (`upstream`, `base`, `last-pushed`).
     - **Category Management:** `catmgr.py` provides the refreshable cache (`_cache/categories/`); `ledecopy.py` uses this cache to prompt for mapping decisions stored in `catmap.yaml`.
+    - **Recent Changes Partitioning:** `rcmgr.py` logs are partitioned into daily JSONL files (`YYYY-MM-DD.jsonl`) under `_cache/_recent_changes/changes/` to make git diffs surgical and support never-nuke accumulation.
 
 ## Directory Structure
 
 - `mwsync.py`, `ledecopy.py`: Core CLI tools.
-- `catmgr.py`: (Proposed) Category management tool.
+- `catmgr.py`, `rcmgr.py`, `wikimgr.py`: Companion tools for categories, recent changes, and wiki titles/namespaces.
 - `catmap.yaml`: Per-category mapping decisions (rename, drop, keep).
+- `tests/`: Automated pytest suite containing `test_rcmgr.py` and `test_mwsync.py`.
 - `docs/`: Documentation including architecture specs, roadmap, and tool-specific docs.
 - `cruft/`: Legacy or experimental notes (e.g., `roadmap-git.md`).
 - `feb2026`: Symlink to a date-specific workspace/folder.
-- `_cache/`: Local revision and category cache (created at runtime).
+- `_cache/`: Local revision, categories (`_cache/categories/`), titles (`_cache/_titles/`), and recent changes (`_cache/_recent_changes/`) cache.
 
 ## Building and Running
 
@@ -66,9 +72,12 @@ export MWSYNC_MW_PASSWORD='bot-password'
 
 ## Testing
 
-There is no automated test suite.
-- **Validation:** Always run `python3 -m py_compile mwsync.py` and manually exercise affected subcommands (ideally with `--dry-run` if supported).
-- **New Tests:** If added, place in a `tests/` directory with `test_*.py` filenames.
+An automated `pytest` suite is implemented under the `tests/` directory.
+- **Run tests:** `python3 -m pytest` or `pytest`.
+- **Suite Files:**
+  - `tests/test_rcmgr.py` covers fetching, watermarking, idempotency, logging, and status reporting of recent changes.
+  - `tests/test_mwsync.py` covers article name parsing.
+- **Validation:** Run `python3 -m py_compile mwsync.py ledecopy.py rcmgr.py wikimgr.py` and run the `pytest` suite before committing.
 
 ## Documentation References
 

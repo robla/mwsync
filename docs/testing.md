@@ -102,10 +102,9 @@ def test_fetch_mocked(mock_fetch):
 
 ## Minimal First-Pass Test List
 
-> **Status:** the four `mwsync.py` tests below are still a *plan*, not yet
-> implemented. The only suite currently in the repo is `tests/test_rcmgr.py`
-> (see "Current Coverage and Gaps"). Build these out next; they remain the
-> intended first pass for `mwsync.py` itself.
+> **Status:** One of the `mwsync.py` tests below (`test_parse_article_name`) is
+> implemented in `tests/test_mwsync.py`. The other tests remain a plan to build
+> out next.
 
 To establish the suite, the first pass will implement only four highly targeted tests covering basic CLI lifecycle, name parsing, config registration, and cache writing.
 
@@ -168,7 +167,8 @@ actually guarded versus what merely looks covered.
   5. `log` filters by `--type`/`--limit` and orders newest-first.
   6. `status`/`log` fail cleanly when the cache is missing.
 
-That is the entire automated suite at present.
+- **`tests/test_mwsync.py`** — one first-pass test for `mwsync.py`:
+  1. `test_parse_article_name` — verifies that the article name parser strips suffixes, normalizes spaces/underscores, and raises `SystemExit` on empty/whitespace inputs.
 
 ### Where coverage is lacking
 
@@ -190,9 +190,7 @@ behavior surface. Not yet covered:
   and the positional article filter that resolves through `wiki.articles`.
 - Log entry comment fallback to `logaction`.
 
-**`mwsync.py` (none).** The main tool has no automated tests yet. The four-test
-plan above is the intended starting point; until it lands, the entire
-fetch/merge/commit/push/restore/diff/log/show/status/fsck surface is unguarded.
+**`mwsync.py` (partial).** The first planned test (`test_parse_article_name`) is implemented in `tests/test_mwsync.py`. The other planned tests and the remaining sync operations (`merge`, `commit`, `push`, `restore`, `diff`, `log`, `show`, `status`, `fsck`) are still unguarded.
 Highest-value targets beyond the planned four: `merge` (clean, fast-forward, and
 conflict paths), `commit`/`push` base-revid handling, and revision-expression
 resolution (`@upstream`, `@upstream^`, `@<revid>`).
