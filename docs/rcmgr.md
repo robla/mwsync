@@ -311,3 +311,31 @@ specifically to avoid that.
 - Per-user and per-page activity summaries derived from the cache.
 - Optional warning when the cache is older than a configurable threshold, as
   contemplated for `catmgr.py`.
+
+## Questions Before Implementation
+
+These are the questions that should be answered before treating this as ready
+for implementation by another developer:
+
+1. Should v0.01 always use an overlap window when fetching after the watermark?
+   MediaWiki's API documentation recommends overlap for stream consumers because
+   recent-change rows can be inserted slightly out of timestamp order. If yes,
+   what fixed overlap should the first implementation use: 60 seconds, 5
+   minutes, or something else?
+2. What should `fetch` do when the stored watermark is older than the wiki's
+   current recent-changes retention window and the API rejects or cannot satisfy
+   `rcstart=<watermark.timestamp>`? The likely behavior is to retry without
+   `rcstart`, record a gap from the old watermark to the oldest returned change,
+   and warn the user. Is that the desired behavior?
+3. What transaction guarantee should the partition store provide? Is it enough
+   for `manifest.json` to be the authoritative commit marker, even if a failed
+   fetch leaves unreferenced staged or newly written partition files behind? Or
+   should the implementation use a stronger generation/current-pointer layout so
+   the live partition set is all-or-nothing?
+4. Should records be stored as exact API rows plus only essential validation, or
+   should v0.01 normalize missing boolean/list fields such as `minor`, `bot`,
+   `new`, and `tags` into explicit defaults?
+5. Should `_cache/_recent_changes/` be used immediately even though current
+   `catmgr.py` still uses `_cache/categories/`, or should `rcmgr.py` follow the
+   current implemented category-cache style until the wiki-level cache naming
+   convention is migrated consistently?
