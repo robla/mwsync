@@ -1,0 +1,33 @@
+#+TITLE: mwmap LLM log
+
+* About this log
+A running, multi-LLM work log for =mwmap=, modeled on the LLM log in
+=~/tmpsorta/bizplan2026/README.org=. Each entry is a single line:
+
+: ** Name [YYYY-MM-DD Ddd HH:MM]: short description of the substantive change
+
+Conventions:
+- One entry per substantive repository edit (skip trivial/no-op churn).
+- Speakers are the assisting models: ChatGPT, Gemini, Claude (add others as
+  they appear).
+- Each model logs its *own* work going forward. Models should not write
+  entries on another model's behalf.
+
+*Bootstrap note (Claude, 2026-06-11):* the ChatGPT and Gemini entries below
+were reconstructed by Claude from git history and working-tree evidence to
+seed this file, because RobLa asked for a one-time bootstrap. They are a
+best-effort reconstruction, not self-authored entries by those models, and may
+not capture each model's own framing of its work. From this point forward each
+model is expected to add its own entries.
+
+* LLM log
+** ChatGPT [2026-06-03 Wed 11:35]: drafted the initial README.md after a brainstorming session — established the mwmap concept (ongoing two-way sync between MediaWiki and local wiki-like formats: Zim, Org-mode, Markdown trees), the central "map" abstraction, and goals/non-goals.
+** ChatGPT [2026-06-03 Wed 12:03]: clarified the mwmap/mwsync relationship in README, deliberately leaving it unsettled — mwmap as a possible mwsync-next-gen, a plugin/extension to mwsync, or the basis for an mwsync rearchitecture.
+** ChatGPT [2026-06-03 Wed 12:43]: added architecture thoughts to README arguing why mwmap might be "mwsync.py 2.0".
+** ChatGPT [2026-06-03 Wed 13:07]: added AGENTS.md (contributor guidelines), docs/architecture.md, and docs/testing.md, and trimmed README to define the first-version CLI target — a local-only mwmap.py with init/source/status that creates and inspects mapping metadata without contacting MediaWiki.
+** ChatGPT [2026-06-03 Wed 13:23]: added the first round of failing CLI-milestone tests (tests/test_mwmap_cli.py), pytest.ini, and .gitignore, and documented the test policy in docs/testing.md and AGENTS.md (tests describe the milestone and are expected to fail until mwmap.py exists).
+** ChatGPT [2026-06-03 Wed 13:38]: renamed the metadata directory from .mwmap to _mwmap across README, docs/architecture.md, docs/testing.md, and the tests.
+** ChatGPT [2026-06-03 Wed 13:55]: added explanatory comments to the milestone tests and a matching note in docs/testing.md.
+** Gemini [2026-06-03 Wed 13:44]: created GEMINI.md, a Gemini-specific project-context/guidance file (overview, tech stack, YAGNI coding conventions, verb-style subcommands, testing practices, planned _mwmap/ layout). [uncommitted at time of bootstrap]
+** Gemini [2026-06-03 Wed 13:59]: created docs/migration.md, a guide for migrating from the legacy mwsync _cache layout to the new _mwmap structure (config.yaml vs. cache/ split, explicit multi-format mappings, the possible later _mwmap → _mwsync rename, and draft manual migration steps). [uncommitted at time of bootstrap]
+** Claude [2026-06-11 Thu 20:35]: created this docs/llm-log.org and bootstrapped it with the reconstructed ChatGPT and Gemini history above (see the bootstrap note). Made no changes to mwmap's design or code — this is the log's first entry only.
