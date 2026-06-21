@@ -26,7 +26,7 @@ def test_help_lists_first_version_commands():
     help_text = result.stdout.lower()
     assert "usage:" in help_text
     assert "init" in help_text
-    assert "source" in help_text
+    assert "remote" in help_text
     assert "status" in help_text
 
 
@@ -40,21 +40,21 @@ def test_init_creates_empty_workspace_config(tmp_path):
     assert (tmp_path / "_mwmap" / "cache").is_dir()
     assert yaml.safe_load(config_path.read_text()) == {
         "version": 1,
-        "sources": {},
+        "remotes": {},
         "mappings": [],
     }
     assert "initialized" in result.stdout.lower()
 
 
-def test_source_add_and_status_report_configured_source(tmp_path):
-    # Verifies a source can be stored in config and then reported by status.
+def test_remote_add_and_status_report_configured_remote(tmp_path):
+    # Verifies a remote can be stored in config and then reported by status.
     init_result = run_mwmap("--root", str(tmp_path), "init")
     assert init_result.returncode == 0, init_result.stderr
 
     add_result = run_mwmap(
         "--root",
         str(tmp_path),
-        "source",
+        "remote",
         "add",
         "electowiki",
         "mediawiki",
@@ -63,7 +63,7 @@ def test_source_add_and_status_report_configured_source(tmp_path):
 
     assert add_result.returncode == 0, add_result.stderr
     config = yaml.safe_load((tmp_path / "_mwmap" / "config.yaml").read_text())
-    assert config["sources"]["electowiki"] == {
+    assert config["remotes"]["electowiki"] == {
         "type": "mediawiki",
         "location": "https://electowiki.org/w/",
     }

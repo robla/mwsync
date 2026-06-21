@@ -28,7 +28,7 @@ differences — most notably `checkout`.
 
 `mwmap.py` separates these responsibilities:
 
-1. **Configuration & pairing** — registering sources and pairing specific remote
+1. **Configuration & pairing** — registering remotes and pairing specific
    locations (pages, subtrees, namespaces, or entire wikis) to local paths.
 2. **Data & synchronization** — moving wikitext between the remote wiki, the
    local cache (`_mwmap/cache/`), and the working directory.
@@ -43,9 +43,9 @@ This separation lets `mwmap` adopt modern Git's clean verbs (`restore`,
 | Action / Concept | Git Command | Legacy `mwsync.py` | Proposed `mwmap.py` | Notes / Alignment |
 | :--- | :--- | :--- | :--- | :--- |
 | **Initialize workspace** | `git init` | `mwsync.py init` | `mwmap.py init` | Creates the `_mwmap/` metadata directory. |
-| **Register a source** | `git remote add` | *(implicit / hardcoded)* | `mwmap.py source add` | Registers a MediaWiki instance or local store. |
+| **Register a remote** | `git remote add` | *(implicit / hardcoded)* | `mwmap.py remote add` | Registers a remote to sync against (e.g. a MediaWiki instance); its location may itself be local. |
 | **Pair remote ↔ local** | *(no single verb; cf. `git branch -u`)* | `mwsync.py add` / `checkout` | **`mwmap.py pair <type>`** | Links a page, subtree, namespace, or wiki to a local path. New verb — see below. |
-| **Clone (set up + populate)** | `git clone` | `mwsync.py checkout` | `mwmap.py clone` *(future)* | Convenience macro over `init` + `source add` + `pair` + `fetch` + populate. |
+| **Clone (set up + populate)** | `git clone` | `mwsync.py checkout` | `mwmap.py clone` *(future)* | Convenience macro over `init` + `remote add` + `pair` + `fetch` + populate. |
 | **Fetch remote → cache** | `git fetch` | `mwsync.py fetch` | `mwmap.py fetch` | Downloads remote revisions/metadata to cache; no working-tree changes. |
 | **Show workspace status** | `git status` | `mwsync.py status` | `mwmap.py status` | Compares working files, cached base, and remote upstream. |
 | **Compare changes** | `git diff` | `mwsync.py diff` | `mwmap.py diff` | Line-by-line diffs across working / base / upstream. |
@@ -79,10 +79,15 @@ Because the "map" between systems is the entire reason `mwmap` exists, that
 relationship deserves a first-class, readable verb:
 
 ```sh
-mwmap.py pair page    electowiki:ElectoramaNews  notes:ElectoramaNews
-mwmap.py pair subtree electowiki:Category:Maine  notes:maine/
-mwmap.py pair wiki    electowiki                 notes
+mwmap.py pair page    electowiki:ElectoramaNews  ElectoramaNews.mw
+mwmap.py pair subtree electowiki:Category:Maine  maine/
+mwmap.py pair wiki    electowiki                 .
 ```
+
+The local side of each pairing is just a path: the directory where you run
+`mwmap` (its `--root`) is the implicit local working tree, never registered or
+named — exactly as Git never makes you name your working tree. The named stores
+you pair *against* are remotes (see "Register a remote" above).
 
 Its inverse is `unpair`. This is a deliberate, justified departure from Git —
 adding a concept Git lacks — as distinct from arbitrarily renaming a concept
@@ -136,7 +141,7 @@ mwmap.py switch staging
 #### `mwmap.py clone` — set up and populate in one step (future)
 
 For the common "I just want the whole thing locally" case, `clone` is a
-convenience macro over the primitives (`init` + `source add` + `pair wiki` +
+convenience macro over the primitives (`init` + `remote add` + `pair wiki` +
 `fetch` + populate), matching `git clone`:
 
 ```sh

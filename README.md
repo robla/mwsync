@@ -50,7 +50,7 @@ The first version of `mwmap.py` should be a small Python CLI runnable from the r
 ```sh
 python3 mwmap.py --help
 python3 mwmap.py --root ~/Notes/electowiki init
-python3 mwmap.py --root ~/Notes/electowiki source add electowiki mediawiki https://electowiki.org/w/
+python3 mwmap.py --root ~/Notes/electowiki remote add electowiki mediawiki https://electowiki.org/w/
 python3 mwmap.py --root ~/Notes/electowiki status
 ```
 
@@ -59,18 +59,18 @@ It should not contact MediaWiki or synchronize content yet. It should only creat
 Required behavior:
 
 * Accept a global `--root PATH` option, defaulting to the current directory.
-* Show `init`, `source`, and `status` in `--help`.
+* Show `init`, `remote`, and `status` in `--help`.
 * Create `_mwmap/config.yaml` and `_mwmap/cache/` on `init`.
 * Store an initial config equivalent to:
 
 ```yaml
 version: 1
-sources: {}
+remotes: {}
 mappings: []
 ```
 
-* Implement `source add NAME TYPE LOCATION` by recording a source in the config.
-* Implement `status` by reporting configured sources and the mapping count.
+* Implement `remote add NAME TYPE LOCATION` by recording a remote in the config.
+* Implement `status` by reporting configured remotes and the mapping count.
 * Exit nonzero with a clear message if commands that need config run before `init`.
 
 ## Documentation

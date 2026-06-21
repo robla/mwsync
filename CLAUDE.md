@@ -31,28 +31,30 @@ hardcode `PROJECT_ROOT / "mwmap.py"`). It must be local-only — it must **not**
 contact MediaWiki or sync content yet; it only creates and inspects local
 mapping metadata. Required behavior:
 
-- Global `--root PATH` option, defaulting to the current directory.
-- `--help` shows `init`, `source`, and `status`.
+- Global `--root PATH` option, defaulting to the current directory. The root is
+  the implicit local working tree (never registered); everything synced against
+  is a registered **remote** (Git's asymmetric model — a remote may be local).
+- `--help` shows `init`, `remote`, and `status`.
 - `init` creates `_mwmap/config.yaml` and `_mwmap/cache/`, writing config
-  equal to `{version: 1, sources: {}, mappings: []}`, and prints "initialized".
-- `source add NAME TYPE LOCATION` records `sources[NAME] = {type, location}`.
-- `status` reports configured sources and the mapping count (e.g. `0 mappings`).
+  equal to `{version: 1, remotes: {}, mappings: []}`, and prints "initialized".
+- `remote add NAME TYPE LOCATION` records `remotes[NAME] = {type, location}`.
+- `status` reports configured remotes and the mapping count (e.g. `0 mappings`).
 - Commands needing config must exit nonzero with a clear message before `init`.
 
 See `tests/test_mwmap_cli.py` for exact expected output strings.
 
 ## Architecture and metadata model
 
-- `_mwmap/config.yaml` is **durable, user-facing** state: source definitions and
+- `_mwmap/config.yaml` is **durable, user-facing** state: remote definitions and
   mapping rules. `_mwmap/cache/` is **disposable** — anything repopulatable from
-  sources. Do not create `_mwmap/refs/` (it implies a git-like ref store mwmap
+  remotes. Do not create `_mwmap/refs/` (it implies a git-like ref store mwmap
   shouldn't inherit); if revision storage is needed later, prefer
   `_mwmap/revisions/`.
 - Subcommands are **verb-style** and deliberately aligned with Git semantics
   (`init`, `fetch`, `status`, `diff`, `merge`, `push`, `restore`, `log`,
   `checkout`, …). `docs/git-mapping.md` maps Git ↔ legacy `mwsync.py` ↔ `mwmap`
   verbs; `docs/architecture.md` is the source of truth for direction. Note the
-  intended split versus legacy `mwsync`: **pairing/config** (`source`, `pair`)
+  intended split versus legacy `mwsync`: **pairing/config** (`remote`, `pair`)
   is separate from **content sync** (`fetch`, `merge`, `push`).
 - Verbs may eventually need to become `mwsync` verbs (e.g. `mwmap init` →
   `mwsync mapinit`). Choose names with that migration path in mind — `mwmap`

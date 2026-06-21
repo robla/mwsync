@@ -20,9 +20,9 @@ _mwmap/
   cache/
 ```
 
-`_mwmap/config.yaml` is durable user-facing map configuration. It should store source definitions, mapping rules, and other state that defines the user's intended relationship between systems.
+`_mwmap/config.yaml` is durable user-facing map configuration. It should store remote definitions, mapping rules, and other state that defines the user's intended relationship between systems.
 
-`_mwmap/cache/` is disposable storage. It may hold remote-derived metadata, fetched page bodies, local-store indexes, or other data that can be repopulated from sources if deleted.
+`_mwmap/cache/` is disposable storage. It may hold remote-derived metadata, fetched page bodies, local-store indexes, or other data that can be repopulated from remotes if deleted.
 
 Do not create `_mwmap/refs/` for now. The name implies a git-like reference store, and `mwmap` should not inherit that expectation unless the storage model truly needs it. If revision storage becomes necessary, prefer a plain name such as `_mwmap/revisions/`.
 
@@ -32,12 +32,11 @@ Do not create `_mwmap/refs/` for now. The name implies a git-like reference stor
 
 ```sh
 mwmap init
-mwmap source add electowiki mediawiki https://electowiki.org/w/
-mwmap source add notes zim ~/Notes/electowiki
+mwmap remote add electowiki mediawiki https://electowiki.org/w/
 
-mwmap pair page electowiki:ElectoramaNews notes:ElectoramaNews
-mwmap pair subtree electowiki:ElectoramaNews/ notes:ElectoramaNews/
-mwmap pair wiki electowiki notes
+mwmap pair page electowiki:ElectoramaNews ElectoramaNews.mw
+mwmap pair subtree electowiki:ElectoramaNews/ ElectoramaNews/
+mwmap pair wiki electowiki .
 
 mwmap fetch
 mwmap status
@@ -48,6 +47,49 @@ mwmap unpair
 ```
 
 These verbs may eventually need to become `mwsync` verbs. For example, `mwmap init` might become `mwsync.py mapinit`, and `mwmap push` might become `mwsync push --full`. Choose verbs with that migration path in mind.
+
+## Remotes and the Local Working Tree
+
+`mwmap` follows Git's asymmetric model. The directory you run `mwmap` in — its
+`--root`, where `_mwmap/` lives — is the **local working tree**. It is never
+registered or named; in a pairing, the local side is simply a path, exactly as
+Git never makes you name your working tree.
+
+Everything you sync against is a **remote**, registered with `remote add` and
+stored under `remotes:` in `config.yaml`. There can be many remotes (e.g. two
+MediaWiki instances), like Git's `origin`, `upstream`, and so on. A remote's
+location may itself be local (a directory on disk), just as a Git remote can be
+a filesystem path — "remote" denotes another store, not another machine.
+
+`mwmap` resolves "which remote" at two levels, mirroring Git:
+
+* **Per-pairing upstream** — each mapping records the remote and remote location
+  it tracks, set at `pair` time (like Git's `branch.<name>.remote`). Operations
+  on an already-paired path always know their remote, so no default is needed.
+* **A repo-level default remote** — a settable `default_remote` pointer (like
+  Git's `origin` / `remote.pushDefault`). It auto-resolves to the sole remote
+  when there is only one, and is used when a command is not tied to a specific
+  pairing (repo-wide `fetch`/`push`, or `pair` without naming a remote).
+
+A fuller config then looks like:
+
+```yaml
+version: 1
+remotes:
+  electowiki:
+    type: mediawiki
+    location: https://electowiki.org/w/
+default_remote: electowiki
+mappings:
+  - remote: electowiki
+    type: page
+    remote_path: ElectoramaNews
+    local_path: ElectoramaNews.mw
+```
+
+Keep YAGNI in mind: the first milestone only needs `remote add` and `status`.
+The `default_remote` pointer and per-pairing upstream are design direction, not
+code to build yet.
 
 ## Tentative Source Layout
 
@@ -62,7 +104,7 @@ src/
       __init__.py
       init.py
       pair.py
-      source.py
+      remote.py
       status.py
       sync.py
       unpair.py

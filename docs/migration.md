@@ -15,7 +15,7 @@ This document describes the transition from the legacy `_cache` infrastructure u
 
 ### 1. Structure Transition
 The legacy `_cache` directory served as a combined metadata and content store. `mwmap` separates these concerns:
-- `_mwmap/config.yaml`: Durable, user-edited configuration of sources and mapping rules.
+- `_mwmap/config.yaml`: Durable, user-edited configuration of remotes and mapping rules.
 - `_mwmap/cache/`: Disposable, system-generated cache of remote metadata and page content.
 
 ### 2. Explicit Mappings
@@ -27,6 +27,6 @@ As of June 2026, the metadata directory is named `_mwmap`. However, this may be 
 ## Manual Migration Steps (Draft)
 
 1. **Initialize**: Run `mwmap init` to create the new metadata structure.
-2. **Register Sources**: Use `mwmap source add` to define the MediaWiki and local stores previously managed by `mwsync`.
+2. **Register Remotes**: Use `mwmap remote add` to define the MediaWiki instances previously managed by `mwsync`. The local working tree is the `--root` directory itself and is not registered.
 3. **Define Mappings**: Manually add mapping entries to `_mwmap/config.yaml` that replicate your existing `mwsync` setup.
 4. **Verification**: Run `mwmap status` to ensure the new mapping logic correctly identifies the existing local files.
