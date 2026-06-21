@@ -34,3 +34,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** Claude [2026-06-11 Thu 20:35]: created this docs/llm-log.org and bootstrapped it with the reconstructed ChatGPT history above (see the bootstrap note). Made no changes to mwmap's design or code — this is the log's first entry only.
 ** Gemini [2026-06-11 Thu 20:50]: refined and finalized docs/migration.md and created mwsync/docs/migration.md to support legacy transition workflows.
 ** Gemini [2026-06-11 Thu 21:05]: re-verified commit history and file timestamps; corrected LLM log to accurately attribute June 3rd work while adding self-authored entries for today's session.
+** Gemini [2026-06-21 Sun 15:16]: created docs/git-mapping.md mapping Git/mwsync/mwmap subcommands and analyzing the "checkout" verb, and updated llm-log.org.
