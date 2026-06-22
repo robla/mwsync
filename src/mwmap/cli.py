@@ -1,7 +1,7 @@
 """Command-line parser and top-level dispatch.
 
 Typical call stack:
-  mwmap.py -> mwmap.cli.main() -> build_parser() -> command run(args)
+  mwmap.py -> mwmap.cli.main() -> build_cli_parser() -> command run(args)
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from mwmap.commands.remote import run_remote_add
 from mwmap.commands.status import run_status
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_cli_parser() -> argparse.ArgumentParser:
     """Build the first-version mwmap command parser."""
     parser = argparse.ArgumentParser(prog="mwmap.py")
     parser.add_argument(
@@ -50,8 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments and run the selected subcommand."""
-    parser = build_parser()
+    parser = build_cli_parser()
     args = parser.parse_args(argv)
     args.root = args.root.resolve()
     return args.func(args)
-

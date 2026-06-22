@@ -50,7 +50,7 @@ Adhere to these guidelines when working on `mwmap`:
 - `src/mwmap/`: Python implementation package.
     - `cli.py`: argument parsing and dispatch.
     - `commands/`: verb handlers.
-    - `context.py`: workspace config/cache helpers.
+    - `workspace.py`: workspace config/cache helpers.
     - `core/`: low-level MediaWiki and file helpers.
 - `docs/`: Architectural design and testing policy documents.
 - `tests/`: Behavioral specs and CLI milestone tests.

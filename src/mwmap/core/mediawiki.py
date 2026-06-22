@@ -12,7 +12,7 @@ from mwmap.core.misc import die
 USER_AGENT = "mwmap/0.1 prototype"
 
 
-def mediawiki_api_from_page_url(url: str) -> tuple[str, str, str]:
+def parse_mediawiki_page_url(url: str) -> tuple[str, str, str]:
     """Return `(title, api_url, remote_location)` for a MediaWiki page URL."""
     parsed = parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -89,4 +89,3 @@ def fetch_mediawiki_page(api_url: str, title: str) -> tuple[str, dict[str, Any]]
         "timestamp": revision.get("timestamp"),
     }
     return content, metadata
-

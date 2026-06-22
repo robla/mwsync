@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from mwmap.context import CONFIG_DIR, init_workspace
+from mwmap.workspace import CONFIG_DIR, init_workspace
 
 
 def run_init(args: argparse.Namespace) -> int:
@@ -15,4 +15,3 @@ def run_init(args: argparse.Namespace) -> int:
     else:
         print(f"mwmap workspace already initialized in {args.root / CONFIG_DIR}")
     return 0
-

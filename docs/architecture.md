@@ -122,7 +122,7 @@ src/
   mwmap/
     __init__.py
     cli.py
-    context.py
+    workspace.py
     commands/
       __init__.py
       clone.py
@@ -140,14 +140,14 @@ The typical local-command call stack is:
 ```text
 mwmap.py
   -> mwmap.cli.main()
-  -> mwmap.cli.build_parser()
+  -> mwmap.cli.build_cli_parser()
   -> mwmap.commands.<verb>.run_*(args)
-  -> mwmap.context and mwmap.core helpers
+  -> mwmap.workspace and mwmap.core helpers
 ```
 
 The root `mwmap.py` only adds `src/` to `sys.path` and calls `mwmap.cli.main()`.
 The `mwmap` shell wrapper calls `python3 mwmap.py`. Command modules should stay
-small and delegate workspace state to `context.py` and low-level helpers to
+small and delegate workspace state to `workspace.py` and low-level helpers to
 `core/`.
 
 ## Core Design Direction

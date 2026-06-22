@@ -70,7 +70,7 @@ See `tests/test_mwmap_cli.py` for exact expected output strings.
 - **YAGNI is a stated rule.** The project has started the
   `src/mwmap/{cli,commands/,core/}` layout, but modules should stay small and
   should exist only when working code needs them. The normal call stack is
-  `mwmap.py -> mwmap.cli.main() -> mwmap.commands.<verb> -> context/core`.
+  `mwmap.py -> mwmap.cli.main() -> mwmap.commands.<verb> -> workspace/core`.
 - Each function should have a brief docstring. Use short call-stack notes in
   modules that coordinate multiple layers; avoid large explanatory comments.
 - **Do not write tests concurrently with implementation unless explicitly

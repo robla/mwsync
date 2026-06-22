@@ -10,12 +10,12 @@ Current Python source layout:
 src/
   mwmap/
     cli.py
-    context.py
+    workspace.py
     commands/
     core/
 ```
 
-Keep the structure modest. Add modules only when working code needs them. The typical call stack is `mwmap.py -> mwmap.cli.main() -> mwmap.commands.<verb> -> mwmap.context/core`.
+Keep the structure modest. Add modules only when working code needs them. The typical call stack is `mwmap.py -> mwmap.cli.main() -> mwmap.commands.<verb> -> mwmap.workspace/core`.
 
 ## Build, Test, and Development Commands
 

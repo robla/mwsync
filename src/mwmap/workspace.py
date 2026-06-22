@@ -1,7 +1,7 @@
 """Workspace, config, and cache helpers.
 
 Typical command flow:
-  command handler -> load/save config here -> atomic file writes in core.misc
+  command handler -> load/save workspace config here -> atomic writes in core.misc
 """
 
 from __future__ import annotations
@@ -35,13 +35,13 @@ def initial_config() -> dict[str, Any]:
     return {"version": 1, "remotes": {}, "mappings": []}
 
 
-def save_config(root: Path, config: dict[str, Any]) -> None:
+def save_workspace_config(root: Path, config: dict[str, Any]) -> None:
     """Atomically write `_mwmap/config.yaml`."""
     text = yaml.safe_dump(config, sort_keys=False)
     atomic_write_text(config_path(root), text)
 
 
-def load_config(root: Path) -> dict[str, Any]:
+def load_workspace_config(root: Path) -> dict[str, Any]:
     """Load config, filling default top-level keys used by v1."""
     path = config_path(root)
     if not path.exists():
@@ -65,7 +65,7 @@ def init_workspace(root: Path) -> bool:
     path = config_path(root)
     if path.exists():
         return False
-    save_config(root, initial_config())
+    save_workspace_config(root, initial_config())
     return True
 
 
@@ -85,7 +85,7 @@ def unique_remote_name(config: dict[str, Any], preferred: str, location: str) ->
         suffix += 1
 
 
-def cache_page(root: Path, remote: str, title: str, content: str, metadata: dict[str, Any]) -> None:
+def cache_page_rev(root: Path, remote: str, title: str, content: str, metadata: dict[str, Any]) -> None:
     """Cache one fetched MediaWiki revision under revid-stable filenames."""
     revid = metadata.get("revid")
     if revid is None:
@@ -97,10 +97,10 @@ def cache_page(root: Path, remote: str, title: str, content: str, metadata: dict
     body_name = f"{revid_text}.mw"
     atomic_write_text(page_dir / body_name, content)
     atomic_write_text(page_dir / f"{revid_text}.yaml", yaml.safe_dump(metadata, sort_keys=False))
-    write_history(page_dir, {**metadata, "body": body_name})
+    write_hist_entry(page_dir, {**metadata, "body": body_name})
 
 
-def write_history(page_dir: Path, fetched: dict[str, Any]) -> None:
+def write_hist_entry(page_dir: Path, fetched: dict[str, Any]) -> None:
     """Merge one revision record into a chronological `history.jsonl`."""
     history_path = page_dir / "history.jsonl"
     records_by_revid: dict[str, dict[str, Any]] = {}
@@ -124,7 +124,7 @@ def write_history(page_dir: Path, fetched: dict[str, Any]) -> None:
     atomic_write_text(history_path, text)
 
 
-def mapping_exists(config: dict[str, Any], remote: str, title: str, local_path: str) -> bool:
+def has_page_mapping(config: dict[str, Any], remote: str, title: str, local_path: str) -> bool:
     """Return whether config already has this exact page mapping."""
     for mapping in config.setdefault("mappings", []):
         if (
