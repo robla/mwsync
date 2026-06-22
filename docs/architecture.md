@@ -165,6 +165,15 @@ Zim later) — the seam where conversion plugs in. `base_revid` records which
 cached revision the working file was derived from: the merge-base that `diff`,
 `merge`, and `push` need to act safely.
 
+The default `local_path` for a cloned page is derived mwsync-style
+(`workspace.local_path_for_page`): a main-namespace page is `<dbkey>.mw` at the
+root, while a page in another namespace lives under a `NNns_Name/` directory
+(e.g. `User:RobLa` → `02ns_User/RobLa.mw`), with subpage slashes escaped to
+`__`. A literal `:` or `/` is never written into a working filename — that
+would break `rsync`/`scp` `host:path` parsing, Windows filenames, and Zim's
+`:` page separator. `pageid` remains the identity, so `local_path` is only a
+human label; an explicit `clone URL PATH` overrides the derived name.
+
 Keep YAGNI in mind: the first milestone covers `init`, page-oriented `clone`,
 `remote add`, and `status` — so it does fetch content, via `clone`. With a
 single remote (the common first run) the default is simply that sole remote. A

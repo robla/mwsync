@@ -79,3 +79,18 @@ def test_cache_page_rev_writes_pageid_layout(tmp_path):
     assert record["title"] == "California"
     assert record["revid"] == 99
     assert record["body"] == "99.mw"
+
+
+def test_local_path_for_page_escapes_namespaces_and_subpages():
+    # Verifies working filenames keep ':' and '/' out of names (rsync/Windows/Zim
+    # safe): main-ns pages stay flat, other namespaces become NNns_Name/ dirs, and
+    # subpage slashes (and stray colons) become '__'.
+    def rel(title, namespace=0, namespace_name=None):
+        return workspace.local_path_for_page(title, namespace, namespace_name).as_posix()
+
+    assert rel("California", 0, "main") == "California.mw"
+    assert rel("User:RobLa", 2, "User") == "02ns_User/RobLa.mw"
+    assert rel("User:RobLa/Sandbox", 2, "User") == "02ns_User/RobLa__Sandbox.mw"
+    assert rel("Category:Voting systems", 14, "Category") == "14ns_Category/Voting_systems.mw"
+    # A main-namespace title that merely contains a colon must not yield a literal colon.
+    assert ":" not in rel("2024:Recap", 0, "main")

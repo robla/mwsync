@@ -79,6 +79,14 @@ wrong kind of work.
   prefixes, underscores↔spaces). Copy the **logic** for robustness, but feed it
   into `mwmap`'s pageid-keyed dirs and siteinfo-driven namespace map — do not
   copy the surrounding key/dir layout.
+  **Done (working filenames):** `workspace.local_path_for_page` now mirrors
+  mwsync's `_local_for_title_parts` / `_namespace_local_dir` / `_encode_dbkey_segment`
+  — main-namespace pages stay flat (`<dbkey>.mw`), other namespaces go under a
+  `NNns_Name/` directory (`02ns_User/RobLa.mw`), and subpage slashes become `__`.
+  This replaced an earlier `local_path_for_title` that left a literal `:` in
+  working filenames (broke `rsync`/`scp` `host:path` parsing, Windows, and Zim's
+  `:` page separator). One deliberate deviation from mwsync: a stray `:` in a
+  *main-namespace* title is also escaped to `__` (mwsync leaves it).
 
 - **Bulk Namespace Title Indexing (`wikimgr.py`)**. Uses the MediaWiki `allpages`
   API to query and cache page lists and stable `pageid` numbers for entire namespaces.

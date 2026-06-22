@@ -29,13 +29,14 @@ from urllib import parse
 from mwmap.workspace import (
     init_workspace,
     load_workspace_config,
+    local_path_for_page,
     register_remote,
     save_workspace_config,
     upsert_page_mapping,
 )
 from mwmap.core.mediawiki import parse_mediawiki_page_url
 from mwmap.core.remote import build_remote
-from mwmap.core.misc import die, local_path_for_title, remote_name_from_host
+from mwmap.core.misc import die, remote_name_from_host
 from mwmap.sync import ensure_site_info, fetch_page, write_local_body
 
 
@@ -63,7 +64,12 @@ def run_clone(args: argparse.Namespace) -> int:
     canonical_title = metadata.get("title", title)
 
     fmt = "mw"
-    local_path = Path(args.path) if args.path else local_path_for_title(canonical_title)
+    if args.path:
+        local_path = Path(args.path)
+    else:
+        local_path = local_path_for_page(
+            canonical_title, metadata.get("namespace", 0), metadata.get("namespace_name")
+        )
     target = args.root / local_path
     if target.exists():
         die(f"local path already exists: {target}")

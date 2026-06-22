@@ -204,6 +204,57 @@ def namespace_dir_name(namespace: Any, namespace_name: str | None) -> str:
     return f"{ns_num:02d}ns_{label}"
 
 
+def _encode_dbkey_segment(value: str) -> str:
+    """Normalize whitespace and escape characters unsafe in a filename.
+
+    Mirrors legacy mwsync's `_encode_dbkey_segment` (spaces->`_`, `/`->`__` for
+    subpages), and additionally escapes any residual `:` (mwsync leaves these in
+    main-namespace titles, but a literal colon breaks rsync/scp `host:path`
+    parsing, Windows filenames, and Zim's `:` page separator).
+    """
+    normalized = "_".join(value.replace("_", " ").split())
+    return normalized.replace("/", "__").replace(":", "__")
+
+
+def page_dbkey(title: str, namespace: Any, namespace_name: str | None = None) -> str:
+    """Return the namespace-stripped, filename-safe page key for a title.
+
+    e.g. ("User:RobLa", 2, "User") -> "RobLa"; ("California", 0) -> "California".
+    """
+    page_part = title
+    if _as_int(namespace) != 0:
+        prefix = f"{namespace_name}:" if namespace_name else None
+        if prefix and title.startswith(prefix):
+            page_part = title[len(prefix):]
+        elif ":" in title:
+            page_part = title.split(":", 1)[1]
+    return _encode_dbkey_segment(page_part)
+
+
+def local_path_for_page(
+    title: str, namespace: Any = 0, namespace_name: str | None = None
+) -> Path:
+    """Derive the working-copy relative path for a page, mwsync-style.
+
+    Main-namespace pages live at `<dbkey>.mw` under the root; pages in another
+    namespace go under a `<NNns_Name>/` directory as `<dbkey>.mw`, with subpage
+    slashes escaped to `__`. This keeps literal `:` and `/` out of working
+    filenames. Mirrors legacy mwsync's `_local_for_title_parts`.
+    """
+    dbkey = page_dbkey(title, namespace, namespace_name) or "page"
+    if _as_int(namespace) == 0:
+        return Path(f"{dbkey}.mw")
+    return Path(namespace_dir_name(namespace, namespace_name)) / f"{dbkey}.mw"
+
+
+def _as_int(value: Any) -> int:
+    """Best-effort int coercion for a namespace id (default 0)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def write_page_aliases(
     root: Path,
     remote: str,

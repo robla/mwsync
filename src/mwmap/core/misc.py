@@ -39,11 +39,3 @@ def remote_name_from_host(hostname: str) -> str:
         hostname = hostname[4:]
     name = hostname.split(".", 1)[0]
     return re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-") or "remote"
-
-
-def local_path_for_title(title: str) -> Path:
-    """Derive a conservative `.mw` filename from a MediaWiki title."""
-    name = title.strip().replace(" ", "_")
-    name = name.replace("/", "__")
-    name = re.sub(r"[^A-Za-z0-9._:-]+", "_", name)
-    return Path(f"{name or 'page'}.mw")
