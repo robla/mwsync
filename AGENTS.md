@@ -2,19 +2,20 @@
 
 ## Project Structure & Module Organization
 
-This repository is a prototype-stage implementation and design repository for `mwmap`. `mwmap.py` contains the first CLI version, `README.md` defines the concept and first target, `docs/` contains focused notes, and `tests/` contains pytest specs. The `mwsync` path is a gitignored symlink to the sibling `mwsync` project and should not be treated as part of this repo.
+This repository is a prototype-stage implementation and design repository for `mwmap`. `src/mwmap/` contains the CLI implementation, `mwmap.py` is the source-checkout entry point, `docs/` contains notes, and `tests/` contains pytest specs. The `mwsync` path is a gitignored symlink to the sibling `mwsync` project and should not be treated as part of this repo.
 
-Possible Python source layout, if the implementation outgrows one file:
+Current Python source layout:
 
 ```text
 src/
   mwmap/
     cli.py
+    context.py
     commands/
     core/
 ```
 
-Keep the structure modest. Add modules only when there is working code that needs them.
+Keep the structure modest. Add modules only when working code needs them. The typical call stack is `mwmap.py -> mwmap.cli.main() -> mwmap.commands.<verb> -> mwmap.context/core`.
 
 ## Build, Test, and Development Commands
 
@@ -29,7 +30,7 @@ When Python packaging is introduced, document the exact commands here before rel
 
 ## Coding Style & Naming Conventions
 
-No formatter or linter is configured yet. For future Python code, prefer clear module names, small command modules, and explicit names that match planned CLI verbs, such as `commands/init.py`, `commands/status.py`, or `commands/pair.py`. Avoid a single large `mwmap.py` monolith unless the implementation remains trivial.
+No formatter or linter is configured yet. Prefer clear module names, small command modules, and explicit names that match CLI verbs, such as `commands/init.py`, `commands/status.py`, or `commands/clone.py`. Give each function a brief docstring and add short call-stack notes where a module coordinates several layers.
 
 Use Markdown headings consistently in design documents. Keep prose direct and mark speculative architecture as tentative.
 

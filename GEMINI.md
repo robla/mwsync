@@ -25,9 +25,10 @@ Adhere to these guidelines when working on `mwmap`:
 
 ### Coding Style
 - **YAGNI:** Prioritize simple solutions. Avoid over-engineering or premature abstraction.
-- **Module Layout:** Keep the first implementation in root-level `mwmap.py` while it remains trivial; expand toward `src/mwmap/` with `commands/` only when working code needs it.
+- **Module Layout:** The implementation lives in `src/mwmap/`; root `mwmap.py` is a thin source-checkout entry point.
 - **CLI Design:** Use verb-style subcommands (e.g., `init`, `clone`, `remote`, `status`, `pair`, `fetch`, `push`).
 - **Standardization:** No formatter or linter is currently configured. Follow existing Python patterns in the repo.
+- **Documentation:** Give each function a brief docstring. Use short call-stack notes in coordinating modules, not large explanatory comments.
 
 ### Testing Practices
 - **Existing Tests:** The tests in `tests/test_mwmap_cli.py` cover the local first-version CLI behavior.
@@ -46,9 +47,14 @@ Adhere to these guidelines when working on `mwmap`:
 - `_mwmap/`: Local metadata storage created in workspaces.
     - `config.yaml`: Durable user-facing mapping configuration.
     - `cache/`: Disposable storage for remote-derived data.
+- `src/mwmap/`: Python implementation package.
+    - `cli.py`: argument parsing and dispatch.
+    - `commands/`: verb handlers.
+    - `context.py`: workspace config/cache helpers.
+    - `core/`: low-level MediaWiki and file helpers.
 - `docs/`: Architectural design and testing policy documents.
 - `tests/`: Behavioral specs and CLI milestone tests.
-- `mwmap.py`: The main first-version CLI entry point.
+- `mwmap.py`: Thin source-checkout CLI entry point.
 
 ---
 *This file was generated to provide context for AI-assisted development. Refer to `README.md` and `AGENTS.md` for more details.*

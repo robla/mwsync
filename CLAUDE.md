@@ -10,10 +10,12 @@ trees). The core abstraction is a **map**: rules describing how wiki objects
 (page, subtree, namespace, whole wiki) correspond to local structures, with
 two-way sync as the long-term goal.
 
-`mwmap.py` is the current first-version CLI implementation. The repository also
-holds design docs (`README.md`, `docs/`), contributor guidance (`AGENTS.md`,
-`GEMINI.md`), and a small pytest suite covering local CLI behavior. Much of
-`git log` is still design history rather than implementation history.
+`src/mwmap/` is the current first-version CLI implementation. The root
+`mwmap.py` is a thin source-checkout entry point that imports `mwmap.cli`.
+The repository also holds design docs (`README.md`, `docs/`), contributor
+guidance (`AGENTS.md`, `GEMINI.md`), and a small pytest suite covering local
+CLI behavior. Much of `git log` is still design history rather than
+implementation history.
 
 ## Commands
 
@@ -24,8 +26,9 @@ holds design docs (`README.md`, `docs/`), contributor guidance (`AGENTS.md`,
 
 ## First-version target (the spec the tests encode)
 
-The first `mwmap.py` is a single small CLI at the **repository root** (the tests
-hardcode `PROJECT_ROOT / "mwmap.py"`). Its motivating run is `init` then
+The first CLI is implemented under `src/mwmap/`, with root `mwmap.py` kept for
+source-checkout execution (the tests hardcode `PROJECT_ROOT / "mwmap.py"`).
+Its motivating run is `init` then
 `clone <page-url>` in an empty directory. `clone` contacts MediaWiki; the other
 commands operate on local mapping metadata. Required behavior:
 
@@ -64,10 +67,12 @@ See `tests/test_mwmap_cli.py` for exact expected output strings.
 
 ## Working conventions specific to this repo
 
-- **YAGNI is a stated rule.** Keep `mwmap.py` a single file while it stays
-  trivial. Only expand toward the `src/mwmap/{cli,commands/,core/}` layout
-  sketched in `docs/architecture.md` when working code actually needs it — that
-  layout is tentative, not a target to build out preemptively.
+- **YAGNI is a stated rule.** The project has started the
+  `src/mwmap/{cli,commands/,core/}` layout, but modules should stay small and
+  should exist only when working code needs them. The normal call stack is
+  `mwmap.py -> mwmap.cli.main() -> mwmap.commands.<verb> -> context/core`.
+- Each function should have a brief docstring. Use short call-stack notes in
+  modules that coordinate multiple layers; avoid large explanatory comments.
 - **Do not write tests concurrently with implementation unless explicitly
   asked.** If existing tests are missing, incomplete, or not targeted enough to
   make a change safely, stop and ask first. This matters most for sync, merge,

@@ -110,30 +110,45 @@ settable `default_remote` pointer for *multiple* remotes, richer per-pairing
 upstream management, and subtree/wiki clone remain design direction — not code
 to build yet.
 
-## Tentative Source Layout
+## Source Layout
 
-A larger implementation might use a structure like this:
+The implementation now uses a small package layout while keeping root-level
+entry points for source-checkout use:
 
 ```text
+mwmap
+mwmap.py
 src/
   mwmap/
+    __init__.py
     cli.py
     context.py
     commands/
       __init__.py
+      clone.py
       init.py
-      pair.py
       remote.py
       status.py
-      sync.py
-      unpair.py
     core/
       __init__.py
-      context.py
+      mediawiki.py
       misc.py
 ```
 
-Do not treat this layout as fixed. Keep YAGNI in mind and only expand the structure when working code needs it. Still, subcommands should probably live in their own files rather than in a single `mwmap.py` monolith.
+The typical local-command call stack is:
+
+```text
+mwmap.py
+  -> mwmap.cli.main()
+  -> mwmap.cli.build_parser()
+  -> mwmap.commands.<verb>.run_*(args)
+  -> mwmap.context and mwmap.core helpers
+```
+
+The root `mwmap.py` only adds `src/` to `sys.path` and calls `mwmap.cli.main()`.
+The `mwmap` shell wrapper calls `python3 mwmap.py`. Command modules should stay
+small and delegate workspace state to `context.py` and low-level helpers to
+`core/`.
 
 ## Core Design Direction
 
