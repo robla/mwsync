@@ -51,3 +51,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** ChatGPT [2026-06-21 Sun 21:22]: added docs/llm-summary.org with ChatGPT's current-state assessment.
 ** ChatGPT [2026-06-21 Sun 21:57]: documented proposed readable cache aliases under by-title/.
 ** ChatGPT [2026-06-21 Sun 22:16]: implemented readable pages/ and by-title/ cache aliases.
+** Claude [2026-06-21 Sun 22:40]: added Claude's current-state entry to docs/llm-summary.org.

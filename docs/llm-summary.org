@@ -64,3 +64,43 @@ needed for confidence; document exact cache invariants; avoid expanding format
 conversion until raw MediaWiki page clone/fetch/status/fsck feel boring and
 predictable. The current path is promising because it is becoming concrete
 without losing sight of the file architecture.
+
+** Claude [2026-06-21 Sun 22:40]
+=mwmap= (aliased =mwm= locally; the two names are interchangeable) is now a
+working prototype: =init=, =clone= (with =--follow= redirect handling),
+=remote add=, =status=, and =fsck=, behind a thin root =mwmap.py= over
+=src/mwmap/{cli,commands,workspace,sync,core}=. The defining recent move is the
+cache becoming a deliberately two-layer store. The *canonical* layer is
+pageid-keyed and authoritative: =cache/<remote>/pages/<pageid>/= with
+revid-named bodies/sidecars, =history.jsonl=, and a =page.yaml= marker; durable
+mapping state (=base_revid=, =format=) lives in =config.yaml=. The *derived*
+layer is rebuildable and exists purely for human navigation: a =by-title/=
+namespace-aware symlink index (=14ns_Category/Category__Voting -> ../../pages/<id>=)
+and per-page =<title-key>.mw -> <revid>.mw= aliases, with YAML-pointer/copy
+fallbacks where symlinks are unavailable.
+
+I think this is the right correction and worth its cost. Keying on =pageid=
+fixed page-move orphaning, but it sacrificed the easy legibility of legacy
+=mwsync='s =_cache=; the alias index buys that back without making titles
+authoritative again. The invariant to protect: =by-title/= and the =.mw=
+aliases must be pure functions of canonical state (=page.yaml= +
+=history.jsonl=), never a source of truth, so they can always be deleted and
+regenerated.
+
+That invariant points at the clearest gap. =fsck= currently *detects* trouble
+(partial revisions, =pageid=/dir mismatch, broken alias symlinks, stale
+mappings) but does not yet *repair*. The natural next step is =fsck --rebuild=
+that regenerates the entire derived layer from canonical data — low-risk
+precisely because aliases are derivable. Two correctness items to fold in:
+(1) =title_key= collisions (two pageids sanitizing to one key in a namespace)
+would clobber an alias, so fsck should verify each alias resolves to the
+*expected* pageid, not merely that the link is unbroken; (2) =base_revid= now
+appears in both =config.yaml= and =page.yaml=, so decide one source of truth
+(config is durable, page.yaml is cache) and have fsck flag drift.
+
+Tests are now offline-*enforced*, not just by convention: an autouse fixture in
+=conftest.py= blocks sockets, so the suite can never touch electowiki.org or any
+production wiki — network paths are exercised with stubbed =urlopen=. Keep it
+that way. After =fsck --rebuild=, the next real work is =fetch=/=restore=/=diff=
+built on =base_revid=; hold the line on format conversion until raw page
+clone/fetch/status/fsck feel boring.
