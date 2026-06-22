@@ -71,15 +71,35 @@ wrong kind of work.
   into `mwmap`'s pageid-keyed dirs and siteinfo-driven namespace map — do not
   copy the surrounding key/dir layout.
 
-## Already re-derived correctly — leave as-is
+- **Fetch transaction / history integrity** (`_cache_fetch_transaction`,
+  `_history_content`, `_cache_revision_metadata`; mwsync ~1516–1720). The
+  current `mwmap` cache writer is simpler and adequate for v1, but mwsync's
+  transaction logic is useful when adding depth windows, metadata-only history,
+  or all-known revision fetches. Copy the atomicity and duplicate/history
+  semantics; adapt paths to `cache/<remote>/pages/<pageid>/` and keep
+  `base_revid` in config.
+
+- **Pending commit reconciliation** (`run_commit`, `_reconcile_saved_pending`,
+  `_record_saved_revision`; mwsync ~2320–2580). This is more than "push": it
+  stages a pending edit, refuses unresolved conflict markers, and detects when
+  an identical or parent-compatible edit was already saved upstream before
+  submitting another edit. Reuse the workflow concepts, but redesign the
+  pending-edit files around `mwmap`'s remotes/mappings/pageids.
+
+## Already re-derived or intentionally changed
 
 Some `mwmap` code was written before this inspection and turns out to match
-`mwsync`'s proven logic. Validation, not waste:
+`mwsync`'s proven logic. Other parts are intentionally smaller for the current
+prototype.
 
-- **Merge control flow.** `mwmap`'s `commands/merge.py::_merge_one` independently
-  reproduces `mwsync`'s `run_merge` (mwsync ~2715) case ladder: populate-if-missing
-  → adopt/up-to-date → local-matches-upstream → fast-forward → 3-way → conflict.
-  The one substantive difference is the merge engine (below). Keep mwmap's ladder.
+- **Merge control flow.** `mwmap`'s `commands/merge.py::_merge_one` matches the
+  important mapped-page cases in `mwsync`'s `run_merge` (mwsync ~2715):
+  populate-if-missing → up-to-date/local-matches-upstream → fast-forward →
+  3-way → conflict. It is not a full clone of legacy behavior: mwsync also has
+  base-less adoption, trailing-final-newline normalization, saved merge-state
+  files, and `_ensure_cached_body` recovery for missing upstream bodies. Keep
+  mwmap's smaller ladder for now, but treat those mwsync cases as known
+  follow-up decisions rather than assuming they were intentionally rejected.
 - **API fetch.** `fetch_mediawiki_page` / `fetch_mediawiki_page_by_id` mirror
   `_fetch_page` (mwsync ~716); mwmap additionally fetches by **pageid** and
   returns a redirect note, which mwsync does not.
@@ -125,6 +145,9 @@ that adjacent disjoint edits are a genuine diff3 conflict. The choice:
    read creds from `MWMAP_MW_USER` / `MWMAP_MW_PASSWORD`; surface `editconflict`
    as a "fetch + merge, then retry" message.
 3. **When `merge` must tolerate a missing base body:** copy
-   `_fetch_revision_by_revid` so it re-fetches rather than dying.
+   `_fetch_revision_by_revid` so it re-fetches rather than dying. Also decide
+   whether to copy mwsync's trailing-final-newline normalization.
 4. **When adding subtree/namespace mappings:** copy the namespace-normalization
    helpers, adapted to siteinfo + pageid dirs.
+5. **When adding history depth or commit/push:** revisit the transaction and
+   pending-commit sections above before inventing new storage behavior.
