@@ -10,6 +10,7 @@ import argparse
 from pathlib import Path
 
 from mwmap.commands.clone import run_clone
+from mwmap.commands.commit import run_commit
 from mwmap.commands.fetch import run_fetch
 from mwmap.commands.fsck import run_fsck
 from mwmap.commands.init import run_init
@@ -67,9 +68,17 @@ def build_cli_parser() -> argparse.ArgumentParser:
     p_pull.add_argument("path", nargs="?", help="Limit to one paired local path")
     p_pull.set_defaults(func=run_pull)
 
-    p_push = sub.add_parser("push", help="Upload local edits to MediaWiki")
+    p_commit = sub.add_parser("commit", help="Stage a pending edit from working files")
+    p_commit.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_commit.add_argument("-m", "--message", help="Edit summary (prompts an editor if omitted)")
+    p_commit.add_argument("--amend", action="store_true", help="Replace an existing pending commit")
+    p_commit.add_argument(
+        "--allow-empty", action="store_true", help="Commit even with no change from base"
+    )
+    p_commit.set_defaults(func=run_commit)
+
+    p_push = sub.add_parser("push", help="Publish staged commits to MediaWiki")
     p_push.add_argument("path", nargs="?", help="Limit to one paired local path")
-    p_push.add_argument("-m", "--summary", help="Edit summary (prompts an editor if omitted)")
     p_push.add_argument(
         "--dry-run",
         action="store_true",

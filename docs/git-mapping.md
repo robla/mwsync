@@ -55,7 +55,7 @@ This separation lets `mwmap` adopt modern Git's clean verbs (`restore`,
 | **Fetch remote → cache** | `git fetch` | `mwsync.py fetch` | `mwmap.py fetch` | Downloads remote revisions/metadata to cache; no working-tree changes. |
 | **Show workspace status** | `git status` | `mwsync.py status` | `mwmap.py status` | Compares working files, cached base, and remote upstream. |
 | **Compare changes** | `git diff` | `mwsync.py diff` | `mwmap.py diff` | Line-by-line diffs across working / base / upstream. |
-| **Snapshot local changes** | `git commit` | `mwsync.py commit` | *(TBD)* | `mwmap` may use automatic diffing instead of an explicit commit step. |
+| **Snapshot local changes** | `git commit` | `mwsync.py commit` | `mwmap.py commit` | Stages a pending edit (body + summary + `base_revid`) per page under its cache dir; `push` publishes it. |
 | **Integrate upstream** | `git merge` (cf. `git pull`) | `mwsync.py merge` | `mwmap.py merge` | Integrates fetched upstream revisions from cache into working files. |
 | **Upload to remote** | `git push` | `mwsync.py push` | `mwmap.py push` | Uploads local edits back to the wiki. |
 | **Discard / populate working files** | `git restore` | `mwsync.py restore` | **`mwmap.py restore`** | Rewrites working files from the cached base, including files that are missing. |

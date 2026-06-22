@@ -145,10 +145,15 @@ that adjacent disjoint edits are a genuine diff3 conflict. The choice:
    `mediawiki_edit_page` (edit by stable pageid; `MediaWikiEditConflict` raised
    on `editconflict`); `MediaWikiRemote` gained `login()` + `push_page()`; the
    `push` command reads creds from `MWMAP_MW_USER` / `MWMAP_MW_PASSWORD` and
-   tells the user to `pull` then retry on conflict. **Not** copied: mwsync's
-   pending-commit two-step (`commit` then `push`) and `_edit_summary`'s tie to a
-   pending file — `push` is direct (working file → wiki) for now, with `-m`/an
-   editor prompt for the summary. A `commit` staging step remains future work.
+   tells the user to `pull` then retry on conflict.
+   Also adopted mwsync's **`commit` → `push` two-step**: `commit` stages a
+   pending edit (`commit.mw` + `commit.json`) in the page's cache dir
+   (adapting `_write_pending_commit` / `_pending_commit` / `_clear_pending_commit`,
+   re-homed from key-based `_cache/<key>/` to `cache/<remote>/pages/<pageid>/`),
+   and `push` submits the staged commit rather than the working tree. `_edit_summary`
+   was copied as `commit._prompt_summary`. **Not** copied: mwsync's reconciliation
+   (`_reconcile_saved_pending`, `last-pushed` ref) and `--new` page creation; a
+   pending commit is also not auto-invalidated by `merge`/`pull` (re-`commit`).
 3. **When `merge` must tolerate a missing base body:** copy
    `_fetch_revision_by_revid` so it re-fetches rather than dying. Also decide
    whether to copy mwsync's trailing-final-newline normalization.

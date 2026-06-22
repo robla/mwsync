@@ -292,6 +292,58 @@ def update_cache_base(root: Path, remote: str, pageid: Any, base_revid: Any) -> 
         _symlink_or_copy(page_dir / f"{base_revid}.mw", page_dir / f"{title_key}.mw")
 
 
+def pending_commit_meta_path(root: Path, remote: str, pageid: Any) -> Path:
+    """Return the pending-commit metadata path for one page (`commit.json`)."""
+    return page_cache_dir(root, remote, pageid) / "commit.json"
+
+
+def pending_commit_body_path(root: Path, remote: str, pageid: Any) -> Path:
+    """Return the pending-commit body path for one page (`commit.mw`)."""
+    return page_cache_dir(root, remote, pageid) / "commit.mw"
+
+
+def read_pending_commit(root: Path, remote: str, pageid: Any) -> dict[str, Any] | None:
+    """Return staged commit metadata for one page, or None if nothing staged.
+
+    A pending commit is local intent (not repopulatable from the remote), but it
+    is recoverable by re-`commit`-ing from the working file, so storing it in the
+    otherwise-disposable cache degrades gracefully if the cache is wiped.
+    """
+    meta_path = pending_commit_meta_path(root, remote, pageid)
+    if not meta_path.exists():
+        return None
+    if not pending_commit_body_path(root, remote, pageid).exists():
+        die(f"pending commit metadata exists but body is missing: {meta_path}")
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        die(f"could not parse pending commit {meta_path}: {exc}")
+    return meta if isinstance(meta, dict) else None
+
+
+def write_pending_commit(
+    root: Path, remote: str, pageid: Any, meta: dict[str, Any], body: str
+) -> None:
+    """Stage a pending commit (body then metadata) for one page."""
+    atomic_write_text(pending_commit_body_path(root, remote, pageid), body)
+    atomic_write_text(
+        pending_commit_meta_path(root, remote, pageid),
+        json.dumps(meta, indent=2, sort_keys=True) + "\n",
+    )
+
+
+def clear_pending_commit(root: Path, remote: str, pageid: Any) -> None:
+    """Remove any staged commit for one page (after a successful push)."""
+    for path in (
+        pending_commit_meta_path(root, remote, pageid),
+        pending_commit_body_path(root, remote, pageid),
+    ):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def iter_page_mappings(
     config: dict[str, Any], local_path: str | None = None
 ) -> list[dict[str, Any]]:

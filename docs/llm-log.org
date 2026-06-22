@@ -59,3 +59,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** Claude [2026-06-21 Sun 23:55 PDT]: add docs/legacy-code-copy.md; strengthen merge conflict-marker check.
 ** ChatGPT [2026-06-21 Sun 23:34 PDT]: refined legacy mwsync copy guidance after source review.
 ** Claude [2026-06-22 Mon 00:20 PDT]: add push verb, copying mwsync login/CSRF/edit primitives.
+** Claude [2026-06-22 Mon 00:45 PDT]: add commit verb; push now publishes the staged commit.

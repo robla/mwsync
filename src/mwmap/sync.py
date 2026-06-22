@@ -54,16 +54,22 @@ def fetch_mapping(root: Path, remote: Remote, mapping: dict[str, Any]) -> dict[s
 
 
 def push_mapping(
-    root: Path, remote: Remote, mapping: dict[str, Any], text: str, summary: str
+    root: Path,
+    remote: Remote,
+    mapping: dict[str, Any],
+    text: str,
+    summary: str,
+    baserevid: Any,
 ) -> int:
-    """Push working `text` for one mapping, re-cache the result, advance the base.
+    """Push staged `text` for one mapping, re-cache the result, advance the base.
 
-    Submits the edit with the mapping's `base_revid` as the edit-conflict guard,
-    then re-fetches the page (now the just-created revision) into cache and
-    advances the cached base to it. Returns the new revid. The caller advances
-    `base_revid` in `config.yaml` (the durable source of truth).
+    Submits the edit with `baserevid` (the revision the staged content was based
+    on) as the edit-conflict guard, then re-fetches the page (now the just-created
+    revision) into cache and advances the cached base to it. Returns the new
+    revid. The caller advances `base_revid` in `config.yaml` (the durable source
+    of truth) and clears the pending commit.
     """
-    new_revid = remote.push_page(mapping["pageid"], text, mapping["base_revid"], summary)
+    new_revid = remote.push_page(mapping["pageid"], text, baserevid, summary)
     fetch_mapping(root, remote, mapping)
     update_cache_base(root, remote.name, mapping["pageid"], new_revid)
     return new_revid
