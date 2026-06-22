@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.cookiejar
 import json
 import re
 from typing import Any
@@ -24,6 +25,13 @@ class MediaWikiError(Exception):
 
     Raised by `_api_get` so callers choose fatality: the primary page fetch
     treats it as fatal (`die`), while auxiliary fetches (siteinfo) can warn.
+    """
+
+
+class MediaWikiEditConflict(MediaWikiError):
+    """The page changed upstream since `baserevid`; the edit was refused.
+
+    The caller should `fetch` + `merge` (i.e. `pull`) and retry the push.
     """
 
 
@@ -248,3 +256,119 @@ def fetch_siteinfo(api_url: str) -> dict[str, Any]:
         },
         "namespaces": namespaces,
     }
+
+
+# ---------------------------------------------------------------------------
+# Write side (login / CSRF / edit), copied and adapted from legacy mwsync.py
+# (_mw_login / _mw_get_csrf_token / _mw_edit_page; see docs/legacy-code-copy.md).
+# Adaptations: api_base -> api_url; edit by stable pageid; transport failures
+# raise MediaWikiError and edit conflicts raise MediaWikiEditConflict.
+# ---------------------------------------------------------------------------
+
+def mediawiki_login(
+    api_url: str, username: str, password: str
+) -> request.OpenerDirector:
+    """Log in with a MediaWiki bot password; return an authenticated opener."""
+    jar = http.cookiejar.CookieJar()
+    opener = request.build_opener(request.HTTPCookieProcessor(jar))
+
+    # Step 1: get a login token.
+    params = parse.urlencode(
+        {"action": "query", "meta": "tokens", "type": "login", "format": "json"}
+    )
+    req = request.Request(f"{api_url}?{params}", headers={"User-Agent": USER_AGENT})
+    try:
+        with opener.open(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as exc:
+        raise MediaWikiError(f"failed to reach MediaWiki API at {api_url}: {exc}")
+    login_token = data.get("query", {}).get("tokens", {}).get("logintoken")
+    if not login_token:
+        raise MediaWikiError("failed to get a login token from the MediaWiki API")
+
+    # Step 2: POST the login.
+    login_data = parse.urlencode(
+        {
+            "action": "login",
+            "lgname": username,
+            "lgpassword": password,
+            "lgtoken": login_token,
+            "format": "json",
+        }
+    ).encode("utf-8")
+    req = request.Request(api_url, data=login_data, headers={"User-Agent": USER_AGENT})
+    try:
+        with opener.open(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as exc:
+        raise MediaWikiError(f"failed to reach MediaWiki API at {api_url}: {exc}")
+
+    login_result = result.get("login", {}).get("result")
+    if login_result != "Success":
+        reason = result.get("login", {}).get("reason", login_result or "unknown error")
+        raise MediaWikiError(f"MediaWiki login failed: {reason}")
+    return opener
+
+
+def mediawiki_csrf_token(api_url: str, opener: request.OpenerDirector) -> str:
+    """Get a CSRF edit token using an authenticated opener."""
+    params = parse.urlencode(
+        {"action": "query", "meta": "tokens", "type": "csrf", "format": "json"}
+    )
+    req = request.Request(f"{api_url}?{params}", headers={"User-Agent": USER_AGENT})
+    try:
+        with opener.open(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as exc:
+        raise MediaWikiError(f"failed to reach MediaWiki API at {api_url}: {exc}")
+    token = data.get("query", {}).get("tokens", {}).get("csrftoken")
+    if not token:
+        raise MediaWikiError("failed to get a CSRF token from the MediaWiki API")
+    return token
+
+
+def mediawiki_edit_page(
+    api_url: str,
+    opener: request.OpenerDirector,
+    *,
+    pageid: Any,
+    text: str,
+    baserevid: Any,
+    csrf_token: str,
+    summary: str,
+) -> int:
+    """Submit an edit to an existing page (by pageid). Return the new revid.
+
+    Passes `baserevid` so MediaWiki rejects the edit with `editconflict` if the
+    page changed upstream since the local base — surfaced as MediaWikiEditConflict.
+    """
+    params = {
+        "action": "edit",
+        "pageid": str(pageid),
+        "text": text,
+        "token": csrf_token,
+        "summary": summary,
+        "baserevid": str(baserevid),
+        "format": "json",
+    }
+    edit_data = parse.urlencode(params).encode("utf-8")
+    req = request.Request(api_url, data=edit_data, headers={"User-Agent": USER_AGENT})
+    try:
+        with opener.open(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as exc:
+        raise MediaWikiError(f"failed to reach MediaWiki API at {api_url}: {exc}")
+
+    if "error" in data:
+        code = data["error"].get("code", "unknown")
+        info = data["error"].get("info", "unknown error")
+        if code == "editconflict":
+            raise MediaWikiEditConflict(
+                f"edit conflict: page changed upstream since revid {baserevid}"
+            )
+        raise MediaWikiError(f"MediaWiki edit failed ({code}): {info}")
+
+    edit_result = data.get("edit", {})
+    if edit_result.get("result") != "Success":
+        raise MediaWikiError(f"unexpected edit result: {edit_result.get('result', 'unknown')}")
+    return edit_result.get("newrevid", 0)

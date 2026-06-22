@@ -15,6 +15,7 @@ from mwmap.commands.fsck import run_fsck
 from mwmap.commands.init import run_init
 from mwmap.commands.merge import run_merge
 from mwmap.commands.pull import run_pull
+from mwmap.commands.push import run_push
 from mwmap.commands.remote import run_remote_add
 from mwmap.commands.status import run_status
 
@@ -65,6 +66,16 @@ def build_cli_parser() -> argparse.ArgumentParser:
     p_pull = sub.add_parser("pull", help="Fetch then merge (git pull)")
     p_pull.add_argument("path", nargs="?", help="Limit to one paired local path")
     p_pull.set_defaults(func=run_pull)
+
+    p_push = sub.add_parser("push", help="Upload local edits to MediaWiki")
+    p_push.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_push.add_argument("-m", "--summary", help="Edit summary (prompts an editor if omitted)")
+    p_push.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be pushed without contacting MediaWiki",
+    )
+    p_push.set_defaults(func=run_push)
 
     p_fsck = sub.add_parser("fsck", help="Check cache and mapping integrity")
     p_fsck.set_defaults(func=run_fsck)

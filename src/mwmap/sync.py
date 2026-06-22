@@ -20,7 +20,12 @@ from typing import Any
 from mwmap.core.mediawiki import MediaWikiError
 from mwmap.core.misc import atomic_write_text, die
 from mwmap.core.remote import Remote, build_remote
-from mwmap.workspace import cache_page_rev, save_site_info, site_info_path
+from mwmap.workspace import (
+    cache_page_rev,
+    save_site_info,
+    site_info_path,
+    update_cache_base,
+)
 
 
 def fetch_page(
@@ -46,6 +51,22 @@ def fetch_mapping(root: Path, remote: Remote, mapping: dict[str, Any]) -> dict[s
     content, metadata = remote.fetch_page_by_id(mapping["pageid"])
     cache_page_rev(root, remote.name, content, metadata)
     return metadata
+
+
+def push_mapping(
+    root: Path, remote: Remote, mapping: dict[str, Any], text: str, summary: str
+) -> int:
+    """Push working `text` for one mapping, re-cache the result, advance the base.
+
+    Submits the edit with the mapping's `base_revid` as the edit-conflict guard,
+    then re-fetches the page (now the just-created revision) into cache and
+    advances the cached base to it. Returns the new revid. The caller advances
+    `base_revid` in `config.yaml` (the durable source of truth).
+    """
+    new_revid = remote.push_page(mapping["pageid"], text, mapping["base_revid"], summary)
+    fetch_mapping(root, remote, mapping)
+    update_cache_base(root, remote.name, mapping["pageid"], new_revid)
+    return new_revid
 
 
 def remote_for_mapping(

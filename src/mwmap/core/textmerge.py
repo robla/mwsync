@@ -84,3 +84,15 @@ def three_way_merge(
 def _marker_line(text: str) -> str:
     """Return a conflict marker line with a trailing newline."""
     return f"{text}\n"
+
+
+def has_conflict_markers(text: str) -> bool:
+    """Return whether `text` still contains unresolved merge conflict markers.
+
+    Matches all three diff3 marker forms, mirroring legacy mwsync's predicate
+    (see docs/legacy-code-copy.md), not only the opening `<<<<<<< `.
+    """
+    return any(
+        line.startswith(("<<<<<<< ", ">>>>>>> ")) or line == "======="
+        for line in text.splitlines()
+    )

@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 from collections import namedtuple
 
-from mwmap.core.textmerge import three_way_merge
+from mwmap.core.textmerge import has_conflict_markers, three_way_merge
 from mwmap.sync import write_local_body
 from mwmap.workspace import (
     cached_body_path,
@@ -96,7 +96,7 @@ def _merge_one(root, mapping) -> _MergeResult:
         return _MergeResult(f"{label}: populated {local_path} at rev {upstream}", False, upstream)
 
     local_text = target.read_text(encoding="utf-8")
-    if _has_conflict_markers(local_text):
+    if has_conflict_markers(local_text):
         return _MergeResult(
             f"{label}: {local_path} has unresolved conflict markers; resolve before merging",
             False,
@@ -124,15 +124,3 @@ def _merge_one(root, mapping) -> _MergeResult:
         )
     update_cache_base(root, remote, pageid, upstream)
     return _MergeResult(f"{label}: merged {base_revid}..{upstream} into {local_path}", False, upstream)
-
-
-def _has_conflict_markers(text: str) -> bool:
-    """Return whether `text` still contains unresolved merge conflict markers.
-
-    Matches all three diff3 marker forms, mirroring legacy mwsync's predicate
-    (see docs/legacy-code-copy.md) rather than only the opening `<<<<<<< `.
-    """
-    return any(
-        line.startswith(("<<<<<<< ", ">>>>>>> ")) or line == "======="
-        for line in text.splitlines()
-    )

@@ -140,10 +140,15 @@ that adjacent disjoint edits are a genuine diff3 conflict. The choice:
 1. **Done in this change:** align `_has_conflict_markers` in
    `commands/merge.py` with mwsync's stronger predicate (catch `=======` and
    `>>>>>>> ` too).
-2. **When implementing `push`:** copy `_mw_login` / `_mw_get_csrf_token` /
-   `_mw_edit_page` into `core/mediawiki.py`; add `MediaWikiRemote.push_page(...)`;
-   read creds from `MWMAP_MW_USER` / `MWMAP_MW_PASSWORD`; surface `editconflict`
-   as a "fetch + merge, then retry" message.
+2. **Done (push):** copied `_mw_login` / `_mw_get_csrf_token` / `_mw_edit_page`
+   into `core/mediawiki.py` as `mediawiki_login` / `mediawiki_csrf_token` /
+   `mediawiki_edit_page` (edit by stable pageid; `MediaWikiEditConflict` raised
+   on `editconflict`); `MediaWikiRemote` gained `login()` + `push_page()`; the
+   `push` command reads creds from `MWMAP_MW_USER` / `MWMAP_MW_PASSWORD` and
+   tells the user to `pull` then retry on conflict. **Not** copied: mwsync's
+   pending-commit two-step (`commit` then `push`) and `_edit_summary`'s tie to a
+   pending file — `push` is direct (working file → wiki) for now, with `-m`/an
+   editor prompt for the summary. A `commit` staging step remains future work.
 3. **When `merge` must tolerate a missing base body:** copy
    `_fetch_revision_by_revid` so it re-fetches rather than dying. Also decide
    whether to copy mwsync's trailing-final-newline normalization.

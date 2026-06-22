@@ -13,6 +13,9 @@ from mwmap.core.mediawiki import (
     fetch_mediawiki_page,
     fetch_mediawiki_page_by_id,
     fetch_siteinfo,
+    mediawiki_csrf_token,
+    mediawiki_edit_page,
+    mediawiki_login,
 )
 from mwmap.core.misc import die
 
@@ -36,6 +39,14 @@ class Remote(Protocol):
         """Return remote-wide metadata (server, paths, namespaces)."""
         ...
 
+    def login(self, username: str, password: str) -> None:
+        """Authenticate for subsequent `push_page` calls (write side)."""
+        ...
+
+    def push_page(self, pageid: Any, text: str, baserevid: Any, summary: str) -> int:
+        """Submit an edit to one page; return the new revid. Requires login."""
+        ...
+
 
 class MediaWikiRemote:
     """A MediaWiki instance addressed by its API base location."""
@@ -45,6 +56,8 @@ class MediaWikiRemote:
     def __init__(self, name: str, location: str) -> None:
         self.name = name
         self.location = location
+        self._opener = None
+        self._csrf_token: str | None = None
 
     @property
     def api_url(self) -> str:
@@ -64,6 +77,25 @@ class MediaWikiRemote:
     def fetch_siteinfo(self) -> dict[str, Any]:
         """Fetch trimmed general + namespace siteinfo for this remote."""
         return fetch_siteinfo(self.api_url)
+
+    def login(self, username: str, password: str) -> None:
+        """Authenticate once; cache the opener + CSRF token for this session."""
+        self._opener = mediawiki_login(self.api_url, username, password)
+        self._csrf_token = mediawiki_csrf_token(self.api_url, self._opener)
+
+    def push_page(self, pageid: Any, text: str, baserevid: Any, summary: str) -> int:
+        """Submit an edit to one page by pageid; return the new revid."""
+        if self._opener is None or self._csrf_token is None:
+            raise RuntimeError("push_page requires login() first")
+        return mediawiki_edit_page(
+            self.api_url,
+            self._opener,
+            pageid=pageid,
+            text=text,
+            baserevid=baserevid,
+            csrf_token=self._csrf_token,
+            summary=summary,
+        )
 
 
 _REMOTE_TYPES = {MediaWikiRemote.type: MediaWikiRemote}

@@ -63,6 +63,7 @@ python3 mwmap.py --root ~/Notes/electowiki clone --follow https://electowiki.org
 python3 mwmap.py --root ~/Notes/electowiki status
 python3 mwmap.py --root ~/Notes/electowiki fetch
 python3 mwmap.py --root ~/Notes/electowiki pull
+python3 mwmap.py --root ~/Notes/electowiki push -m "Edit summary"
 python3 mwmap.py --root ~/Notes/electowiki fsck
 ```
 
@@ -73,8 +74,9 @@ For ongoing sync of already-paired pages, mwmap mirrors Git:
 * `fetch [PATH]` downloads the latest upstream revision (by stable pageid) into the cache, touching neither the working tree nor `base_revid`.
 * `merge [PATH]` three-way merges the cached upstream into each working file against its recorded `base_revid`. A clean merge advances `base_revid`; a conflict writes `<<<<<<< / ======= / >>>>>>>` markers, leaves `base_revid` unchanged, and exits nonzero. Merge refuses a file that still has unresolved markers.
 * `pull [PATH]` is `fetch` then `merge`.
+* `push [PATH]` uploads locally edited working files to their MediaWiki pages, guarded by `base_revid` so an upstream change since the local base is rejected as an edit conflict (resolve with `pull`, then retry). On success the new revision is re-cached and `base_revid` advances. Use `-m/--summary` for the edit summary (an editor is opened if omitted) and `--dry-run` to preview. Credentials come from the `MWMAP_MW_USER` and `MWMAP_MW_PASSWORD` environment variables (a MediaWiki bot password), never from config.
 
-Each takes an optional local path to limit the operation to one paired page. The merge is pure-Python (no `git` binary dependency).
+Each takes an optional local path to limit the operation to one paired page. The merge is pure-Python (no `git` binary dependency); the push login/CSRF/edit code is adapted from legacy `mwsync.py` (see [docs/legacy-code-copy.md](docs/legacy-code-copy.md)).
 
 Required behavior:
 
