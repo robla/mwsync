@@ -127,5 +127,12 @@ def _merge_one(root, mapping) -> _MergeResult:
 
 
 def _has_conflict_markers(text: str) -> bool:
-    """Return whether `text` still contains unresolved merge conflict markers."""
-    return any(line.startswith("<<<<<<< ") for line in text.splitlines())
+    """Return whether `text` still contains unresolved merge conflict markers.
+
+    Matches all three diff3 marker forms, mirroring legacy mwsync's predicate
+    (see docs/legacy-code-copy.md) rather than only the opening `<<<<<<< `.
+    """
+    return any(
+        line.startswith(("<<<<<<< ", ">>>>>>> ")) or line == "======="
+        for line in text.splitlines()
+    )
