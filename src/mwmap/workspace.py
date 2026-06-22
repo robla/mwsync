@@ -133,6 +133,16 @@ def write_page_info(page_dir: Path, info: dict[str, Any]) -> None:
     atomic_write_text(page_dir / "page.yaml", yaml.safe_dump(info, sort_keys=False))
 
 
+def site_info_path(root: Path, remote: str) -> Path:
+    """Return the per-remote `cache/<remote>/site.yaml` path."""
+    return cache_dir(root) / remote / "site.yaml"
+
+
+def save_site_info(root: Path, remote: str, info: dict[str, Any]) -> None:
+    """Cache one remote's siteinfo (server, paths, namespaces)."""
+    atomic_write_text(site_info_path(root, remote), yaml.safe_dump(info, sort_keys=False))
+
+
 def write_hist_entry(page_dir: Path, fetched: dict[str, Any]) -> None:
     """Merge one revision record into a chronological `history.jsonl`."""
     history_path = page_dir / "history.jsonl"

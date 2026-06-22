@@ -10,6 +10,7 @@ import argparse
 from pathlib import Path
 
 from mwmap.commands.clone import run_clone
+from mwmap.commands.fsck import run_fsck
 from mwmap.commands.init import run_init
 from mwmap.commands.remote import run_remote_add
 from mwmap.commands.status import run_status
@@ -32,6 +33,11 @@ def build_cli_parser() -> argparse.ArgumentParser:
     p_clone = sub.add_parser("clone", help="Onboard a MediaWiki page URL")
     p_clone.add_argument("url", help="MediaWiki page URL")
     p_clone.add_argument("path", nargs="?", help="Optional local output path")
+    p_clone.add_argument(
+        "--follow",
+        action="store_true",
+        help="Follow a redirect to its target (default: clone the redirect page itself)",
+    )
     p_clone.set_defaults(func=run_clone)
 
     p_remote = sub.add_parser("remote", help="Manage remotes")
@@ -44,6 +50,9 @@ def build_cli_parser() -> argparse.ArgumentParser:
 
     p_status = sub.add_parser("status", help="Show workspace status")
     p_status.set_defaults(func=run_status)
+
+    p_fsck = sub.add_parser("fsck", help="Check cache and mapping integrity")
+    p_fsck.set_defaults(func=run_fsck)
 
     return parser
 

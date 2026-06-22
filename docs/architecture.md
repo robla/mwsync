@@ -27,14 +27,20 @@ _mwmap/
 Fetched MediaWiki page bodies should be cached under revision-stable names, not as `latest` snapshots. Pages are keyed by their stable MediaWiki `pageid`, not their (movable) title, so renaming/moving a page on the wiki does not orphan its cached history. The first page cache layout is:
 
 ```text
-_mwmap/cache/<remote>/<pageid>/
-  page.yaml
-  history.jsonl
-  <revid>.mw
-  <revid>.yaml
+_mwmap/cache/<remote>/
+  site.yaml
+  <pageid>/
+    page.yaml
+    history.jsonl
+    <revid>.mw
+    <revid>.yaml
 ```
 
+`site.yaml` caches remote-wide metadata (server, scriptpath, articlepath, and the namespace table) fetched once per remote via `meta=siteinfo`. It is the basis for future link rewriting and robust title↔URL mapping; its fetch is non-fatal (a failure only warns).
+
 `page.yaml` is a readable directory marker recording the current title (and remote), so a numeric `pageid` directory is identifiable at a glance. `history.jsonl` is the per-page revision ledger; each record carries the title *as of that revision*, so a page move shows up as a title change across records. The revid-named `.mw` file is the cached body for that exact MediaWiki revision, and the matching `.yaml` file is its metadata sidecar.
+
+Because these per-page files are written atomically one at a time but not as a set, a crash mid-fetch can leave a partial revision (a body without its sidecar/history, or vice versa). `mwmap fsck` checks for that rather than relying on locking.
 
 Do not create `_mwmap/refs/` for now. The name implies a git-like reference store, and `mwmap` should not inherit that expectation unless the storage model truly needs it. If revision storage becomes necessary, prefer a plain name such as `_mwmap/revisions/`.
 
@@ -138,6 +144,7 @@ src/
     commands/
       __init__.py
       clone.py
+      fsck.py
       init.py
       remote.py
       status.py

@@ -59,10 +59,12 @@ python3 mwmap.py --help
 python3 mwmap.py --root ~/Notes/electowiki init
 python3 mwmap.py --root ~/Notes/electowiki remote add electowiki mediawiki https://electowiki.org/w/
 python3 mwmap.py --root ~/Notes/electowiki clone https://electowiki.org/wiki/California
+python3 mwmap.py --root ~/Notes/electowiki clone --follow https://electowiki.org/wiki/A_Redirect
 python3 mwmap.py --root ~/Notes/electowiki status
+python3 mwmap.py --root ~/Notes/electowiki fsck
 ```
 
-`clone` contacts MediaWiki — it registers a remote derived from the URL, pairs the page, fetches it, and writes the local file. The other commands operate on local mapping metadata.
+`clone` contacts MediaWiki — it registers a remote derived from the URL, pairs the page, fetches it, caches the remote's `siteinfo`, and writes the local file. If the URL names a redirect, `clone` onboards the redirect page itself and warns (matching `mwsync.py`); pass `--follow` to resolve the redirect to its target instead. The other commands operate on local mapping metadata. `fsck` checks cache/mapping integrity.
 
 Required behavior:
 

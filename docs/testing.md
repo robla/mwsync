@@ -33,3 +33,5 @@ Every test should start with a short comment, under 500 characters, describing w
 Unit tests should cover pure mapping and merge logic without network access. Tests that require MediaWiki credentials, local notebooks, or external services should be documented clearly and separated from fast local tests.
 
 `clone` contacts MediaWiki, so its end-to-end behavior belongs in a separated integration group. The current fast suite stays offline; do not add a live-network `clone` test to it.
+
+The offline suite now also covers in-process unit tests (`tests/test_mediawiki.py`, `tests/test_workspace.py`, `tests/test_fsck.py`) alongside the subprocess CLI tests. They import the `mwmap` package directly — `tests/conftest.py` puts `src/` on `sys.path` — and stub the network by replacing `urlopen` with canned JSON (see `test_mediawiki.py`). When MediaWiki behavior needs testing, prefer this canned-response style over a live call so it stays in the fast suite.
