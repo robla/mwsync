@@ -107,29 +107,66 @@ def fetch_mediawiki_page(
     if page.get("missing"):
         die(f"MediaWiki page does not exist: {title}")
 
+    content, metadata = _extract_revision(page, title)
+    redirect = _redirect_note(title, page, query, content, follow_redirects)
+    return content, metadata, redirect
+
+
+def fetch_mediawiki_page_by_id(api_url: str, pageid: Any) -> tuple[str, dict[str, Any]]:
+    """Fetch current wikitext and metadata for an exact pageid.
+
+    Used by `fetch`/`pull` for already-paired pages: identity is the stable
+    pageid, so this still works after the page has been moved/renamed.
+    """
+    params = {
+        "action": "query",
+        "format": "json",
+        "formatversion": "2",
+        "prop": "revisions|info",
+        "pageids": str(pageid),
+        "rvprop": "ids|timestamp|contentmodel|content",
+        "rvslots": "main",
+    }
+    try:
+        payload = _api_get(api_url, params)
+    except MediaWikiError as exc:
+        die(str(exc))
+
+    pages = payload.get("query", {}).get("pages", [])
+    if not pages:
+        die(f"MediaWiki returned no page for pageid: {pageid}")
+    page = pages[0]
+    if page.get("missing"):
+        die(f"MediaWiki page id no longer exists: {pageid}")
+    return _extract_revision(page, str(pageid))
+
+
+def _extract_revision(page: dict[str, Any], fallback_title: str) -> tuple[str, dict[str, Any]]:
+    """Pull the current revision body and metadata out of an API page object."""
     revisions = page.get("revisions") or []
     if not revisions:
-        die(f"MediaWiki returned no revisions for title: {title}")
+        die(f"MediaWiki returned no revisions for: {fallback_title}")
     revision = revisions[0]
     slots = revision.get("slots") or {}
     main_slot = slots.get("main") or {}
     content = main_slot.get("content", revision.get("*"))
     if content is None:
-        die(f"MediaWiki response did not include page content for: {title}")
+        die(f"MediaWiki response did not include page content for: {fallback_title}")
 
+    title = page.get("title", fallback_title)
+    namespace = page.get("ns", 0)
     metadata = {
         "pageid": page.get("pageid"),
-        "namespace": page.get("ns", 0),
-        "namespace_name": _namespace_name_from_title(page.get("title", title), page.get("ns", 0)),
-        "title": page.get("title", title),
+        "namespace": namespace,
+        "namespace_name": _namespace_name_from_title(title, namespace),
+        "title": title,
         "revid": revision.get("revid"),
         "parentid": revision.get("parentid"),
         "timestamp": revision.get("timestamp"),
         "contentmodel": main_slot.get("contentmodel"),
         "redirect": bool(page.get("redirect")),
     }
-    redirect = _redirect_note(title, page, query, content, follow_redirects)
-    return content, metadata, redirect
+    return content, metadata
 
 
 def _namespace_name_from_title(title: str, namespace: int) -> str:

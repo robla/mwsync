@@ -146,6 +146,15 @@ def cache_page_rev(root: Path, remote: str, content: str, metadata: dict[str, An
     title_key = title_key_for_title(str(title or pageid))
     ns = metadata.get("namespace", 0)
     ns_name = metadata.get("namespace_name") or ("main" if ns == 0 else str(ns))
+
+    # Caching a revision records `current_revid` (the newest fetched) but must
+    # never silently advance `base_revid` (what the working file derives from):
+    # only the first cache (clone) and an explicit merge set the base.
+    existing = load_page_info(root, remote, pageid)
+    if existing and existing.get("base_revid") is not None:
+        base_revid = existing["base_revid"]
+    else:
+        base_revid = metadata.get("base_revid", revid)
     write_page_info(
         page_dir,
         {
@@ -156,11 +165,13 @@ def cache_page_rev(root: Path, remote: str, content: str, metadata: dict[str, An
             "title": title,
             "title_key": title_key,
             "current_revid": revid,
-            "base_revid": metadata.get("base_revid", revid),
+            "base_revid": base_revid,
         },
     )
     write_hist_entry(page_dir, {**metadata, "body": body_name})
-    write_page_aliases(root, remote, pageid, title_key, ns, ns_name, body_name)
+    # The readable <title-key>.mw alias points at the base body (the working
+    # file's current base revision), not necessarily the newest fetched one.
+    write_page_aliases(root, remote, pageid, title_key, ns, ns_name, f"{base_revid}.mw")
 
 
 def write_page_info(page_dir: Path, info: dict[str, Any]) -> None:
@@ -246,6 +257,53 @@ def site_info_path(root: Path, remote: str) -> Path:
 def save_site_info(root: Path, remote: str, info: dict[str, Any]) -> None:
     """Cache one remote's siteinfo (server, paths, namespaces)."""
     atomic_write_text(site_info_path(root, remote), yaml.safe_dump(info, sort_keys=False))
+
+
+def load_page_info(root: Path, remote: str, pageid: Any) -> dict[str, Any] | None:
+    """Return the cached `page.yaml` for one pageid, or None if absent/invalid."""
+    path = page_cache_dir(root, remote, pageid) / "page.yaml"
+    if not path.exists():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def cached_body_path(root: Path, remote: str, pageid: Any, revid: Any) -> Path:
+    """Return the cached body file for one remote revision."""
+    return page_cache_dir(root, remote, pageid) / f"{revid}.mw"
+
+
+def update_cache_base(root: Path, remote: str, pageid: Any, base_revid: Any) -> None:
+    """Advance the cached base revision after a merge and re-point its alias.
+
+    The durable source of truth for `base_revid` is the `config.yaml` mapping;
+    this keeps the disposable cache (`page.yaml` + the readable `<title>.mw`
+    alias) consistent with it.
+    """
+    info = load_page_info(root, remote, pageid) or {}
+    info["base_revid"] = base_revid
+    page_dir = page_cache_dir(root, remote, pageid)
+    write_page_info(page_dir, info)
+    title_key = info.get("title_key")
+    if title_key:
+        _symlink_or_copy(page_dir / f"{base_revid}.mw", page_dir / f"{title_key}.mw")
+
+
+def iter_page_mappings(
+    config: dict[str, Any], local_path: str | None = None
+) -> list[dict[str, Any]]:
+    """Return page mappings, optionally limited to one working-tree path."""
+    mappings = []
+    for mapping in config.get("mappings") or []:
+        if mapping.get("type") != "page":
+            continue
+        if local_path is not None and mapping.get("local_path") != local_path:
+            continue
+        mappings.append(mapping)
+    return mappings
 
 
 def write_hist_entry(page_dir: Path, fetched: dict[str, Any]) -> None:

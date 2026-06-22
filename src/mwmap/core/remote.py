@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from mwmap.core.mediawiki import fetch_mediawiki_page, fetch_siteinfo
+from mwmap.core.mediawiki import (
+    fetch_mediawiki_page,
+    fetch_mediawiki_page_by_id,
+    fetch_siteinfo,
+)
 from mwmap.core.misc import die
 
 
@@ -22,6 +26,10 @@ class Remote(Protocol):
         self, title: str, follow_redirects: bool = False
     ) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
         """Return (body, revision-metadata, redirect-note) for one page."""
+        ...
+
+    def fetch_page_by_id(self, pageid: Any) -> tuple[str, dict[str, Any]]:
+        """Return (body, revision-metadata) for an exact pageid."""
         ...
 
     def fetch_siteinfo(self) -> dict[str, Any]:
@@ -48,6 +56,10 @@ class MediaWikiRemote:
     ) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
         """Fetch one page's current wikitext, metadata, and redirect note."""
         return fetch_mediawiki_page(self.api_url, title, follow_redirects=follow_redirects)
+
+    def fetch_page_by_id(self, pageid: Any) -> tuple[str, dict[str, Any]]:
+        """Fetch one page's current wikitext and metadata by exact pageid."""
+        return fetch_mediawiki_page_by_id(self.api_url, pageid)
 
     def fetch_siteinfo(self) -> dict[str, Any]:
         """Fetch trimmed general + namespace siteinfo for this remote."""

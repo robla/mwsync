@@ -10,8 +10,11 @@ import argparse
 from pathlib import Path
 
 from mwmap.commands.clone import run_clone
+from mwmap.commands.fetch import run_fetch
 from mwmap.commands.fsck import run_fsck
 from mwmap.commands.init import run_init
+from mwmap.commands.merge import run_merge
+from mwmap.commands.pull import run_pull
 from mwmap.commands.remote import run_remote_add
 from mwmap.commands.status import run_status
 
@@ -50,6 +53,18 @@ def build_cli_parser() -> argparse.ArgumentParser:
 
     p_status = sub.add_parser("status", help="Show workspace status")
     p_status.set_defaults(func=run_status)
+
+    p_fetch = sub.add_parser("fetch", help="Fetch upstream revisions into the cache")
+    p_fetch.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_fetch.set_defaults(func=run_fetch)
+
+    p_merge = sub.add_parser("merge", help="Merge cached upstream into working files")
+    p_merge.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_merge.set_defaults(func=run_merge)
+
+    p_pull = sub.add_parser("pull", help="Fetch then merge (git pull)")
+    p_pull.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_pull.set_defaults(func=run_pull)
 
     p_fsck = sub.add_parser("fsck", help="Check cache and mapping integrity")
     p_fsck.set_defaults(func=run_fsck)

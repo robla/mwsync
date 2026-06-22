@@ -19,7 +19,7 @@ from typing import Any
 
 from mwmap.core.mediawiki import MediaWikiError
 from mwmap.core.misc import atomic_write_text, die
-from mwmap.core.remote import Remote
+from mwmap.core.remote import Remote, build_remote
 from mwmap.workspace import cache_page_rev, save_site_info, site_info_path
 
 
@@ -35,6 +35,30 @@ def fetch_page(
     content, metadata, redirect = remote.fetch_page(title, follow_redirects=follow_redirects)
     cache_page_rev(root, remote.name, content, metadata)
     return content, metadata, redirect
+
+
+def fetch_mapping(root: Path, remote: Remote, mapping: dict[str, Any]) -> dict[str, Any]:
+    """Fetch the latest revision for a paired page (by stable pageid) into cache.
+
+    Returns the fetched metadata. Like `git fetch`, it updates only the cache
+    (`current_revid`, bodies, history) — never the working tree or `base_revid`.
+    """
+    content, metadata = remote.fetch_page_by_id(mapping["pageid"])
+    cache_page_rev(root, remote.name, content, metadata)
+    return metadata
+
+
+def remote_for_mapping(
+    config: dict[str, Any], mapping: dict[str, Any], cache: dict[str, Remote]
+) -> Remote:
+    """Resolve (and memoize) the Remote backend a mapping tracks."""
+    name = mapping.get("remote")
+    if name not in cache:
+        definition = (config.get("remotes") or {}).get(name)
+        if not definition:
+            die(f"mapping references unknown remote: {name!r}")
+        cache[name] = build_remote(name, definition)
+    return cache[name]
 
 
 def ensure_site_info(root: Path, remote: Remote) -> None:

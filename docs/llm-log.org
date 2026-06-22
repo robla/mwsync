@@ -54,3 +54,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** ChatGPT [2026-06-21 Sun 22:16 PDT]: implemented readable pages/ and by-title/ cache aliases.
 ** Claude [2026-06-21 Sun 22:40 PDT]: added Claude's current-state entry to docs/llm-summary.org.
 ** Gemini [2026-06-21 Sun 22:34 PDT]: reformat timestamps to PDT, update llm-summary.org, shorten log rules.
+** Claude [2026-06-21 Sun 23:30 PDT]: add fetch/merge/pull verbs with pure-Python three-way merge.

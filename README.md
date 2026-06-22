@@ -61,10 +61,20 @@ python3 mwmap.py --root ~/Notes/electowiki remote add electowiki mediawiki https
 python3 mwmap.py --root ~/Notes/electowiki clone https://electowiki.org/wiki/California
 python3 mwmap.py --root ~/Notes/electowiki clone --follow https://electowiki.org/wiki/A_Redirect
 python3 mwmap.py --root ~/Notes/electowiki status
+python3 mwmap.py --root ~/Notes/electowiki fetch
+python3 mwmap.py --root ~/Notes/electowiki pull
 python3 mwmap.py --root ~/Notes/electowiki fsck
 ```
 
-`clone` contacts MediaWiki — it registers a remote derived from the URL, pairs the page, fetches it, caches the remote's `siteinfo`, and writes the local file. If the URL names a redirect, `clone` onboards the redirect page itself and warns (matching `mwsync.py`); pass `--follow` to resolve the redirect to its target instead. The other commands operate on local mapping metadata. `fsck` checks cache/mapping integrity.
+`clone` contacts MediaWiki — it registers a remote derived from the URL, pairs the page, fetches it, caches the remote's `siteinfo`, and writes the local file. If the URL names a redirect, `clone` onboards the redirect page itself and warns (matching `mwsync.py`); pass `--follow` to resolve the redirect to its target instead. `fsck` checks cache/mapping integrity.
+
+For ongoing sync of already-paired pages, mwmap mirrors Git:
+
+* `fetch [PATH]` downloads the latest upstream revision (by stable pageid) into the cache, touching neither the working tree nor `base_revid`.
+* `merge [PATH]` three-way merges the cached upstream into each working file against its recorded `base_revid`. A clean merge advances `base_revid`; a conflict writes `<<<<<<< / ======= / >>>>>>>` markers, leaves `base_revid` unchanged, and exits nonzero. Merge refuses a file that still has unresolved markers.
+* `pull [PATH]` is `fetch` then `merge`.
+
+Each takes an optional local path to limit the operation to one paired page. The merge is pure-Python (no `git` binary dependency).
 
 Required behavior:
 
