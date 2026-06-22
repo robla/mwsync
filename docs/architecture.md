@@ -24,12 +24,12 @@ _mwmap/
 
 `_mwmap/cache/` is disposable storage. It may hold remote-derived metadata, fetched page bodies, local-store indexes, or other data that can be repopulated from remotes if deleted.
 
-Fetched MediaWiki page bodies should be cached under revision-stable names, not as `latest` snapshots. Pages are keyed by their stable MediaWiki `pageid`, not their (movable) title, so renaming/moving a page on the wiki does not orphan its cached history. The first page cache layout is:
+Fetched MediaWiki page bodies should be cached under revision-stable names, not as `latest` snapshots. Pages are keyed by their stable MediaWiki `pageid`, not their (movable) title, so renaming/moving a page on the wiki does not orphan its cached history. The current page cache layout is:
 
 ```text
 _mwmap/cache/<remote>/
   site.yaml
-  <pageid>/
+  <pageid>/              # current implementation; see proposed pages/ below
     page.yaml
     history.jsonl
     <revid>.mw
@@ -41,6 +41,46 @@ _mwmap/cache/<remote>/
 `page.yaml` is a readable directory marker recording the current title (and remote), so a numeric `pageid` directory is identifiable at a glance. `history.jsonl` is the per-page revision ledger; each record carries the title *as of that revision*, so a page move shows up as a title change across records. The revid-named `.mw` file is the cached body for that exact MediaWiki revision, and the matching `.yaml` file is its metadata sidecar.
 
 Because these per-page files are written atomically one at a time but not as a set, a crash mid-fetch can leave a partial revision (a body without its sidecar/history, or vice versa). `mwmap fsck` checks for that rather than relying on locking.
+
+### Proposed readable cache aliases
+
+The pageid-keyed cache is stable but hard to inspect with `ls`. A proposed direction is to keep pageid as the canonical storage key while adding disposable, namespace-aware aliases for human navigation:
+
+```text
+_mwmap/cache/electowiki/
+  site.yaml
+  pages/
+    2598/
+      page.yaml
+      history.jsonl
+      16692.mw
+      16692.yaml
+      California.mw -> 16692.mw
+  by-title/
+    00ns_main/
+      California -> ../../pages/2598
+    10ns_Template/
+      Template__ElectoramaNews-sidebar -> ../../pages/1234
+    14ns_Category/
+      Category__Voting -> ../../pages/5678
+```
+
+`pages/<pageid>/` remains canonical. `by-title/` is a rebuildable index, ideally symlinks where the platform supports them and small YAML pointer files otherwise. The namespace directory combines namespace id and canonical namespace name so related pages sort together and remain understandable without opening `site.yaml`.
+
+The per-page `California.mw -> 16692.mw` alias is also rebuildable. It should point at the current cached body used as the local file's base revision, not replace the revid-named body. This keeps revision files static while making the most common debug action (`less .../California.mw`) obvious.
+
+`page.yaml` should carry the fields needed to rebuild these aliases, for example:
+
+```yaml
+pageid: 2598
+namespace: 0
+title: California
+title_key: California
+current_revid: 16692
+base_revid: 16692
+```
+
+For namespace pages, `title_key` should follow the readable `mwsync` convention (`Category__Voting`, `Template__ElectoramaNews-sidebar`) while namespace directory names use the more explicit `14ns_Category` form. Namespace handling should be driven by cached siteinfo and MediaWiki page metadata, not string guessing.
 
 Do not create `_mwmap/refs/` for now. The name implies a git-like reference store, and `mwmap` should not inherit that expectation unless the storage model truly needs it. If revision storage becomes necessary, prefer a plain name such as `_mwmap/revisions/`.
 
