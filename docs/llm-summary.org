@@ -1,0 +1,66 @@
+#+TITLE: mwmap LLM summary
+
+* About this summary
+This file is a periodically refreshed, multi-LLM assessment of the current
+state of =mwmap=. It complements =docs/llm-log.org=: the log is append-only
+change history, while this file is a small set of longer current-state
+summaries.
+
+Each assisting model should maintain one entry under =* LLM summaries= and
+upsert that entry when asked for a fresh assessment. "Upsert" means:
+
+- If your model name already has an entry, replace that entry's timestamp and
+  body with your current assessment.
+- If your model name has no entry yet, add one.
+- Do not edit another model's entry except for mechanical file-format fixes.
+- Keep entries long enough to be useful, roughly 400 words, but not exhaustive.
+
+Entry format:
+
+: ** Name [YYYY-MM-DD Ddd HH:MM]
+: Summary text...
+
+* LLM summaries
+** ChatGPT [2026-06-21 Sun 21:18]
+The project has moved from design-only scaffolding into a small but real
+prototype, and the current direction is mostly sound. The strongest architectural
+decision is treating files and cache layout as first-class product surface
+rather than incidental implementation detail. The move from hidden =.mwmap= to
+visible =_mwmap=, then from title-keyed cache directories to stable
+MediaWiki =pageid= directories, is the right kind of correction: it makes the
+on-disk model inspectable and robust against page moves. Likewise, backing away
+from a generic =latest.mw= file and using revid-named bodies plus
+=history.jsonl= preserves the most important lesson from =mwsync.py= without
+blindly copying its git-like =refs= vocabulary.
+
+The Claude/RobLa direction after the initial implementation is a clear
+improvement. Splitting =clone= into reusable pieces through =sync.py= and a
+=Remote= protocol prevents clone from becoming the next overloaded checkout.
+That seam matters because the whole point of =mwmap= is cross-store mapping:
+MediaWiki is only the first backend, and Zim/Org/Markdown-like stores will need
+their own backend behavior later. Page fetch, cache write, siteinfo fetch, and
+working-file write now have more obvious homes. Adding =fsck= early is also a
+good sign; this project will live or die by whether local state can be inspected
+and repaired without guessing.
+
+The main design tension is how much git alignment to keep. Git verbs are useful
+for user intuition, but the cache should not pretend to be a git object store.
+The current compromise is pragmatic: use familiar verbs where semantics match
+(=clone=, =status=, future =fetch=/=merge=/=push=), but keep the actual state
+model explicitly MediaWiki-aware: =pageid=, =revid=, =base_revid=,
+=history.jsonl=, and readable YAML sidecars. Avoiding =_mwmap/refs/= remains
+important unless the project later defines a non-misleading equivalent.
+
+Code readability is improving. Moving from a monolithic =mwmap.py= to
+=src/mwmap/{cli,commands,workspace,core,sync}= was worth doing once the call
+stack became hard to follow. The function naming pass also helped, especially
+=build_cli_parser=, =load_workspace_config=, =cache_page_rev=, and
+=parse_mediawiki_page_url=. I would continue using concise docstrings and
+module-level call-stack notes, but avoid larger comment blocks unless they
+define storage invariants.
+
+Near-term priorities: keep tests offline and targeted; add tests only when
+needed for confidence; document exact cache invariants; avoid expanding format
+conversion until raw MediaWiki page clone/fetch/status/fsck feel boring and
+predictable. The current path is promising because it is becoming concrete
+without losing sight of the file architecture.
