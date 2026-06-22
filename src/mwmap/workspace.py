@@ -353,6 +353,11 @@ def pending_commit_body_path(root: Path, remote: str, pageid: Any) -> Path:
     return page_cache_dir(root, remote, pageid) / "commit.mw"
 
 
+def preview_html_path(root: Path, remote: str, pageid: Any) -> Path:
+    """Return the disposable preview HTML path for one page."""
+    return page_cache_dir(root, remote, pageid) / "preview.html"
+
+
 def read_pending_commit(root: Path, remote: str, pageid: Any) -> dict[str, Any] | None:
     """Return staged commit metadata for one page, or None if nothing staged.
 

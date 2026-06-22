@@ -110,6 +110,7 @@ mwmap fetch
 mwmap status
 mwmap diff
 mwmap merge
+mwmap preview
 mwmap push
 mwmap unpair
 ```

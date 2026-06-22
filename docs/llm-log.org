@@ -64,3 +64,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** Claude [2026-06-22 Mon 01:10 PDT]: add offline commit/push lifecycle tests.
 ** Gemini [2026-06-22 Mon 00:14 PDT]: update preview and legacy copy design docs.
 ** Claude [2026-06-22 Mon 01:45 PDT]: escape namespace/colon in working filenames (mwsync-style).
+** ChatGPT [2026-06-22 Mon 00:53 PDT]: implemented mwmap preview command.

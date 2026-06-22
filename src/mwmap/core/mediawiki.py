@@ -258,6 +258,54 @@ def fetch_siteinfo(api_url: str) -> dict[str, Any]:
     }
 
 
+def parse_wikitext_preview(api_url: str, title: str, wikitext: str) -> dict[str, Any]:
+    """Render wikitext through MediaWiki `action=parse` and return parse data."""
+    params = {
+        "action": "parse",
+        "format": "json",
+        "formatversion": "2",
+        "title": title,
+        "text": wikitext,
+        "contentmodel": "wikitext",
+        "prop": "text|displaytitle|categorieshtml",
+        "disableeditsection": "1",
+        "pst": "1",
+    }
+    data = parse.urlencode(params).encode("utf-8")
+    req = request.Request(
+        api_url,
+        data=data,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as exc:
+        raise MediaWikiError(f"failed to reach MediaWiki API at {api_url}: {exc}")
+    except json.JSONDecodeError as exc:
+        raise MediaWikiError(f"MediaWiki returned invalid JSON from {api_url}: {exc}")
+
+    if "error" in result:
+        err = result["error"]
+        code = err.get("code", "unknown")
+        info = err.get("info", "unknown error")
+        raise MediaWikiError(f"MediaWiki parse failed ({code}): {info}")
+
+    parsed = result.get("parse")
+    if not isinstance(parsed, dict):
+        raise MediaWikiError("MediaWiki parse response did not include parse data")
+    text = parsed.get("text", "")
+    if isinstance(text, dict):
+        text = text.get("*", "")
+    if not isinstance(text, str):
+        raise MediaWikiError("MediaWiki parse response did not include HTML text")
+    parsed["text"] = text
+    return parsed
+
+
 # ---------------------------------------------------------------------------
 # Write side (login / CSRF / edit), copied and adapted from legacy mwsync.py
 # (_mw_login / _mw_get_csrf_token / _mw_edit_page; see docs/legacy-code-copy.md).

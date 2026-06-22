@@ -1,13 +1,13 @@
 # Preview Design
 
-`mwm preview` should behave like legacy `mws preview`: render local or staged
+`mwm preview` behaves like legacy `mws preview`: render local or staged
 wikitext through the target MediaWiki parser, show the result in a browser, and
 help reconcile the local state if the user saves the text manually from the
 browser.
 
 `mwm` is a local alias for `mwmap.py`; `mws` is a local alias for `mwsync.py`.
-Examples use `mwm`, but the implemented command name should also read naturally
-as `mwmap.py preview`.
+Examples use `mwm`, and the implemented command also reads naturally as
+`mwmap.py preview`.
 
 ## Command Shape
 
@@ -18,7 +18,7 @@ mwm preview [PATH] --link
 mwm preview [PATH] --open
 ```
 
-`PATH` limits preview to one paired page. If omitted, preview should require
+`PATH` limits preview to one paired page. If omitted, preview requires
 exactly one page mapping or one pending commit; it should refuse ambiguity
 rather than opening many browser tabs.
 
@@ -29,7 +29,7 @@ rather than opening many browser tabs.
 
 ## Source Selection
 
-Preview should choose the source in this order:
+Preview chooses the source in this order:
 
 1. Pending commit: `_mwmap/cache/<remote>/pages/<pageid>/commit.mw`, with
    metadata from `commit.json`.
@@ -43,7 +43,7 @@ restore/create the file first.
 
 ## Rendering
 
-Preview should call MediaWiki `action=parse` against the mapping's remote:
+Preview calls MediaWiki `action=parse` against the mapping's remote:
 
 ```text
 action=parse
@@ -59,8 +59,8 @@ pst=1
 
 The request must include a compliant User-Agent header (matching the project's default Remote user-agent policy) to prevent API throttling or blocks.
 
-The title should come from pending metadata when previewing a pending commit,
-otherwise from the mapping's `remote_path`. The first version can support only
+The title comes from pending metadata when previewing a pending commit,
+otherwise from the mapping's `remote_path`. The first version supports only
 `format: mw`; later versions may preview converted Org/Markdown/Zim content
 after conversion to wikitext.
 

@@ -15,6 +15,7 @@ from mwmap.commands.fetch import run_fetch
 from mwmap.commands.fsck import run_fsck
 from mwmap.commands.init import run_init
 from mwmap.commands.merge import run_merge
+from mwmap.commands.preview import run_preview
 from mwmap.commands.pull import run_pull
 from mwmap.commands.push import run_push
 from mwmap.commands.remote import run_remote_add
@@ -85,6 +86,24 @@ def build_cli_parser() -> argparse.ArgumentParser:
         help="Show what would be pushed without contacting MediaWiki",
     )
     p_push.set_defaults(func=run_push)
+
+    p_preview = sub.add_parser("preview", help="Render local wikitext through the wiki parser")
+    p_preview.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_preview.add_argument(
+        "--output",
+        help="Write preview HTML to PATH instead of _mwmap/cache/.../preview.html",
+    )
+    p_preview.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the generated preview HTML in a browser with --output or --link",
+    )
+    p_preview.add_argument(
+        "--link",
+        action="store_true",
+        help="Write preview HTML and print a file:// link without serving",
+    )
+    p_preview.set_defaults(func=run_preview)
 
     p_fsck = sub.add_parser("fsck", help="Check cache and mapping integrity")
     p_fsck.set_defaults(func=run_fsck)

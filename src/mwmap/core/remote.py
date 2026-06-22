@@ -16,6 +16,7 @@ from mwmap.core.mediawiki import (
     mediawiki_csrf_token,
     mediawiki_edit_page,
     mediawiki_login,
+    parse_wikitext_preview,
 )
 from mwmap.core.misc import die
 
@@ -37,6 +38,10 @@ class Remote(Protocol):
 
     def fetch_siteinfo(self) -> dict[str, Any]:
         """Return remote-wide metadata (server, paths, namespaces)."""
+        ...
+
+    def preview_wikitext(self, title: str, wikitext: str) -> dict[str, Any]:
+        """Render wikitext using the remote's parser."""
         ...
 
     def login(self, username: str, password: str) -> None:
@@ -77,6 +82,10 @@ class MediaWikiRemote:
     def fetch_siteinfo(self) -> dict[str, Any]:
         """Fetch trimmed general + namespace siteinfo for this remote."""
         return fetch_siteinfo(self.api_url)
+
+    def preview_wikitext(self, title: str, wikitext: str) -> dict[str, Any]:
+        """Render wikitext through this remote's MediaWiki parser."""
+        return parse_wikitext_preview(self.api_url, title, wikitext)
 
     def login(self, username: str, password: str) -> None:
         """Authenticate once; cache the opener + CSRF token for this session."""

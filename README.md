@@ -64,6 +64,7 @@ python3 mwmap.py --root ~/Notes/electowiki status
 python3 mwmap.py --root ~/Notes/electowiki fetch
 python3 mwmap.py --root ~/Notes/electowiki pull
 python3 mwmap.py --root ~/Notes/electowiki commit -m "Edit summary"
+python3 mwmap.py --root ~/Notes/electowiki preview
 python3 mwmap.py --root ~/Notes/electowiki push
 python3 mwmap.py --root ~/Notes/electowiki fsck
 ```
@@ -76,6 +77,7 @@ For ongoing sync of already-paired pages, mwmap mirrors Git:
 * `merge [PATH]` three-way merges the cached upstream into each working file against its recorded `base_revid`. A clean merge advances `base_revid`; a conflict writes `<<<<<<< / ======= / >>>>>>>` markers, leaves `base_revid` unchanged, and exits nonzero. Merge refuses a file that still has unresolved markers.
 * `pull [PATH]` is `fetch` then `merge`.
 * `commit [PATH]` stages a pending edit from each changed working file (the body plus an edit summary and the `base_revid` it was based on), refusing files with unresolved conflict markers and no-op changes. Use `-m/--message` for the summary (an editor is opened if omitted), `--amend` to replace an existing pending commit, and `--allow-empty` to stage an unchanged file.
+* `preview [PATH]` renders a pending commit (preferred) or working file through the remote MediaWiki parser, writes `preview.html`, and can reconcile a compatible manual browser save back into local state.
 * `push [PATH]` publishes the staged commits to MediaWiki — you push what you committed, not the working tree. The edit is guarded by the staged `base_revid`, so an upstream change since that base is rejected as an edit conflict (resolve with `pull`, re-`commit`, then retry; the pending commit is kept). On success the new revision is re-cached, `base_revid` advances, and the pending commit is cleared. `--dry-run` previews. Credentials come from the `MWMAP_MW_USER` and `MWMAP_MW_PASSWORD` environment variables (a MediaWiki bot password), never from config.
 
 Each takes an optional local path to limit the operation to one paired page. The merge is pure-Python (no `git` binary dependency); the push login/CSRF/edit code is adapted from legacy `mwsync.py` (see [docs/legacy-code-copy.md](docs/legacy-code-copy.md)).
