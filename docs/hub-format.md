@@ -17,6 +17,8 @@ The current hub format is:
 
 This document defines the initial profile of MediaWiki wikitext that `mwmap.py` should treat as portable, the constructs that require warnings or raw preservation, and the expectations for adapters that import from or export to upstream systems.
 
+**Refinement (2026-06-22):** for MediaWiki specifically, the per-upstream representation is now exact, raw wikitext stored byte-for-byte, with the upstream treated as authoritative (including its post-save transforms) and no mwmap-specific markers written into the file. The "portable profile" below is therefore best read as a candidate *neutral pivot* for crossing between different upstreams, not as a rewrite of the MediaWiki mirror. The broader question — which existing, collaboratively-edited, eyeball-auditable format(s) best serve as the core format and can outlive `mwmap.py` — is taken up in §26.
+
 ## 2. Non-goals
 
 The hub format is not intended to be a perfect representation of every upstream.
@@ -153,17 +155,20 @@ Most mapping metadata belongs in sidecar files managed by `mwmap.py`, such as TO
 
 The page body should remain mostly valid MediaWiki wikitext.
 
-### 6.2 Minimal in-file metadata
+### 6.2 No mwmap markers in mirror files
 
-A hub file may include a short metadata comment at the top when useful for debugging or standalone portability:
+An earlier draft suggested an optional metadata comment at the top of a hub
+file. That is now rejected for per-upstream **mirror** files: a MediaWiki `.mw`
+mirror is an exact, byte-for-byte copy of the upstream revision, so `mwmap.py`
+must not inject `<!-- mwmap-... -->` lines into it. Such lines would break
+byte-exactness against the upstream, can be rewritten or relocated by the
+wiki's own post-save transforms, and any unknown construct that survives to
+render is a leak. All synchronization metadata therefore lives in sidecars
+(§6.3), never in the mirror body.
 
-```mediawiki
-<!-- mwmap-format: portable-wikitext-0.1 -->
-<!-- mwmap-title: Approval voting -->
-<!-- mwmap-origin: mediawiki:electowiki:Approval voting -->
-```
-
-These comments are optional. A converter should not require them if equivalent metadata is available from the mapping store.
+A self-describing comment header may still be acceptable inside a *pivot* file
+that is guaranteed never to be pushed raw, but `mwmap.py` should not require
+one.
 
 ### 6.3 Sidecar metadata
 
@@ -185,6 +190,11 @@ The following information should usually live outside the hub document:
 Sidecar metadata should describe synchronization state. The hub file should describe the document.
 
 ## 7. Portable wikitext profile
+
+This section describes a candidate **neutral pivot** (see §26), not the
+MediaWiki mirror. For same-site MediaWiki round-trips the mirror is exact raw
+wikitext and none of the profiling or normalization below applies; the profile
+matters only when bridging to a different upstream.
 
 The portable profile is the subset of wikitext that adapters should attempt to preserve across all reasonable targets.
 
@@ -716,9 +726,6 @@ A document may be Level 2 in general but not Level 3 for Wikipedia if it contain
 ## 20. Example hub document
 
 ```mediawiki
-<!-- mwmap-format: portable-wikitext-0.1 -->
-<!-- mwmap-title: Example voting method note -->
-
 = Example voting method note =
 
 This is a short note about [[Approval voting|approval]] and [[STAR voting]].
@@ -750,9 +757,6 @@ STAR voting uses score ballots and then an automatic runoff between the two high
 ## 21. Example non-portable document with preservation
 
 ```mediawiki
-<!-- mwmap-format: portable-wikitext-0.1 -->
-<!-- mwmap-title: Imported draft -->
-
 = Imported draft =
 
 This paragraph is portable.
@@ -768,7 +772,7 @@ Original Google Docs comment thread metadata not yet mapped by this adapter.
 [[Category:Drafts]]
 ```
 
-This document is valid as a hub file, but it is not portable core. A push to Wikipedia, Electowiki, Zim, or Google Docs should either transform or report the `mwmap-raw` block.
+This is a *pivot* example, not a MediaWiki mirror — a MediaWiki `.mw` mirror would never contain an `<mwmap-raw>` block. It is valid as a hub pivot file, but it is not portable core. A push to Wikipedia, Electowiki, Zim, or Google Docs should either transform or report the `mwmap-raw` block.
 
 ## 22. Command behavior implications
 
@@ -852,6 +856,10 @@ The goal of the test corpus is not perfect conversion. The goal is predictable c
 
 ## 25. Open questions
 
+Several of these are now partly answered — see §26 (candidate core formats) and
+§6.2 (no in-file markers in mirror files). They are kept here as the record of
+what was open and why.
+
 - Should `mwmap.py` use `.mw`, `.wiki`, or another extension for hub files?
 - Should raw preservation use `<mwmap-raw>` tags, HTML comments, sidecar blobs, or a combination?
 - Should all synchronization metadata live in TOML/SQLite sidecars, or should simple metadata comments be required in each page?
@@ -862,7 +870,126 @@ The goal of the test corpus is not perfect conversion. The goal is predictable c
 - How should category/tag mapping behave across MediaWiki, Zim, Org, and Google Docs?
 - What should the first target-specific safe profiles be: `electowiki-safe`, `wikipedia-safe`, `zim-safe`, `gdocs-safe`, or something else?
 
-## 26. References
+## 26. Candidate core formats
+
+The core format is the most consequential choice in this document, because it is
+what a maintainer must be able to read by eye — possibly years from now,
+possibly without `mwmap.py`. This section records the candidates and the
+reasoning so the choice stays auditable even before it is final. It answers the
+first cluster of §25's open questions.
+
+### 26.1 Two roles, not one
+
+"Core format" quietly covers two different jobs that should not be merged:
+
+1. **Per-upstream mirror** — the local, byte-faithful copy of what one upstream
+   holds. Its job is fidelity and debuggability *for that upstream*. The
+   upstream is authoritative, including any post-save transforms it applies, so
+   the mirror stores exactly the bytes the upstream serves. After a push,
+   `mwmap.py` re-fetches the canonical post-save revision and adopts *that* as
+   the new base, rather than assuming the pushed text was stored verbatim.
+2. **Neutral pivot** — a single intermediate representation used only when
+   bridging two *different* upstreams (MediaWiki ↔ Org, say). Its job is to be a
+   common denominator for diff, merge, and mapping.
+
+These have different requirements. A same-system round-trip
+(MediaWiki ↔ MediaWiki) needs only role 1, involves no pivot, and should apply
+no normalization. A cross-system round-trip needs role 2 — or needs direct
+adapter-to-adapter conversion with no stored pivot at all.
+
+The MediaWiki decision is now firm: **the mirror is exact, raw wikitext
+(`.mw`), upstream-authoritative, with no mwmap-injected markers in the file.**
+This supersedes the earlier "portable wikitext profile" framing *for the
+mirror*; the profile material in §7–§9 is best read as describing a candidate
+*pivot*.
+
+### 26.2 Selection criteria
+
+- **Eyeball-auditable** as plain text in any editor or pager.
+- **Collaboratively edited** in real practice, so the maintainer's skills
+  transfer and the format has survival pressure behind it.
+- **Durable beyond mwmap** — ideally pinned by a written specification *and* an
+  independent conformance suite, not "the spec is whatever one program happens
+  to do."
+- **High enough fidelity** for the documents actually being synced.
+- **Already known, or worth learning.**
+
+### 26.3 The candidates
+
+| Format | Best role | Fidelity | Spec durability | Eyeball-audit |
+| --- | --- | --- | --- | --- |
+| MediaWiki wikitext (`.mw`) | MW mirror (**chosen**) | High *for MediaWiki* | Implementation-defined (PHP parser + Parsoid) | Good |
+| CommonMark / Pandoc Markdown | Neutral pivot | Medium base → high with Pandoc extensions | **Strong** — written spec + conformance suite | Excellent |
+| AsciiDoc | Neutral pivot | High out of the box | Improving (AsciiDoc Language spec; Asciidoctor reference) | Good |
+| Emacs Org | Personal-notes mirror; possible pivot | High | Implementation-defined (`org-element`) | Excellent |
+| reStructuredText | Pivot | High | Implementation-defined (docutils) | Fair |
+| Parsoid HTML / pagebundle | MW bridge (machinery only) | **Highest for MediaWiki** | HTML is well-specified | Poor (verbose) |
+| LaTeX / TeX | Publishing target | Very high (esp. math) | Stable, but a macro language, not a document model | Poor without expansion |
+| Typst | Publishing target | High | Young, single implementation | Good |
+| Djot | Future pivot | Medium-high (native attributes/divs/spans) | Clean spec (CommonMark/Pandoc author) | Excellent |
+| OOXML `.docx` / ODF `.odt` | Excluded | High | Heavily specified | **Fails** (zip-of-XML) |
+
+Notes on the ones that matter most:
+
+- **MediaWiki wikitext** is the right *mirror*, but a poor *neutral pivot*: its
+  semantics are site-bound (templates, parser functions, magic words expand
+  differently per wiki) and it has no spec independent of the parser. That is
+  fine when the upstream is authoritative anyway, and weak when the format is
+  meant to outlast every tool that reads it.
+- **Pandoc Markdown / CommonMark** is the durability front-runner: CommonMark is
+  the only candidate here whose correctness is pinned by a written spec *and* a
+  public conformance suite. Base CommonMark is too thin (no tables, footnotes,
+  definition lists, attributes), so a real pivot would use Pandoc's
+  extensions — which buys fidelity at some cost to the single-spec guarantee.
+- **AsciiDoc** is "semantic Markdown": higher fidelity out of the box (tables,
+  cross-references, admonitions, attributes) with a maturing language spec, but
+  a smaller ecosystem.
+- **Emacs Org** is the highest-fidelity readable format the maintainer already
+  lives in, and the natural raw mirror for a personal-notebook spoke; its
+  Org-specific semantics (agenda, babel) simply don't map outward.
+- **Parsoid HTML** is the genuinely lossless MediaWiki interchange — but it
+  fails the eyeball-audit test, so it belongs *inside* conversion machinery,
+  never as the canonical surface.
+- **LaTeX and Typst** are publishing *targets* (§16), not hubs: both are
+  typesetting/macro languages where reading the source doesn't tell you the
+  output without expansion. (Math fragments can still ride along inside
+  `<math>`.)
+- **OOXML / ODF** are not eyeball-auditable even unzipped — text runs are split
+  mid-sentence by formatting and buried under relationship XML. Don't learn to
+  read them raw; convert with Pandoc and audit the *converted* form.
+
+### 26.4 Recommendation
+
+- **Keep raw `.mw` as the MediaWiki mirror.** The reasons are sound: the
+  upstream is authoritative, wikitext has decades of compatibility pressure, it
+  is the native source of the most important initial upstreams, and there is
+  direct rapport with core MediaWiki developers to lean on when the format
+  bites.
+- **Store other upstreams raw in their own native format too** — Org for an
+  Emacs notebook spoke, for example — so the per-upstream-mirror principle stays
+  uniform and every mirror is debuggable in the format its upstream actually
+  speaks.
+- **Do not pick a single neutral pivot yet.** Until a concrete cross-system need
+  exists, prefer direct adapter A→B conversion (Pandoc and Parsoid as
+  machinery) over inventing a stored pivot. When a pivot becomes unavoidable,
+  the readable front-runners are Pandoc-flavored Markdown (best durability) and
+  AsciiDoc (best out-of-the-box fidelity); keep Parsoid HTML strictly inside the
+  machinery as the lossless-but-unreadable MediaWiki bridge.
+- **Litmus test for "outlive mwmap":** prefer formats pinned by a written spec
+  and an independent conformance suite. Only CommonMark clearly clears that bar
+  today, with the AsciiDoc Language spec maturing toward it. That argues for a
+  Markdown/AsciiDoc *pivot*, not against a raw-wikitext *mirror* — the mirror's
+  authority comes from the upstream, so implementation-defined wikitext is
+  acceptable there.
+
+### 26.5 Further reading
+
+- CommonMark specification and test suite: <https://spec.commonmark.org/>
+- AsciiDoc Language documentation: <https://docs.asciidoctor.org/asciidoc/latest/>
+- Org mode (`org-element` is the de facto parser): <https://orgmode.org/>
+- Djot: <https://djot.net/>
+
+## 27. References
 
 These references inform the adapter architecture. They are not incorporated as normative dependencies of the hub format.
 

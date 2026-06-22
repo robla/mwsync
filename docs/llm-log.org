@@ -67,3 +67,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** ChatGPT [2026-06-22 Mon 00:53 PDT]: implemented mwmap preview command.
 ** ChatGPT [2026-06-22 Mon 10:59 PDT]: add docs/hub-format.md spec (portable-wikitext-0.1 hub format). (backfilled by Claude at RobLa's request)
 ** Claude [2026-06-22 Mon 11:20 PDT]: review docs/hub-format.md; flag layout/.mw/raw-tag concerns.
+** Claude [2026-06-22 Mon 12:05 PDT]: add candidate core formats to hub-format.md; record raw-.mw mirror decision.
