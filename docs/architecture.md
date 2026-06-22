@@ -24,6 +24,17 @@ _mwmap/
 
 `_mwmap/cache/` is disposable storage. It may hold remote-derived metadata, fetched page bodies, local-store indexes, or other data that can be repopulated from remotes if deleted.
 
+Fetched MediaWiki page bodies should be cached under revision-stable names, not as `latest` snapshots. The first page cache layout is:
+
+```text
+_mwmap/cache/<remote>/<page-key>/
+  history.jsonl
+  <revid>.mw
+  <revid>.yaml
+```
+
+`history.jsonl` is the per-page revision ledger. The revid-named `.mw` file is the cached body for that exact MediaWiki revision, and the matching `.yaml` file is its metadata sidecar.
+
 Do not create `_mwmap/refs/` for now. The name implies a git-like reference store, and `mwmap` should not inherit that expectation unless the storage model truly needs it. If revision storage becomes necessary, prefer a plain name such as `_mwmap/revisions/`.
 
 ## Planned Command Style
