@@ -10,24 +10,22 @@ trees). The core abstraction is a **map**: rules describing how wiki objects
 (page, subtree, namespace, whole wiki) correspond to local structures, with
 two-way sync as the long-term goal.
 
-**There is almost no code yet.** `mwmap.py` — the planned CLI entry point — does
-*not* exist. The repository currently holds design docs (`README.md`, `docs/`),
-contributor guidance (`AGENTS.md`, `GEMINI.md`), and a failing test suite that
-specifies the first milestone. `git log` is a history of design decisions, not
-implementation.
+`mwmap.py` is the current first-version CLI implementation. The repository also
+holds design docs (`README.md`, `docs/`), contributor guidance (`AGENTS.md`,
+`GEMINI.md`), and a small pytest suite covering local CLI behavior. Much of
+`git log` is still design history rather than implementation history.
 
 ## Commands
 
-- `python3 -m pytest -q` — run the milestone tests. **These currently fail by
-  design**: they invoke `mwmap.py` (repo root), which is unimplemented. They are
-  the spec for the first version, not a regression suite.
-- `python3 mwmap.py --help` — the target CLI, once implemented.
+- `python3 -m pytest -q` — run the current fast local CLI tests.
+- `python3 mwmap.py --help` — show the current CLI surface.
+- `python3 mwmap.py init && python3 mwmap.py clone https://electowiki.org/wiki/California` — smoke-test the first networked clone workflow.
 - `rg <term>` — search repository text.
 
 ## First-version target (the spec the tests encode)
 
 The first `mwmap.py` is a single small CLI at the **repository root** (the tests
-hardcode `PROJECT_ROOT / "mwmap.py"`). Its motivating first run is `init` then
+hardcode `PROJECT_ROOT / "mwmap.py"`). Its motivating run is `init` then
 `clone <page-url>` in an empty directory. `clone` contacts MediaWiki; the other
 commands operate on local mapping metadata. Required behavior:
 
@@ -38,8 +36,9 @@ commands operate on local mapping metadata. Required behavior:
 - `init` creates `_mwmap/config.yaml` and `_mwmap/cache/`, writing config
   equal to `{version: 1, remotes: {}, mappings: []}`, and prints "initialized".
 - `remote add NAME TYPE LOCATION` records `remotes[NAME] = {type, location}`.
-- `clone URL [PATH]` onboards a page (or wiki) end to end — registers a remote
-  from the URL, pairs, fetches from MediaWiki, writes local files; inits if needed.
+- `clone URL [PATH]` onboards a MediaWiki page URL end to end — registers a
+  remote from the URL, pairs, fetches from MediaWiki, writes the local file;
+  inits if needed.
 - `status` reports configured remotes and the mapping count (e.g. `0 mappings`).
 - Commands needing config must exit nonzero with a clear message before `init`.
 

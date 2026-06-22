@@ -31,7 +31,7 @@ Do not create `_mwmap/refs/` for now. The name implies a git-like reference stor
 `mwmap` is expected to use verb-style subcommands:
 
 ```sh
-# Quick start — clone a page (or subtree/wiki) in one step
+# Quick start — clone a page in one step
 # (init + remote add + pair + fetch + populate):
 mwmap clone https://electowiki.org/wiki/California
 
@@ -92,11 +92,12 @@ mappings:
     local_path: ElectoramaNews.mw
 ```
 
-Keep YAGNI in mind: the first milestone covers `init`, `clone`, `remote add`,
-and `status` — so it does fetch content, via `clone`. With a single remote (the
-common first run) the default is simply that sole remote. A settable
-`default_remote` pointer for *multiple* remotes, and richer per-pairing upstream
-management, remain design direction — not code to build yet.
+Keep YAGNI in mind: the first milestone covers `init`, page-oriented `clone`,
+`remote add`, and `status` — so it does fetch content, via `clone`. With a
+single remote (the common first run) the default is simply that sole remote. A
+settable `default_remote` pointer for *multiple* remotes, richer per-pairing
+upstream management, and subtree/wiki clone remain design direction — not code
+to build yet.
 
 ## Tentative Source Layout
 

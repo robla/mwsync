@@ -1,6 +1,6 @@
 # Testing
 
-The current test suite is a small `pytest` suite that describes the first `mwmap.py` CLI milestone. These tests are expected to fail until that implementation exists.
+The current test suite is a small `pytest` suite that covers the local first-version `mwmap.py` CLI behavior.
 
 ## Working Policy
 
@@ -32,4 +32,4 @@ Every test should start with a short comment, under 500 characters, describing w
 
 Unit tests should cover pure mapping and merge logic without network access. Tests that require MediaWiki credentials, local notebooks, or external services should be documented clearly and separated from fast local tests.
 
-`clone` is the first milestone command that contacts MediaWiki, so its end-to-end behavior belongs in that separated integration group. The current fast suite stays offline; do not add a live-network `clone` test to it.
+`clone` contacts MediaWiki, so its end-to-end behavior belongs in a separated integration group. The current fast suite stays offline; do not add a live-network `clone` test to it.

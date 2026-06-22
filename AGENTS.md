@@ -2,9 +2,9 @@
 
 ## Project Structure & Module Organization
 
-This repository is a prototype-stage design repository for `mwmap`. `README.md` defines the concept and first CLI target, `docs/` contains focused notes, and `tests/` contains the initial failing `pytest` specs. The `mwsync` path is a gitignored symlink to the sibling `mwsync` project and should not be treated as part of this repo.
+This repository is a prototype-stage implementation and design repository for `mwmap`. `mwmap.py` contains the first CLI version, `README.md` defines the concept and first target, `docs/` contains focused notes, and `tests/` contains pytest specs. The `mwsync` path is a gitignored symlink to the sibling `mwsync` project and should not be treated as part of this repo.
 
-Planned Python source layout, when implementation begins, is expected to resemble:
+Possible Python source layout, if the implementation outgrows one file:
 
 ```text
 src/
@@ -35,7 +35,7 @@ Use Markdown headings consistently in design documents. Keep prose direct and ma
 
 ## Testing Guidelines
 
-The current tests describe the first `mwmap.py` CLI milestone and are expected to fail until that file exists. Do not write tests concurrently with implementation unless explicitly requested. If tests are missing, incomplete, or not targeted enough for safe changes, stop and ask before editing.
+The current tests describe the local first-version `mwmap.py` CLI behavior. Do not write tests concurrently with implementation unless explicitly requested. If tests are missing, incomplete, or not targeted enough for safe changes, stop and ask before editing.
 
 Prefer `pytest` unless the project adopts a different framework. Name tests by behavior, for example `test_status_reports_unpaired_pages.py`. Document any fixtures that require MediaWiki credentials, local notebooks, or external services.
 

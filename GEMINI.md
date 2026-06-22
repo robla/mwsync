@@ -14,7 +14,7 @@ Currently, the project is in a **prototype/idea stage**. It is a companion or po
 The project does not yet have a build system or package metadata (YAGNI).
 
 ### Key Commands
-- **Run CLI (Target):** `python3 mwmap.py --help`
+- **Run CLI:** `python3 mwmap.py --help`
 - **Initialize Workspace:** `python3 mwmap.py --root PATH init`
 - **Run Tests:** `python3 -m pytest -q`
 - **Search Code:** `rg <term>`
@@ -30,7 +30,7 @@ Adhere to these guidelines when working on `mwmap`:
 - **Standardization:** No formatter or linter is currently configured. Follow existing Python patterns in the repo.
 
 ### Testing Practices
-- **Existing Tests:** The tests in `tests/test_mwmap_cli.py` define the first milestone and are expected to fail until `mwmap.py` is implemented.
+- **Existing Tests:** The tests in `tests/test_mwmap_cli.py` cover the local first-version CLI behavior.
 - **Policy:** Do not write tests concurrently with implementation unless explicitly requested.
 - **Framework:** Use `pytest`. Name tests by behavior (e.g., `test_status_reports_unpaired_pages.py`).
 - **Intent Comments:** Every test should start with a short comment, under 500 characters, describing what it hopes to accomplish.
@@ -43,12 +43,12 @@ Adhere to these guidelines when working on `mwmap`:
 - **mwsync:** Do not edit the `mwsync` symlink.
 
 ## Key Directory Structure
-- `_mwmap/`: (Planned) Local metadata storage.
+- `_mwmap/`: Local metadata storage created in workspaces.
     - `config.yaml`: Durable user-facing mapping configuration.
     - `cache/`: Disposable storage for remote-derived data.
 - `docs/`: Architectural design and testing policy documents.
 - `tests/`: Behavioral specs and CLI milestone tests.
-- `mwmap.py`: (Planned) The main CLI entry point.
+- `mwmap.py`: The main first-version CLI entry point.
 
 ---
 *This file was generated to provide context for AI-assisted development. Refer to `README.md` and `AGENTS.md` for more details.*

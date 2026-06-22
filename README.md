@@ -45,11 +45,11 @@ This project is currently an idea/prototype-stage companion to `mwsync`.
 
 ## First version target
 
-The first version of `mwmap.py` should be a small Python CLI runnable from the repository root. The motivating first run is onboarding a single page into an empty directory:
+The first version is a small Python CLI. From a source checkout, run `python3 mwmap.py ...` or put the repository root on `PATH` and use the `mwmap` wrapper. The motivating first run is onboarding a single page into an empty directory:
 
 ```sh
-python3 mwmap.py init
-python3 mwmap.py clone https://electowiki.org/wiki/California
+mwmap init
+mwmap clone https://electowiki.org/wiki/California
 ```
 
 The fuller command surface:
@@ -78,7 +78,7 @@ mappings: []
 ```
 
 * Implement `remote add NAME TYPE LOCATION` by recording a remote in the config.
-* Implement `clone URL [PATH]` by onboarding a page (or wiki) end to end: registering a remote derived from the URL, pairing, fetching from MediaWiki, and writing local files. It initializes the workspace if needed.
+* Implement `clone URL [PATH]` for MediaWiki page URLs by registering a remote derived from the URL, pairing the page, fetching from MediaWiki, and writing the local file. It initializes the workspace if needed.
 * Implement `status` by reporting configured remotes and the mapping count.
 * Exit nonzero with a clear message if commands that need config run before `init`.
 

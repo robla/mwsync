@@ -51,7 +51,7 @@ This separation lets `mwmap` adopt modern Git's clean verbs (`restore`,
 | **Initialize workspace** | `git init` | `mwsync.py init` | `mwmap.py init` | Creates the `_mwmap/` metadata directory. |
 | **Register a remote** | `git remote add` | *(implicit / hardcoded)* | `mwmap.py remote add` | Registers a remote to sync against (e.g. a MediaWiki instance); its location may itself be local. |
 | **Pair remote ↔ local** | *(no single verb; cf. `git branch -u`)* | `mwsync.py add` / `checkout` | **`mwmap.py pair <type>`** | Links a page, subtree, namespace, or wiki to a local path. New verb — see below. |
-| **Clone (onboard in one step)** | `git clone` | `mwsync.py checkout` | **`mwmap.py clone`** *(first version)* | One-command onboarding of a page, subtree, or wiki: `init` (if needed) + `remote add` + `pair` + `fetch` + populate. Direct successor to `mwsync.py checkout`. |
+| **Clone (onboard in one step)** | `git clone` | `mwsync.py checkout` | **`mwmap.py clone`** *(first version)* | One-command onboarding. The first implementation supports page URLs: `init` (if needed) + `remote add` + `pair` + `fetch` + populate. Direct successor to `mwsync.py checkout`. |
 | **Fetch remote → cache** | `git fetch` | `mwsync.py fetch` | `mwmap.py fetch` | Downloads remote revisions/metadata to cache; no working-tree changes. |
 | **Show workspace status** | `git status` | `mwsync.py status` | `mwmap.py status` | Compares working files, cached base, and remote upstream. |
 | **Compare changes** | `git diff` | `mwsync.py diff` | `mwmap.py diff` | Line-by-line diffs across working / base / upstream. |
@@ -139,16 +139,17 @@ mwmap.py restore maine/Elections_2026.mw
 `clone` is the primary onboarding verb and a near-term priority, because the
 common workflow is to *start* a session by pulling one page down to edit —
 today's `mwsync.py checkout https://electowiki.org/wiki/California`. `mwmap.py
-clone` is that command with a cleaner name: given a page URL (or a subtree or a
-whole-wiki location), it runs `init` (if needed), registers the remote, pairs the
-location, fetches, and writes the local file — matching `git clone` as the
-one-command path from nothing to a working copy.
+clone` is that command with a cleaner name: given a page URL, it runs `init` (if
+needed), registers the remote, pairs the location, fetches, and writes the local
+file — matching `git clone` as the one-command path from nothing to a working
+copy. Subtree and whole-wiki clone are design direction, not first
+implementation scope.
 
 ```sh
 # Onboard a single page (the common case)
 mwmap.py clone https://electowiki.org/wiki/California
 
-# Or a whole wiki into the current working tree
+# Future design direction: clone a whole wiki into the current working tree
 mwmap.py clone https://electowiki.org/w/ .
 ```
 
@@ -174,7 +175,7 @@ It is not a recommended verb and may be removed in a future version.
 
 ### Recommendation
 
-- Use **`clone`** to onboard a page, subtree, or wiki in one step (the direct successor to `mwsync.py checkout`), or **`pair`** for finer-grained mapping setup.
+- Use **`clone`** to onboard a page in one step (the direct successor to `mwsync.py checkout`), or **`pair`** for finer-grained mapping setup. Subtree and wiki clone are future design direction.
 - Use **`restore`** to discard local changes or populate working files from cache.
 - Reserve **`switch`** for switching between contexts once they exist.
 - Treat **`checkout`** as deprecated from the start.
