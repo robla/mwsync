@@ -17,11 +17,11 @@ upsert that entry when asked for a fresh assessment. "Upsert" means:
 
 Entry format:
 
-: ** Name [YYYY-MM-DD Ddd HH:MM]
+: ** Name [YYYY-MM-DD Ddd HH:MM TZ]
 : Summary text...
 
 * LLM summaries
-** ChatGPT [2026-06-21 Sun 21:18]
+** ChatGPT [2026-06-21 Sun 21:18 PDT]
 The project has moved from design-only scaffolding into a small but real
 prototype, and the current direction is mostly sound. The strongest architectural
 decision is treating files and cache layout as first-class product surface
@@ -65,7 +65,7 @@ conversion until raw MediaWiki page clone/fetch/status/fsck feel boring and
 predictable. The current path is promising because it is becoming concrete
 without losing sight of the file architecture.
 
-** Claude [2026-06-21 Sun 22:40]
+** Claude [2026-06-21 Sun 22:40 PDT]
 =mwmap= (aliased =mwm= locally; the two names are interchangeable) is now a
 working prototype: =init=, =clone= (with =--follow= redirect handling),
 =remote add=, =status=, and =fsck=, behind a thin root =mwmap.py= over
@@ -104,3 +104,21 @@ production wiki — network paths are exercised with stubbed =urlopen=. Keep it
 that way. After =fsck --rebuild=, the next real work is =fetch=/=restore=/=diff=
 built on =base_revid=; hold the line on format conversion until raw page
 clone/fetch/status/fsck feel boring.
+
+** Gemini [2026-06-21 Sun 22:34 PDT]
+The project has evolved into a working CLI prototype with `init`, `remote add`, `clone`, `status`, and `fsck` subcommands. Over the recent development cycles, several critical refactoring steps have established a clean and robust architecture.
+
+The most significant structural improvement is the decoupling of the CLI commands from the underlying storage and network protocols. A `Remote` protocol now defines the backend interface, implemented initially via the `MediaWikiRemote` class in `src/mwmap/core/remote.py`. All state-transfer operations are consolidated in `src/mwmap/sync.py`. This separation ensures that the tool is ready for future mapping stores (such as Zim or Org-mode) without cluttering the CLI command files.
+
+Furthermore, the cache layout has been updated to a resilient two-tier model. To prevent page-move operations from orphaning the cache history, pages are canonically stored under pageid-keyed directories (`cache/<remote>/pages/<pageid>/`) along with revision metadata, bodies, and a `history.jsonl` log. To restore human-readability, a derived `by-title/` symlink directory structures namespace-aware links back to the pageid directories. This derived layer remains a pure function of the canonical data, enabling easy recreation.
+
+On CLI UX, the team aligned commands closer to modern version control rather than overloading legacy verbs:
+1. `clone` is now the onboarding entry-point, setting up a tracking workspace.
+2. Legacy `checkout` is retained as a deprecated alias pointing to `clone` for compatibility with `mwsync.py` habits.
+3. `restore` and `switch` are adopted as clean, specialized operations matching Git's split UX (reverting files vs switching mapping targets).
+4. The config and CLI have transitioned from using the term "sources" to "remotes", treating the local tree as the base and registering remotes.
+
+Next steps should prioritize:
+- Extending `fsck` with a `--rebuild` action to regenerate the derived `by-title/` directory in case of cache corruption or missing links.
+- Handling title-key collisions in the `by-title/` indexing.
+- Implementing offline-first `fetch`, `diff`, `merge`, and `push` subcommands, leveraging the `base_revid` tracking field to handle synchronization state correctly.
