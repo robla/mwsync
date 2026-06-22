@@ -62,3 +62,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** Claude [2026-06-22 Mon 00:45 PDT]: add commit verb; push now publishes the staged commit.
 ** ChatGPT [2026-06-21 Sun 23:56 PDT]: documented planned mwm preview behavior.
 ** Claude [2026-06-22 Mon 01:10 PDT]: add offline commit/push lifecycle tests.
+** Gemini [2026-06-22 Mon 00:14 PDT]: update preview and legacy copy design docs.

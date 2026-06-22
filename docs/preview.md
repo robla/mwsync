@@ -57,6 +57,8 @@ disableeditsection=1
 pst=1
 ```
 
+The request must include a compliant User-Agent header (matching the project's default Remote user-agent policy) to prevent API throttling or blocks.
+
 The title should come from pending metadata when previewing a pending commit,
 otherwise from the mapping's `remote_path`. The first version can support only
 `format: mw`; later versions may preview converted Org/Markdown/Zim content
@@ -134,6 +136,8 @@ the preview proposal:
 This keeps the useful legacy workflow: a user can preview, open the wiki editor,
 paste/copy the exact wikitext, save manually, then let the tool notice and
 adopt the new remote revision without submitting a second edit.
+
+This reconciliation step also functions as a safety recovery path: if an API push failed to receive a success response due to a network dropout, running preview and pressing Enter will recognize that the parent-compatible edit already exists on the remote, successfully fast-forwarding local state without generating a duplicate edit.
 
 ## Implementation Notes
 

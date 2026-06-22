@@ -46,6 +46,9 @@ wrong kind of work.
   **Credentials:** mwsync reads `MWSYNC_MW_USER` / `MWSYNC_MW_PASSWORD` from the
   environment (bot password), *not* from config — keep that pattern (secrets
   out of `config.yaml`); rename the vars to `MWMAP_MW_USER` / `MWMAP_MW_PASSWORD`.
+  **User-Agent Policy:** MediaWiki APIs require descriptive user agents to prevent
+  throttling/blocking. Maintain compliance with the legacy pattern:
+  `USER_AGENT = "mwsync/1.0 (+https://electowiki.org/)"` (adapted for `mwmap`).
 
 - **`_edit_summary`** (mwsync ~1332). Opens `$VISUAL`/`$EDITOR` for a commit
   summary with a stripped `#` comment block; empty summary aborts. Copy when
@@ -63,6 +66,12 @@ wrong kind of work.
   Relevant only as the alternative to mwmap's pure-Python merge — see the
   trade-off note below.
 
+- **Transient HTTP Preview Server: `_serve_preview_document`, `_open_transient_preview`, `_close_preview_server`** (mwsync ~1133–1212).
+  Enables a secure, loopback-only HTTP server on `127.0.0.1` that hosts rendered
+  wikitext previews and automatically triggers the default browser using the `webbrowser`
+  module. Utilizes Content Security Policy (CSP) header pinning to secure local scripts.
+  Crucial for bypassing browser CORS/file-access constraints during offline previews.
+
 - **Namespace / title normalization** (`_normalize_namespace_map` ~192,
   `_fetch_namespace_map` ~259, `_namespace_local_dir` ~170, `_encode_dbkey_segment`
   ~166, `_parse_title_parts` ~336, `_canonical_title` ~601, `_normalize_dbkey`
@@ -70,6 +79,14 @@ wrong kind of work.
   prefixes, underscores↔spaces). Copy the **logic** for robustness, but feed it
   into `mwmap`'s pageid-keyed dirs and siteinfo-driven namespace map — do not
   copy the surrounding key/dir layout.
+
+- **Bulk Namespace Title Indexing (`wikimgr.py`)**. Uses the MediaWiki `allpages`
+  API to query and cache page lists and stable `pageid` numbers for entire namespaces.
+  This is a critical reference pattern for implementing `mwmap.py` subtree and
+  whole-wiki tracking maps.
+
+- **Recent Changes Cache (`rcmgr.py`)**. Caches recent changes logs (`YYYY-MM-DD.jsonl`)
+  to support delta-syncing and changes detection on the wiki without querying every page.
 
 - **Fetch transaction / history integrity** (`_cache_fetch_transaction`,
   `_history_content`, `_cache_revision_metadata`; mwsync ~1516–1720). The
@@ -79,12 +96,18 @@ wrong kind of work.
   semantics; adapt paths to `cache/<remote>/pages/<pageid>/` and keep
   `base_revid` in config.
 
-- **Pending commit reconciliation** (`run_commit`, `_reconcile_saved_pending`,
-  `_record_saved_revision`; mwsync ~2320–2580). This is more than "push": it
-  stages a pending edit, refuses unresolved conflict markers, and detects when
-  an identical or parent-compatible edit was already saved upstream before
-  submitting another edit. Reuse the workflow concepts, but redesign the
-  pending-edit files around `mwmap`'s remotes/mappings/pageids.
+- **Pending commit reconciliation & Lost-Edit Recovery** (`run_commit`,
+  `_reconcile_saved_pending`, `_record_saved_revision`, `_reconcile_saved_preview_proposal`;
+  mwsync ~2320–2580). Stages pending edits (`commit.mw` and `commit.json`) and detects
+  when a parent-compatible version of our pending edit has already landed upstream.
+  This reconciles the repository and prevents duplicate submissions in case of network
+  dropouts right after a write. Reuse the workflow concepts, re-homed to the pageid-keyed cache.
+
+- **Wikipedia Importer & Category Resolver (`ledecopy.py`, `catmgr.py`)**.
+  Fetches Wikipedia article ledes, handles interactive category mapping prompts, registers
+  mappings to `catmap.yaml`, and prepares draft templates. This workflow is a high-value
+  candidate for an **extension or plugin** for `mwmap.py`, rather than being built
+  into the core tool.
 
 ## Already re-derived or intentionally changed
 
