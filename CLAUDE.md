@@ -27,17 +27,19 @@ implementation.
 ## First-version target (the spec the tests encode)
 
 The first `mwmap.py` is a single small CLI at the **repository root** (the tests
-hardcode `PROJECT_ROOT / "mwmap.py"`). It must be local-only — it must **not**
-contact MediaWiki or sync content yet; it only creates and inspects local
-mapping metadata. Required behavior:
+hardcode `PROJECT_ROOT / "mwmap.py"`). Its motivating first run is `init` then
+`clone <page-url>` in an empty directory. `clone` contacts MediaWiki; the other
+commands operate on local mapping metadata. Required behavior:
 
 - Global `--root PATH` option, defaulting to the current directory. The root is
   the implicit local working tree (never registered); everything synced against
   is a registered **remote** (Git's asymmetric model — a remote may be local).
-- `--help` shows `init`, `remote`, and `status`.
+- `--help` shows `init`, `clone`, `remote`, and `status`.
 - `init` creates `_mwmap/config.yaml` and `_mwmap/cache/`, writing config
   equal to `{version: 1, remotes: {}, mappings: []}`, and prints "initialized".
 - `remote add NAME TYPE LOCATION` records `remotes[NAME] = {type, location}`.
+- `clone URL [PATH]` onboards a page (or wiki) end to end — registers a remote
+  from the URL, pairs, fetches from MediaWiki, writes local files; inits if needed.
 - `status` reports configured remotes and the mapping count (e.g. `0 mappings`).
 - Commands needing config must exit nonzero with a clear message before `init`.
 

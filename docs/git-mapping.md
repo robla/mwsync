@@ -6,6 +6,12 @@ directly onto Git, where `mwmap` deliberately introduces a new verb (`pair`),
 and why the overloaded `checkout` verb is deprecated from the start in favor of
 `restore` and `switch`.
 
+> **Naming note:** `mwmap.py` is intended to become the next generation of
+> `mwsync.py`, most likely via a straight rename (`mwmap.py` → `mwsync.py`) with
+> verbs preserved. Read every `mwmap.py <verb>` below as something that should
+> also work as `mwsync.py <verb>`. When that rename happens, this document — and
+> its "legacy `mwsync.py`" vs. "proposed `mwmap.py`" columns — will be rewritten.
+
 ## Design principle
 
 `mwmap` follows three rules when choosing verbs:
@@ -45,7 +51,7 @@ This separation lets `mwmap` adopt modern Git's clean verbs (`restore`,
 | **Initialize workspace** | `git init` | `mwsync.py init` | `mwmap.py init` | Creates the `_mwmap/` metadata directory. |
 | **Register a remote** | `git remote add` | *(implicit / hardcoded)* | `mwmap.py remote add` | Registers a remote to sync against (e.g. a MediaWiki instance); its location may itself be local. |
 | **Pair remote ↔ local** | *(no single verb; cf. `git branch -u`)* | `mwsync.py add` / `checkout` | **`mwmap.py pair <type>`** | Links a page, subtree, namespace, or wiki to a local path. New verb — see below. |
-| **Clone (set up + populate)** | `git clone` | `mwsync.py checkout` | `mwmap.py clone` *(future)* | Convenience macro over `init` + `remote add` + `pair` + `fetch` + populate. |
+| **Clone (onboard in one step)** | `git clone` | `mwsync.py checkout` | **`mwmap.py clone`** *(first version)* | One-command onboarding of a page, subtree, or wiki: `init` (if needed) + `remote add` + `pair` + `fetch` + populate. Direct successor to `mwsync.py checkout`. |
 | **Fetch remote → cache** | `git fetch` | `mwsync.py fetch` | `mwmap.py fetch` | Downloads remote revisions/metadata to cache; no working-tree changes. |
 | **Show workspace status** | `git status` | `mwsync.py status` | `mwmap.py status` | Compares working files, cached base, and remote upstream. |
 | **Compare changes** | `git diff` | `mwsync.py diff` | `mwmap.py diff` | Line-by-line diffs across working / base / upstream. |
@@ -95,7 +101,7 @@ Git already has.
 
 ---
 
-## The evolution of `checkout` → `restore`, `switch`, and `clone`
+## The evolution of `checkout` → `clone`, `restore`, and `switch`
 
 ### Why legacy `checkout` is a poor fit
 
@@ -128,6 +134,24 @@ edits and writing files that are missing (e.g. right after a `pair` + `fetch`):
 mwmap.py restore maine/Elections_2026.mw
 ```
 
+#### `mwmap.py clone` — onboard in one step (first version)
+
+`clone` is the primary onboarding verb and a near-term priority, because the
+common workflow is to *start* a session by pulling one page down to edit —
+today's `mwsync.py checkout https://electowiki.org/wiki/California`. `mwmap.py
+clone` is that command with a cleaner name: given a page URL (or a subtree or a
+whole-wiki source), it runs `init` (if needed), registers the remote, pairs the
+location, fetches, and writes the local file — matching `git clone` as the
+one-command path from nothing to a working copy.
+
+```sh
+# Onboard a single page (the common case)
+mwmap.py clone https://electowiki.org/wiki/California
+
+# Or a whole wiki into the current working tree
+mwmap.py clone https://electowiki.org/w/ .
+```
+
 #### `mwmap.py switch` — change context (future)
 
 Once `mwmap` supports multiple contexts — target profiles (staging vs.
@@ -138,29 +162,19 @@ matching `git switch`:
 mwmap.py switch staging
 ```
 
-#### `mwmap.py clone` — set up and populate in one step (future)
-
-For the common "I just want the whole thing locally" case, `clone` is a
-convenience macro over the primitives (`init` + `remote add` + `pair wiki` +
-`fetch` + populate), matching `git clone`:
-
-```sh
-mwmap.py clone https://electowiki.org/w/ electowiki-notes/
-```
-
 #### `mwmap.py checkout` — deprecated shim
 
 To ease migration for users with `mwsync.py` muscle memory, `checkout` is
 retained only as a deprecated alias for the legacy single-page setup workflow
 (`pair` + `fetch` + populate). When invoked it performs that workflow and warns:
 
-> `Warning: 'checkout' is deprecated. Use 'pair' (or 'clone') to set up a mapping, and 'restore' to discard local changes.`
+> `Warning: 'checkout' is deprecated. Use 'clone' to onboard a page or wiki, 'pair' for finer-grained setup, and 'restore' to discard local changes.`
 
 It is not a recommended verb and may be removed in a future version.
 
 ### Recommendation
 
-- Use **`pair`** (or, later, **`clone`**) to set up and register mappings.
+- Use **`clone`** to onboard a page, subtree, or wiki in one step (the direct successor to `mwsync.py checkout`), or **`pair`** for finer-grained mapping setup.
 - Use **`restore`** to discard local changes or populate working files from cache.
 - Reserve **`switch`** for switching between contexts once they exist.
 - Treat **`checkout`** as deprecated from the start.

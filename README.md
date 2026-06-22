@@ -45,21 +45,29 @@ This project is currently an idea/prototype-stage companion to `mwsync`.
 
 ## First version target
 
-The first version of `mwmap.py` should be a small Python CLI runnable from the repository root:
+The first version of `mwmap.py` should be a small Python CLI runnable from the repository root. The motivating first run is onboarding a single page into an empty directory:
+
+```sh
+python3 mwmap.py init
+python3 mwmap.py clone https://electowiki.org/wiki/California
+```
+
+The fuller command surface:
 
 ```sh
 python3 mwmap.py --help
 python3 mwmap.py --root ~/Notes/electowiki init
 python3 mwmap.py --root ~/Notes/electowiki remote add electowiki mediawiki https://electowiki.org/w/
+python3 mwmap.py --root ~/Notes/electowiki clone https://electowiki.org/wiki/California
 python3 mwmap.py --root ~/Notes/electowiki status
 ```
 
-It should not contact MediaWiki or synchronize content yet. It should only create and inspect local mapping metadata.
+`clone` contacts MediaWiki — it registers a remote derived from the URL, pairs the page, fetches it, and writes the local file. The other commands operate on local mapping metadata.
 
 Required behavior:
 
 * Accept a global `--root PATH` option, defaulting to the current directory.
-* Show `init`, `remote`, and `status` in `--help`.
+* Show `init`, `clone`, `remote`, and `status` in `--help`.
 * Create `_mwmap/config.yaml` and `_mwmap/cache/` on `init`.
 * Store an initial config equivalent to:
 
@@ -70,8 +78,13 @@ mappings: []
 ```
 
 * Implement `remote add NAME TYPE LOCATION` by recording a remote in the config.
+* Implement `clone URL [PATH]` by onboarding a page (or wiki) end to end: registering a remote derived from the URL, pairing, fetching from MediaWiki, and writing local files. It initializes the workspace if needed.
 * Implement `status` by reporting configured remotes and the mapping count.
 * Exit nonzero with a clear message if commands that need config run before `init`.
+
+This drops the earlier offline-only constraint: `clone` is the first command that
+contacts MediaWiki. Keep the fast local test suite offline and put `clone`'s
+network behavior in a separate integration test (see [Testing](docs/testing.md)).
 
 ## Documentation
 

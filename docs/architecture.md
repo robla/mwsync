@@ -31,6 +31,11 @@ Do not create `_mwmap/refs/` for now. The name implies a git-like reference stor
 `mwmap` is expected to use verb-style subcommands:
 
 ```sh
+# Quick start — clone a page (or subtree/wiki) in one step
+# (init + remote add + pair + fetch + populate):
+mwmap clone https://electowiki.org/wiki/California
+
+# Or set things up explicitly:
 mwmap init
 mwmap remote add electowiki mediawiki https://electowiki.org/w/
 
@@ -46,7 +51,7 @@ mwmap push
 mwmap unpair
 ```
 
-These verbs may eventually need to become `mwsync` verbs. For example, `mwmap init` might become `mwsync.py mapinit`, and `mwmap push` might become `mwsync push --full`. Choose verbs with that migration path in mind.
+`mwmap.py` is intended to become the next generation of `mwsync.py`. The leading expectation is a straight rename — `mwmap.py` → `mwsync.py` — with verbs preserved, so each verb should also read naturally as `mwsync.py <verb>` (e.g. `mwsync.py clone`, `mwsync.py fetch`). A less-likely alternative is absorbing `mwmap` into the existing `mwsync` as namespaced subcommands (e.g. `mwmap init` → `mwsync mapinit`). Choose verb names that survive either path. When the rename happens, these design docs and their `mwmap.py` examples will be rewritten accordingly.
 
 ## Remotes and the Local Working Tree
 
@@ -87,9 +92,11 @@ mappings:
     local_path: ElectoramaNews.mw
 ```
 
-Keep YAGNI in mind: the first milestone only needs `remote add` and `status`.
-The `default_remote` pointer and per-pairing upstream are design direction, not
-code to build yet.
+Keep YAGNI in mind: the first milestone covers `init`, `clone`, `remote add`,
+and `status` — so it does fetch content, via `clone`. With a single remote (the
+common first run) the default is simply that sole remote. A settable
+`default_remote` pointer for *multiple* remotes, and richer per-pairing upstream
+management, remain design direction — not code to build yet.
 
 ## Tentative Source Layout
 

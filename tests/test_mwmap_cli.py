@@ -26,6 +26,7 @@ def test_help_lists_first_version_commands():
     help_text = result.stdout.lower()
     assert "usage:" in help_text
     assert "init" in help_text
+    assert "clone" in help_text
     assert "remote" in help_text
     assert "status" in help_text
 
