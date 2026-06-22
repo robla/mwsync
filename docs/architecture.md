@@ -24,16 +24,17 @@ _mwmap/
 
 `_mwmap/cache/` is disposable storage. It may hold remote-derived metadata, fetched page bodies, local-store indexes, or other data that can be repopulated from remotes if deleted.
 
-Fetched MediaWiki page bodies should be cached under revision-stable names, not as `latest` snapshots. The first page cache layout is:
+Fetched MediaWiki page bodies should be cached under revision-stable names, not as `latest` snapshots. Pages are keyed by their stable MediaWiki `pageid`, not their (movable) title, so renaming/moving a page on the wiki does not orphan its cached history. The first page cache layout is:
 
 ```text
-_mwmap/cache/<remote>/<page-key>/
+_mwmap/cache/<remote>/<pageid>/
+  page.yaml
   history.jsonl
   <revid>.mw
   <revid>.yaml
 ```
 
-`history.jsonl` is the per-page revision ledger. The revid-named `.mw` file is the cached body for that exact MediaWiki revision, and the matching `.yaml` file is its metadata sidecar.
+`page.yaml` is a readable directory marker recording the current title (and remote), so a numeric `pageid` directory is identifiable at a glance. `history.jsonl` is the per-page revision ledger; each record carries the title *as of that revision*, so a page move shows up as a title change across records. The revid-named `.mw` file is the cached body for that exact MediaWiki revision, and the matching `.yaml` file is its metadata sidecar.
 
 Do not create `_mwmap/refs/` for now. The name implies a git-like reference store, and `mwmap` should not inherit that expectation unless the storage model truly needs it. If revision storage becomes necessary, prefer a plain name such as `_mwmap/revisions/`.
 
@@ -97,11 +98,21 @@ remotes:
     location: https://electowiki.org/w/
 default_remote: electowiki
 mappings:
-  - remote: electowiki
-    type: page
+  - type: page
+    remote: electowiki
+    pageid: 4242
+    format: mw
     remote_path: ElectoramaNews
     local_path: ElectoramaNews.mw
+    base_revid: 99
 ```
+
+A mapping's identity is `(remote, pageid)`. `remote_path` (the title) is a
+refreshable human label, updated on each fetch; `pageid` is the stable key.
+`format` names the local representation (`mw` raw wikitext today; Org/Markdown/
+Zim later) — the seam where conversion plugs in. `base_revid` records which
+cached revision the working file was derived from: the merge-base that `diff`,
+`merge`, and `push` need to act safely.
 
 Keep YAGNI in mind: the first milestone covers `init`, page-oriented `clone`,
 `remote add`, and `status` — so it does fetch content, via `clone`. With a
@@ -123,6 +134,7 @@ src/
     __init__.py
     cli.py
     workspace.py
+    sync.py
     commands/
       __init__.py
       clone.py
@@ -132,8 +144,15 @@ src/
     core/
       __init__.py
       mediawiki.py
+      remote.py
       misc.py
 ```
+
+`workspace.py` owns pairing/config and cache layout; `sync.py` owns content
+movement (remote → cache → working tree) and is the separation the design
+calls for between *configuration* and *synchronization*. `core/remote.py` is
+the single seam where a remote backend (MediaWiki today) plugs in: commands and
+`sync.py` talk to a `Remote` protocol, never to a backend directly.
 
 The typical local-command call stack is:
 

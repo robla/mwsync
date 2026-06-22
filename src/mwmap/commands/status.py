@@ -17,4 +17,10 @@ def run_status(args: argparse.Namespace) -> int:
     for name, remote in remotes.items():
         print(f"  {name} ({remote.get('type', 'unknown')}): {remote.get('location', '')}")
     print(f"{len(mappings)} mappings")
+    for mapping in mappings:
+        ident = f"{mapping.get('remote', '?')}:{mapping.get('remote_path', '?')}"
+        pageid = mapping.get("pageid")
+        if pageid is not None:
+            ident += f" (page {pageid})"
+        print(f"  {mapping.get('local_path', '?')} <- {ident}")
     return 0

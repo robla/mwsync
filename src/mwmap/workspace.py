@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from mwmap.core.misc import atomic_write_text, die, local_path_for_title
+from mwmap.core.misc import atomic_write_text, die
 
 
 CONFIG_DIR = "_mwmap"
@@ -85,19 +85,52 @@ def unique_remote_name(config: dict[str, Any], preferred: str, location: str) ->
         suffix += 1
 
 
-def cache_page_rev(root: Path, remote: str, title: str, content: str, metadata: dict[str, Any]) -> None:
-    """Cache one fetched MediaWiki revision under revid-stable filenames."""
+def register_remote(
+    config: dict[str, Any], preferred: str, remote_type: str, location: str
+) -> str:
+    """Ensure a remote for `location` exists; return its (possibly suffixed) name.
+
+    Used by `clone` to auto-register a remote derived from a URL. The explicit
+    `remote add` verb has stricter, error-on-duplicate behavior of its own.
+    """
+    name = unique_remote_name(config, preferred, location)
+    config.setdefault("remotes", {}).setdefault(
+        name, {"type": remote_type, "location": location}
+    )
+    return name
+
+
+def cache_page_rev(root: Path, remote: str, content: str, metadata: dict[str, Any]) -> None:
+    """Cache one fetched MediaWiki revision under cache/<remote>/<pageid>/.
+
+    The cache directory is keyed on the stable MediaWiki `pageid`, not the
+    movable title, so a page move on the wiki does not orphan its history.
+    A `page.yaml` marker keeps the numeric directory self-describing.
+    """
+    title = metadata.get("title")
+    pageid = metadata.get("pageid")
+    if pageid is None:
+        die(f"cannot cache page without a MediaWiki page id: {title}")
     revid = metadata.get("revid")
     if revid is None:
         die(f"cannot cache page without a MediaWiki revision id: {title}")
 
     revid_text = str(revid)
-    page_key = local_path_for_title(title).with_suffix("").name
-    page_dir = cache_dir(root) / remote / page_key
+    page_dir = cache_dir(root) / remote / str(pageid)
     body_name = f"{revid_text}.mw"
     atomic_write_text(page_dir / body_name, content)
     atomic_write_text(page_dir / f"{revid_text}.yaml", yaml.safe_dump(metadata, sort_keys=False))
+    write_page_info(page_dir, {"pageid": pageid, "title": title, "remote": remote})
     write_hist_entry(page_dir, {**metadata, "body": body_name})
+
+
+def write_page_info(page_dir: Path, info: dict[str, Any]) -> None:
+    """Write the readable cache/<remote>/<pageid>/page.yaml directory marker.
+
+    Because cache directories are named by numeric pageid, this records the
+    current title (and remote) so the directory is identifiable at a glance.
+    """
+    atomic_write_text(page_dir / "page.yaml", yaml.safe_dump(info, sort_keys=False))
 
 
 def write_hist_entry(page_dir: Path, fetched: dict[str, Any]) -> None:
@@ -124,14 +157,37 @@ def write_hist_entry(page_dir: Path, fetched: dict[str, Any]) -> None:
     atomic_write_text(history_path, text)
 
 
-def has_page_mapping(config: dict[str, Any], remote: str, title: str, local_path: str) -> bool:
-    """Return whether config already has this exact page mapping."""
-    for mapping in config.setdefault("mappings", []):
-        if (
-            mapping.get("remote") == remote
-            and mapping.get("remote_path") == title
-            and mapping.get("local_path") == local_path
-        ):
-            return True
-    return False
+def upsert_page_mapping(
+    config: dict[str, Any],
+    *,
+    remote: str,
+    pageid: int,
+    title: str,
+    local_path: str,
+    fmt: str,
+    base_revid: Any,
+) -> dict[str, Any]:
+    """Insert or update the page mapping identified by (remote, pageid).
+
+    Identity is the stable pageid, not the movable title, so re-cloning a
+    moved/renamed page updates the existing mapping (refreshing its title)
+    instead of creating a duplicate. `base_revid` records which revision the
+    working file was derived from — the merge-base for diff/merge/push.
+    """
+    record = {
+        "type": "page",
+        "remote": remote,
+        "pageid": pageid,
+        "format": fmt,
+        "remote_path": title,
+        "local_path": local_path,
+        "base_revid": base_revid,
+    }
+    mappings = config.setdefault("mappings", [])
+    for index, mapping in enumerate(mappings):
+        if mapping.get("remote") == remote and mapping.get("pageid") == pageid:
+            mappings[index] = record
+            return record
+    mappings.append(record)
+    return record
 

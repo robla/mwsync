@@ -51,7 +51,7 @@ def fetch_mediawiki_page(api_url: str, title: str) -> tuple[str, dict[str, Any]]
         "formatversion": "2",
         "prop": "revisions",
         "titles": title,
-        "rvprop": "ids|timestamp|content",
+        "rvprop": "ids|timestamp|contentmodel|content",
         "rvslots": "main",
     }
     url = f"{api_url}?{parse.urlencode(params)}"
@@ -87,5 +87,6 @@ def fetch_mediawiki_page(api_url: str, title: str) -> tuple[str, dict[str, Any]]
         "revid": revision.get("revid"),
         "parentid": revision.get("parentid"),
         "timestamp": revision.get("timestamp"),
+        "contentmodel": main_slot.get("contentmodel"),
     }
     return content, metadata
