@@ -89,4 +89,6 @@ network behavior in a separate integration test (see [Testing](docs/testing.md))
 ## Documentation
 
 * [Architecture](docs/architecture.md)
+* [Git subcommand mapping](docs/git-mapping.md)
+* [Migration from mwsync](docs/migration.md)
 * [Testing](docs/testing.md)

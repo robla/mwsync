@@ -25,15 +25,17 @@ Adhere to these guidelines when working on `mwmap`:
 
 ### Coding Style
 - **YAGNI:** Prioritize simple solutions. Avoid over-engineering or premature abstraction.
-- **Module Layout:** When implementation begins, follow a structure like `src/mwmap/` with subcommands in `commands/`.
-- **CLI Design:** Use verb-style subcommands (e.g., `init`, `source`, `status`, `pair`, `fetch`, `push`).
+- **Module Layout:** Keep the first implementation in root-level `mwmap.py` while it remains trivial; expand toward `src/mwmap/` with `commands/` only when working code needs it.
+- **CLI Design:** Use verb-style subcommands (e.g., `init`, `clone`, `remote`, `status`, `pair`, `fetch`, `push`).
 - **Standardization:** No formatter or linter is currently configured. Follow existing Python patterns in the repo.
 
 ### Testing Practices
 - **Existing Tests:** The tests in `tests/test_mwmap_cli.py` define the first milestone and are expected to fail until `mwmap.py` is implemented.
 - **Policy:** Do not write tests concurrently with implementation unless explicitly requested.
 - **Framework:** Use `pytest`. Name tests by behavior (e.g., `test_status_reports_unpaired_pages.py`).
+- **Intent Comments:** Every test should start with a short comment, under 500 characters, describing what it hopes to accomplish.
 - **Isolation:** Unit tests should cover pure logic without network access.
+- **Integration:** `clone` contacts MediaWiki, so its live behavior belongs in a separated integration test group, not the fast local suite.
 
 ### Contribution Guidelines
 - **Commits:** Use concise, sentence-style summaries (e.g., `Add initial mapping logic`).

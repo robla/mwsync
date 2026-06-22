@@ -62,7 +62,7 @@ This separation lets `mwmap` adopt modern Git's clean verbs (`restore`,
 | **Switch context** | `git switch` | *(n/a)* | `mwmap.py switch` *(future)* | Switches the active profile, target wiki, or branch. |
 | **View history** | `git log` | `mwsync.py log` | `mwmap.py log` | Shows cached revision history. |
 | **Show a revision** | `git show` | `mwsync.py show` | `mwmap.py show` | Displays the wikitext of a cached revision. |
-| **Integrity check** | `git fsck` | `mwsync.py fsck` | `mwmap.py fsck` | Checks validity of the cache and references. |
+| **Integrity check** | `git fsck` | `mwsync.py fsck` | `mwmap.py fsck` | Checks validity of the cache and recorded revision state. |
 | **Legacy setup (deprecated)** | `git checkout` | `mwsync.py checkout` | `mwmap.py checkout` *(deprecated)* | Deprecated shim; warns and points to `pair`/`clone`/`restore`. |
 
 ---
@@ -140,7 +140,7 @@ mwmap.py restore maine/Elections_2026.mw
 common workflow is to *start* a session by pulling one page down to edit —
 today's `mwsync.py checkout https://electowiki.org/wiki/California`. `mwmap.py
 clone` is that command with a cleaner name: given a page URL (or a subtree or a
-whole-wiki source), it runs `init` (if needed), registers the remote, pairs the
+whole-wiki location), it runs `init` (if needed), registers the remote, pairs the
 location, fetches, and writes the local file — matching `git clone` as the
 one-command path from nothing to a working copy.
 

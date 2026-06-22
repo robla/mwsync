@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is a prototype-stage design repository for `mwmap`. `README.md` defines the concept and first CLI target, `docs/` contains focused notes, and `tests/` contains the initial failing `pytest` specs. The `mwsync` path is an untracked symlink to the sibling `mwsync` project and should not be treated as part of this repo.
+This repository is a prototype-stage design repository for `mwmap`. `README.md` defines the concept and first CLI target, `docs/` contains focused notes, and `tests/` contains the initial failing `pytest` specs. The `mwsync` path is a gitignored symlink to the sibling `mwsync` project and should not be treated as part of this repo.
 
 Planned Python source layout, when implementation begins, is expected to resemble:
 
@@ -47,4 +47,4 @@ Pull requests should include a short purpose statement, a summary of changed fil
 
 ## Agent-Specific Instructions
 
-Do not edit through the untracked `mwsync` symlink. Keep contributor guidance aligned with the prototype status and avoid inventing commands, package names, or workflows not present in the repo.
+Do not edit through the gitignored `mwsync` symlink. Keep contributor guidance aligned with the prototype status and avoid inventing commands, package names, or workflows not present in the repo.
