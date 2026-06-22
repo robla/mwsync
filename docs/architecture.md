@@ -24,27 +24,32 @@ _mwmap/
 
 `_mwmap/cache/` is disposable storage. It may hold remote-derived metadata, fetched page bodies, local-store indexes, or other data that can be repopulated from remotes if deleted.
 
-Fetched MediaWiki page bodies should be cached under revision-stable names, not as `latest` snapshots. Pages are keyed by their stable MediaWiki `pageid`, not their (movable) title, so renaming/moving a page on the wiki does not orphan its cached history. The current page cache layout is:
+Fetched MediaWiki page bodies should be cached under revision-stable names, not as `latest` snapshots. Pages are keyed by their stable MediaWiki `pageid`, not their (movable) title, so renaming/moving a page on the wiki does not orphan its cached history. The page cache layout is:
 
 ```text
 _mwmap/cache/<remote>/
   site.yaml
-  <pageid>/              # current implementation; see proposed pages/ below
-    page.yaml
-    history.jsonl
-    <revid>.mw
-    <revid>.yaml
+  pages/
+    <pageid>/
+      page.yaml
+      history.jsonl
+      <revid>.mw
+      <revid>.yaml
+      <title-key>.mw -> <revid>.mw
+  by-title/
+    <namespace-dir>/
+      <title-key> -> ../../pages/<pageid>
 ```
 
 `site.yaml` caches remote-wide metadata (server, scriptpath, articlepath, and the namespace table) fetched once per remote via `meta=siteinfo`. It is the basis for future link rewriting and robust title↔URL mapping; its fetch is non-fatal (a failure only warns).
 
-`page.yaml` is a readable directory marker recording the current title (and remote), so a numeric `pageid` directory is identifiable at a glance. `history.jsonl` is the per-page revision ledger; each record carries the title *as of that revision*, so a page move shows up as a title change across records. The revid-named `.mw` file is the cached body for that exact MediaWiki revision, and the matching `.yaml` file is its metadata sidecar.
+`page.yaml` is a readable directory marker recording the current title, namespace, title key, and current/base revid, so a numeric `pageid` directory is identifiable at a glance. `history.jsonl` is the per-page revision ledger; each record carries the title *as of that revision*, so a page move shows up as a title change across records. The revid-named `.mw` file is the cached body for that exact MediaWiki revision, and the matching `.yaml` file is its metadata sidecar.
 
 Because these per-page files are written atomically one at a time but not as a set, a crash mid-fetch can leave a partial revision (a body without its sidecar/history, or vice versa). `mwmap fsck` checks for that rather than relying on locking.
 
-### Proposed readable cache aliases
+### Readable cache aliases
 
-The pageid-keyed cache is stable but hard to inspect with `ls`. A proposed direction is to keep pageid as the canonical storage key while adding disposable, namespace-aware aliases for human navigation:
+The pageid-keyed cache is stable but hard to inspect with `ls`. `mwmap` keeps pageid as the canonical storage key while adding disposable, namespace-aware aliases for human navigation:
 
 ```text
 _mwmap/cache/electowiki/

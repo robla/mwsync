@@ -6,7 +6,7 @@ surfaces those inconsistencies rather than relying on locking. Errors make
 fsck exit nonzero (like `git fsck`); warnings are advisory.
 
 Typical call stack:
-  run_fsck() -> walk cache_dir() + config mappings -> report
+  run_fsck() -> walk cache/<remote>/pages + config mappings -> report
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import sys
 
 import yaml
 
-from mwmap.workspace import cache_dir, load_workspace_config
+from mwmap.workspace import cache_dir, load_workspace_config, page_cache_dir
 
 
 def run_fsck(args: argparse.Namespace) -> int:
@@ -29,8 +29,12 @@ def run_fsck(args: argparse.Namespace) -> int:
     cache = cache_dir(args.root)
     if cache.exists():
         for remote_dir in sorted(p for p in cache.iterdir() if p.is_dir()):
-            for page_dir in sorted(p for p in remote_dir.iterdir() if p.is_dir()):
+            pages_dir = remote_dir / "pages"
+            if not pages_dir.exists():
+                continue
+            for page_dir in sorted(p for p in pages_dir.iterdir() if p.is_dir()):
                 _check_page_dir(page_dir, errors, warnings)
+            _check_title_aliases(remote_dir, errors, warnings)
 
     _check_mappings(args, config, errors, warnings)
 
@@ -47,7 +51,7 @@ def run_fsck(args: argparse.Namespace) -> int:
 
 
 def _check_page_dir(page_dir, errors: list[str], warnings: list[str]) -> None:
-    """Validate one cache/<remote>/<pageid>/ directory's revision files."""
+    """Validate one cache/<remote>/pages/<pageid>/ directory's revision files."""
     page_yaml = page_dir / "page.yaml"
     if not page_yaml.exists():
         errors.append(f"{page_dir}: missing page.yaml")
@@ -92,6 +96,16 @@ def _check_page_dir(page_dir, errors: list[str], warnings: list[str]) -> None:
         warnings.append(f"{page_dir}: history.jsonl has no revisions")
 
 
+def _check_title_aliases(remote_dir, errors: list[str], warnings: list[str]) -> None:
+    """Validate symlink aliases in cache/<remote>/by-title/ when present."""
+    aliases = remote_dir / "by-title"
+    if not aliases.exists():
+        return
+    for alias in sorted(p for p in aliases.rglob("*") if p.is_symlink()):
+        if not alias.exists():
+            errors.append(f"{alias}: broken title alias")
+
+
 def _check_mappings(args, config, errors: list[str], warnings: list[str]) -> None:
     """Cross-check config mappings against remotes and the cache."""
     remotes = config.get("remotes") or {}
@@ -106,7 +120,7 @@ def _check_mappings(args, config, errors: list[str], warnings: list[str]) -> Non
         pageid = mapping.get("pageid")
         base_revid = mapping.get("base_revid")
         if remote in remotes and pageid is not None and base_revid is not None:
-            history = cache_dir(args.root) / str(remote) / str(pageid) / "history.jsonl"
+            history = page_cache_dir(args.root, str(remote), pageid) / "history.jsonl"
             if history.exists() and str(base_revid) not in _history_revids(history):
                 warnings.append(
                     f"base_revid {base_revid} not found in cache for {remote}:{pageid}"

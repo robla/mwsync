@@ -119,6 +119,8 @@ def fetch_mediawiki_page(
 
     metadata = {
         "pageid": page.get("pageid"),
+        "namespace": page.get("ns", 0),
+        "namespace_name": _namespace_name_from_title(page.get("title", title), page.get("ns", 0)),
         "title": page.get("title", title),
         "revid": revision.get("revid"),
         "parentid": revision.get("parentid"),
@@ -128,6 +130,15 @@ def fetch_mediawiki_page(
     }
     redirect = _redirect_note(title, page, query, content, follow_redirects)
     return content, metadata, redirect
+
+
+def _namespace_name_from_title(title: str, namespace: int) -> str:
+    """Return a display namespace name from API data, falling back carefully."""
+    if namespace == 0:
+        return "main"
+    if ":" in title:
+        return title.split(":", 1)[0]
+    return str(namespace)
 
 
 def _redirect_note(

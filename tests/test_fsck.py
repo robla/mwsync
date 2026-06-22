@@ -27,6 +27,7 @@ def _cache_one_page(root):
 
 
 def test_fsck_passes_clean_cache(tmp_path, capsys):
+    # Verifies fsck accepts a complete page cache.
     workspace.init_workspace(tmp_path)
     _cache_one_page(tmp_path)
     assert run_fsck(_args(tmp_path)) == 0
@@ -34,9 +35,10 @@ def test_fsck_passes_clean_cache(tmp_path, capsys):
 
 
 def test_fsck_flags_missing_body(tmp_path, capsys):
+    # Verifies fsck reports a history entry whose cached body is missing.
     workspace.init_workspace(tmp_path)
     _cache_one_page(tmp_path)
-    (tmp_path / "_mwmap" / "cache" / "r" / "1" / "5.mw").unlink()
+    (tmp_path / "_mwmap" / "cache" / "r" / "pages" / "1" / "5.mw").unlink()
 
     assert run_fsck(_args(tmp_path)) == 1
     assert "missing body" in capsys.readouterr().err

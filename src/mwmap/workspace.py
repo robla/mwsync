@@ -7,7 +7,10 @@ Typical command flow:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import re
+import shutil
 from typing import Any
 
 import yaml
@@ -28,6 +31,26 @@ def config_path(root: Path) -> Path:
 def cache_dir(root: Path) -> Path:
     """Return the disposable workspace cache directory under `root`."""
     return root / CACHE_DIR
+
+
+def remote_cache_dir(root: Path, remote: str) -> Path:
+    """Return `cache/<remote>/`, the root for one remote's cache."""
+    return cache_dir(root) / remote
+
+
+def pages_dir(root: Path, remote: str) -> Path:
+    """Return `cache/<remote>/pages/`, the canonical page cache root."""
+    return remote_cache_dir(root, remote) / "pages"
+
+
+def page_cache_dir(root: Path, remote: str, pageid: Any) -> Path:
+    """Return the canonical cache directory for one remote pageid."""
+    return pages_dir(root, remote) / str(pageid)
+
+
+def by_title_dir(root: Path, remote: str) -> Path:
+    """Return `cache/<remote>/by-title/`, the readable alias index root."""
+    return remote_cache_dir(root, remote) / "by-title"
 
 
 def initial_config() -> dict[str, Any]:
@@ -101,7 +124,7 @@ def register_remote(
 
 
 def cache_page_rev(root: Path, remote: str, content: str, metadata: dict[str, Any]) -> None:
-    """Cache one fetched MediaWiki revision under cache/<remote>/<pageid>/.
+    """Cache one fetched MediaWiki revision under cache/<remote>/pages/<pageid>/.
 
     The cache directory is keyed on the stable MediaWiki `pageid`, not the
     movable title, so a page move on the wiki does not orphan its history.
@@ -116,21 +139,103 @@ def cache_page_rev(root: Path, remote: str, content: str, metadata: dict[str, An
         die(f"cannot cache page without a MediaWiki revision id: {title}")
 
     revid_text = str(revid)
-    page_dir = cache_dir(root) / remote / str(pageid)
+    page_dir = page_cache_dir(root, remote, pageid)
     body_name = f"{revid_text}.mw"
     atomic_write_text(page_dir / body_name, content)
     atomic_write_text(page_dir / f"{revid_text}.yaml", yaml.safe_dump(metadata, sort_keys=False))
-    write_page_info(page_dir, {"pageid": pageid, "title": title, "remote": remote})
+    title_key = title_key_for_title(str(title or pageid))
+    ns = metadata.get("namespace", 0)
+    ns_name = metadata.get("namespace_name") or ("main" if ns == 0 else str(ns))
+    write_page_info(
+        page_dir,
+        {
+            "pageid": pageid,
+            "remote": remote,
+            "namespace": ns,
+            "namespace_name": ns_name,
+            "title": title,
+            "title_key": title_key,
+            "current_revid": revid,
+            "base_revid": metadata.get("base_revid", revid),
+        },
+    )
     write_hist_entry(page_dir, {**metadata, "body": body_name})
+    write_page_aliases(root, remote, pageid, title_key, ns, ns_name, body_name)
 
 
 def write_page_info(page_dir: Path, info: dict[str, Any]) -> None:
-    """Write the readable cache/<remote>/<pageid>/page.yaml directory marker.
+    """Write the readable cache/<remote>/pages/<pageid>/page.yaml marker.
 
     Because cache directories are named by numeric pageid, this records the
     current title (and remote) so the directory is identifiable at a glance.
     """
     atomic_write_text(page_dir / "page.yaml", yaml.safe_dump(info, sort_keys=False))
+
+
+def title_key_for_title(title: str) -> str:
+    """Return a readable mwsync-style key for a MediaWiki title."""
+    key = title.strip().replace(" ", "_")
+    key = key.replace(":", "__").replace("/", "__")
+    key = re.sub(r"[^A-Za-z0-9._'-]+", "_", key)
+    return key or "page"
+
+
+def namespace_dir_name(namespace: Any, namespace_name: str | None) -> str:
+    """Return a readable namespace directory name like `14ns_Category`."""
+    try:
+        ns_num = int(namespace)
+    except (TypeError, ValueError):
+        ns_num = 0
+    label = namespace_name or ("main" if ns_num == 0 else str(ns_num))
+    label = title_key_for_title(label)
+    if ns_num == 0 and label in {"", "0"}:
+        label = "main"
+    return f"{ns_num:02d}ns_{label}"
+
+
+def write_page_aliases(
+    root: Path,
+    remote: str,
+    pageid: Any,
+    title_key: str,
+    namespace: Any,
+    namespace_name: str | None,
+    body_name: str,
+) -> None:
+    """Write rebuildable human-readable aliases for one cached page."""
+    page_dir = page_cache_dir(root, remote, pageid)
+    _symlink_or_copy(page_dir / body_name, page_dir / f"{title_key}.mw")
+
+    ns_dir = by_title_dir(root, remote) / namespace_dir_name(namespace, namespace_name)
+    alias_path = ns_dir / title_key
+    rel_target = Path("..") / ".." / "pages" / str(pageid)
+    _symlink_or_pointer(rel_target, alias_path, {"pageid": pageid, "target": str(rel_target)})
+
+
+def _symlink_or_copy(target: Path, link: Path) -> None:
+    """Create a symlink to a file, or copy the file if symlinks are unavailable."""
+    _remove_alias(link)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(target.name, link)
+    except OSError:
+        shutil.copyfile(target, link)
+
+
+def _symlink_or_pointer(target: Path, link: Path, pointer: dict[str, Any]) -> None:
+    """Create a symlink to a directory, or write a YAML pointer fallback."""
+    _remove_alias(link)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except OSError:
+        atomic_write_text(link, yaml.safe_dump(pointer, sort_keys=False))
+
+
+def _remove_alias(path: Path) -> None:
+    """Remove an existing symlink/file alias before recreating it."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
 
 
 def site_info_path(root: Path, remote: str) -> Path:
@@ -200,4 +305,3 @@ def upsert_page_mapping(
             return record
     mappings.append(record)
     return record
-
