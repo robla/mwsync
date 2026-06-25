@@ -143,7 +143,6 @@ a filesystem path — "remote" denotes another store, not another machine.
 A fuller config then looks like:
 
 ```yaml
-version: 1
 remotes:
   electowiki:
     type: mediawiki
@@ -183,9 +182,10 @@ upstream management, and subtree/wiki clone remain design direction — not code
 to build yet.
 
 For the newer direction where one local file can track multiple upstream pages,
-see [Multi-upstream design](multi-upstream.md). That design moves upstream
-identity and `base_revid` under per-mapping `upstreams:` entries while keeping
-`remotes:` global and the cache keyed by `<remote>/pages/<pageid>/`.
+see [Multi-upstream design](multi-upstream.md). That design removes any
+load-bearing config version number, moves upstream identity and `base_revid`
+under per-mapping `upstreams:` entries, and keeps `remotes:` global and the
+cache keyed by `<remote>/pages/<pageid>/`.
 
 ## Source Layout
 

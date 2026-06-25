@@ -70,3 +70,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** Claude [2026-06-22 Mon 12:05 PDT]: add candidate core formats to hub-format.md; record raw-.mw mirror decision.
 ** ChatGPT [2026-06-24 Wed 21:15 PDT]: documented multi-upstream design and renamed config to mwmap.yaml.
 ** Claude [2026-06-24 Wed 21:54 PDT]: review multi-upstream.md; flag config-rename scope creep and version smell.
+** ChatGPT [2026-06-24 Wed 22:20 PDT]: resolved multi-upstream review notes in the spec.
