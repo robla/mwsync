@@ -71,3 +71,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** ChatGPT [2026-06-24 Wed 21:15 PDT]: documented multi-upstream design and renamed config to mwmap.yaml.
 ** Claude [2026-06-24 Wed 21:54 PDT]: review multi-upstream.md; flag config-rename scope creep and version smell.
 ** ChatGPT [2026-06-24 Wed 22:20 PDT]: resolved multi-upstream review notes in the spec.
+** Gemini [2026-06-24 Wed 22:31 PDT]: create docs/Makefile to build HTML docs via pandoc.
