@@ -77,7 +77,7 @@ def _write_workspace(root, *, base_text="base\n", local_text="base\n"):
 
 
 def _config(root):
-    return yaml.safe_load((root / "_mwmap" / "config.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load((root / "_mwmap" / "mwmap.yaml").read_text(encoding="utf-8"))
 
 
 def _commit_args(root, **kwargs):

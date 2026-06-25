@@ -62,7 +62,7 @@ def _write_workspace(root, *, base_text="base\n", local_text="base\n"):
 
 
 def _config(root):
-    return yaml.safe_load((root / "_mwmap" / "config.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load((root / "_mwmap" / "mwmap.yaml").read_text(encoding="utf-8"))
 
 
 def test_fetch_preserves_working_tree_and_base(tmp_path, monkeypatch):

@@ -8,7 +8,7 @@ from mwmap.workspace import CONFIG_DIR, init_workspace
 
 
 def run_init(args: argparse.Namespace) -> int:
-    """Create `_mwmap/config.yaml` and `_mwmap/cache/` if needed."""
+    """Create `_mwmap/mwmap.yaml` and `_mwmap/cache/` if needed."""
     created = init_workspace(args.root)
     if created:
         print(f"Initialized mwmap workspace in {args.root / CONFIG_DIR}")

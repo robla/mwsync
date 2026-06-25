@@ -66,7 +66,7 @@ def push_mapping(
     Submits the edit with `baserevid` (the revision the staged content was based
     on) as the edit-conflict guard, then re-fetches the page (now the just-created
     revision) into cache and advances the cached base to it. Returns the new
-    revid. The caller advances `base_revid` in `config.yaml` (the durable source
+    revid. The caller advances `base_revid` in `mwmap.yaml` (the durable source
     of truth) and clears the pending commit.
     """
     new_revid = remote.push_page(mapping["pageid"], text, baserevid, summary)

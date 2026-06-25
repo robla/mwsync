@@ -22,7 +22,7 @@ identity, config shape, or storage.**
 | Concern | legacy `mwsync` | `mwmap` |
 | :-- | :-- | :-- |
 | Page identity | title-derived **key** | stable **pageid** |
-| Revision pointers | `refs/base`, `refs/upstream` files (`_read_ref`/`_write_ref`) | `base_revid` in `config.yaml` (+ `page.yaml`) |
+| Revision pointers | `refs/base`, `refs/upstream` files (`_read_ref`/`_write_ref`) | `base_revid` in `mwmap.yaml` (+ `page.yaml`) |
 | Config | single hardcoded `wiki:` + `articles:` | many `remotes:` + `mappings:` |
 | Cache key | `_cache_dir(key)` (title) | `cache/<remote>/pages/<pageid>/` |
 
@@ -45,7 +45,7 @@ wrong kind of work.
   Adapt: `api_base` → `remote.api_url`; drop the `key` parameter.
   **Credentials:** mwsync reads `MWSYNC_MW_USER` / `MWSYNC_MW_PASSWORD` from the
   environment (bot password), *not* from config — keep that pattern (secrets
-  out of `config.yaml`); rename the vars to `MWMAP_MW_USER` / `MWMAP_MW_PASSWORD`.
+  out of `mwmap.yaml`); rename the vars to `MWMAP_MW_USER` / `MWMAP_MW_PASSWORD`.
   **User-Agent Policy:** MediaWiki APIs require descriptive user agents to prevent
   throttling/blocking. Maintain compliance with the legacy pattern:
   `USER_AGENT = "mwsync/1.0 (+https://electowiki.org/)"` (adapted for `mwmap`).

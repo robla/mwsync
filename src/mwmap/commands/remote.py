@@ -9,7 +9,7 @@ from mwmap.core.misc import die
 
 
 def run_remote_add(args: argparse.Namespace) -> int:
-    """Record a named remote in `_mwmap/config.yaml`."""
+    """Record a named remote in `_mwmap/mwmap.yaml`."""
     config = load_workspace_config(args.root)
     remotes = config.setdefault("remotes", {})
     if args.name in remotes:

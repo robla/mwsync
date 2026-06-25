@@ -88,7 +88,7 @@ The thing to watch now is =docs/hub-format.md= (ChatGPT's new spec). It's a
 strong vision doc but premature as "0.1": it diverges from decisions already
 implemented — it proposes TOML =maps/*.toml= sidecars and a
 =pages/<Remote>/<Title>.mw= working tree, whereas we run a single YAML
-=_mwmap/config.yaml= and root + =NNns_= working files. More importantly it
+=_mwmap/mwmap.yaml= and root + =NNns_= working files. More importantly it
 overloads =.mw=: today =.mw= is *exact upstream wikitext* (byte-preserved for
 safe same-site round-trips), but the hub format is a normalized *portable
 profile* with =<mwmap-raw>= escape hatches that "are not intended for
@@ -103,7 +103,7 @@ Tests remain offline-*enforced* (autouse socket-blocking fixture in
 unchanged and worth keeping on the list: =fsck --rebuild= to regenerate the
 derived layer; alias verification that each =by-title/= link resolves to the
 *expected* pageid (collision-safe), not merely unbroken; and a single declared
-source of truth for =base_revid= across =config.yaml= and =page.yaml=, with
+source of truth for =base_revid= across =mwmap.yaml= and =page.yaml=, with
 fsck flagging drift. Hold format conversion until raw clone/fetch/merge/push
 feel boring.
 

@@ -16,11 +16,11 @@ The file layout is a central part of the architecture. The first local project d
 
 ```text
 _mwmap/
-  config.yaml
+  mwmap.yaml
   cache/
 ```
 
-`_mwmap/config.yaml` is durable user-facing map configuration. It should store remote definitions, mapping rules, and other state that defines the user's intended relationship between systems.
+`_mwmap/mwmap.yaml` is durable user-facing map configuration. It should store remote definitions, mapping rules, and other state that defines the user's intended relationship between systems. `_mwmap/config.yaml` was the prototype name and should be read as a legacy fallback during migration.
 
 `_mwmap/cache/` is disposable storage. It may hold remote-derived metadata, fetched page bodies, local-store indexes, or other data that can be repopulated from remotes if deleted.
 
@@ -125,7 +125,7 @@ registered or named; in a pairing, the local side is simply a path, exactly as
 Git never makes you name your working tree.
 
 Everything you sync against is a **remote**, registered with `remote add` and
-stored under `remotes:` in `config.yaml`. There can be many remotes (e.g. two
+stored under `remotes:` in `mwmap.yaml`. There can be many remotes (e.g. two
 MediaWiki instances), like Git's `origin`, `upstream`, and so on. A remote's
 location may itself be local (a directory on disk), just as a Git remote can be
 a filesystem path — "remote" denotes another store, not another machine.
@@ -181,6 +181,11 @@ single remote (the common first run) the default is simply that sole remote. A
 settable `default_remote` pointer for *multiple* remotes, richer per-pairing
 upstream management, and subtree/wiki clone remain design direction — not code
 to build yet.
+
+For the newer direction where one local file can track multiple upstream pages,
+see [Multi-upstream design](multi-upstream.md). That design moves upstream
+identity and `base_revid` under per-mapping `upstreams:` entries while keeping
+`remotes:` global and the cache keyed by `<remote>/pages/<pageid>/`.
 
 ## Source Layout
 

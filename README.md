@@ -86,7 +86,7 @@ Required behavior:
 
 * Accept a global `--root PATH` option, defaulting to the current directory.
 * Show `init`, `clone`, `remote`, and `status` in `--help`.
-* Create `_mwmap/config.yaml` and `_mwmap/cache/` on `init`.
+* Create `_mwmap/mwmap.yaml` and `_mwmap/cache/` on `init`.
 * Store an initial config equivalent to:
 
 ```yaml
@@ -109,5 +109,6 @@ network behavior in a separate integration test (see [Testing](docs/testing.md))
 * [Architecture](docs/architecture.md)
 * [Git subcommand mapping](docs/git-mapping.md)
 * [Migration from mwsync](docs/migration.md)
+* [Multi-upstream design](docs/multi-upstream.md)
 * [Preview design](docs/preview.md)
 * [Testing](docs/testing.md)

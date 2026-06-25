@@ -16,7 +16,7 @@ Run the current tests with:
 python3 -m pytest -q
 ```
 
-The current tests use PyYAML to inspect `_mwmap/config.yaml`.
+The current tests use PyYAML to inspect `_mwmap/mwmap.yaml`.
 
 ## Future Test Suite
 

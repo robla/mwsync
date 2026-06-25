@@ -33,7 +33,7 @@ Preview chooses the source in this order:
 
 1. Pending commit: `_mwmap/cache/<remote>/pages/<pageid>/commit.mw`, with
    metadata from `commit.json`.
-2. Working file: the mapped `local_path` from `_mwmap/config.yaml`.
+2. Working file: the mapped `local_path` from `_mwmap/mwmap.yaml`.
 
 This mirrors `mws preview`: if a pending commit exists, preview shows what
 `push` would publish, not whatever happens to be in the working tree. If no

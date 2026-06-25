@@ -19,13 +19,21 @@ from mwmap.core.misc import atomic_write_text, die
 
 
 CONFIG_DIR = "_mwmap"
-CONFIG_PATH = Path(CONFIG_DIR) / "config.yaml"
+CONFIG_FILENAME = "mwmap.yaml"
+LEGACY_CONFIG_FILENAME = "config.yaml"
+CONFIG_PATH = Path(CONFIG_DIR) / CONFIG_FILENAME
+LEGACY_CONFIG_PATH = Path(CONFIG_DIR) / LEGACY_CONFIG_FILENAME
 CACHE_DIR = Path(CONFIG_DIR) / "cache"
 
 
 def config_path(root: Path) -> Path:
     """Return the workspace config path under `root`."""
     return root / CONFIG_PATH
+
+
+def legacy_config_path(root: Path) -> Path:
+    """Return the pre-rename workspace config path under `root`."""
+    return root / LEGACY_CONFIG_PATH
 
 
 def cache_dir(root: Path) -> Path:
@@ -59,7 +67,7 @@ def initial_config() -> dict[str, Any]:
 
 
 def save_workspace_config(root: Path, config: dict[str, Any]) -> None:
-    """Atomically write `_mwmap/config.yaml`."""
+    """Atomically write `_mwmap/mwmap.yaml`."""
     text = yaml.safe_dump(config, sort_keys=False)
     atomic_write_text(config_path(root), text)
 
@@ -67,8 +75,10 @@ def save_workspace_config(root: Path, config: dict[str, Any]) -> None:
 def load_workspace_config(root: Path) -> dict[str, Any]:
     """Load config, filling default top-level keys used by v1."""
     path = config_path(root)
+    if not path.exists() and legacy_config_path(root).exists():
+        path = legacy_config_path(root)
     if not path.exists():
-        die(f"config file not found: {path}. Run: mwmap.py init")
+        die(f"config file not found: {config_path(root)}. Run: mwmap.py init")
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
@@ -86,7 +96,7 @@ def init_workspace(root: Path) -> bool:
     root.mkdir(parents=True, exist_ok=True)
     cache_dir(root).mkdir(parents=True, exist_ok=True)
     path = config_path(root)
-    if path.exists():
+    if path.exists() or legacy_config_path(root).exists():
         return False
     save_workspace_config(root, initial_config())
     return True
@@ -330,7 +340,7 @@ def cached_body_path(root: Path, remote: str, pageid: Any, revid: Any) -> Path:
 def update_cache_base(root: Path, remote: str, pageid: Any, base_revid: Any) -> None:
     """Advance the cached base revision after a merge and re-point its alias.
 
-    The durable source of truth for `base_revid` is the `config.yaml` mapping;
+    The durable source of truth for `base_revid` is the `mwmap.yaml` mapping;
     this keeps the disposable cache (`page.yaml` + the readable `<title>.mw`
     alias) consistent with it.
     """

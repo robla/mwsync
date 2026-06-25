@@ -36,7 +36,7 @@ def test_init_creates_empty_workspace_config(tmp_path):
     result = run_mwmap("--root", str(tmp_path), "init")
 
     assert result.returncode == 0, result.stderr
-    config_path = tmp_path / "_mwmap" / "config.yaml"
+    config_path = tmp_path / "_mwmap" / "mwmap.yaml"
     assert config_path.exists()
     assert (tmp_path / "_mwmap" / "cache").is_dir()
     assert yaml.safe_load(config_path.read_text()) == {
@@ -63,7 +63,7 @@ def test_remote_add_and_status_report_configured_remote(tmp_path):
     )
 
     assert add_result.returncode == 0, add_result.stderr
-    config = yaml.safe_load((tmp_path / "_mwmap" / "config.yaml").read_text())
+    config = yaml.safe_load((tmp_path / "_mwmap" / "mwmap.yaml").read_text())
     assert config["remotes"]["electowiki"] == {
         "type": "mediawiki",
         "location": "https://electowiki.org/w/",
