@@ -1,4 +1,40 @@
-#+TITLE: LLM Log
+#+TITLE: mwsync LLM log
 
-* 2026-08-01
-Implemented the Git-like =mwsync.py status= and =info= commands.
+* About this log
+A running work log for =mwsync=. This log was reconstructed retroactively on
+2026-08-01 from the repository's Git history. Historical timestamps are Git
+commit timestamps, and model attribution is taken from commit subjects or
+bodies; the June 2 remote-change entry is explicitly marked uncertain because
+its commit message says "ChatGPT, I think".
+
+Each entry is a single line describing one substantive repository edit:
+
+: ** Name [YYYY-MM-DD Ddd HH:MM TZ]: short description of the substantive change
+
+Conventions:
+- One entry per substantive LLM-assisted repository edit, newest last.
+- Speakers are the assisting models: ChatGPT, Codex, Gemini, and Claude.
+- Historical timestamps come from =git log=; current entries should use local time.
+- Descriptions are kept brief and identify the affected command, file, or design.
+
+* LLM log
+** ChatGPT [2026-06-01 Mon 21:42 PDT]: [Reconstructed from git log] Normalized final newlines during merge operations.
+** ChatGPT [2026-06-01 Mon 21:55 PDT]: Made =mws diff= work without requiring a specific wiki page.
+** ChatGPT [2026-06-02 Tue 01:41 PDT]: Updated =mws preview= to work with uncommitted local content and revised its documentation.
+** ChatGPT [2026-06-02 Tue 01:43 PDT]: Added a remote-change message to preview output and documentation (model attribution uncertain in the commit subject).
+** Claude and Gemini [2026-06-03 Wed 14:36 PDT]: Added separate Claude and Gemini migration plans for the next-generation architecture.
+** ChatGPT [2026-06-03 Wed 16:12 PDT]: Revised the =mwsync-ng= architecture plans and added the missing ChatGPT plan.
+** ChatGPT [2026-06-03 Wed 17:07 PDT]: Refined the migration design in response to ChatGPT's implementation questions.
+** Claude [2026-06-03 Wed 18:04 PDT]: Revised the next-generation migration design and Claude guidance.
+** Claude [2026-06-07 Sun 17:02 PDT]: Created the initial =rcmgr.py= specification.
+** Gemini [2026-06-07 Sun 17:14 PDT]: Added Gemini's review and design suggestions to =docs/rcmgr.md=.
+** ChatGPT [2026-06-07 Sun 17:21 PDT]: Added implementation questions to the =rcmgr.py= specification.
+** ChatGPT [2026-06-07 Sun 17:53 PDT]: Reworked the =rcmgr.py= specification through an iterative design exchange.
+** Claude [2026-06-07 Sun 17:56 PDT]: Revised the =rcmgr.py= specification based on Claude's implementation pass.
+** Claude [2026-06-07 Sun 18:37 PDT]: Simplified the =rcmgr.py= MVP specification.
+** ChatGPT [2026-06-07 Sun 18:46 PDT]: Implemented the first version of =rcmgr.py=.
+** Claude [2026-06-07 Sun 20:05 PDT]: Added =rcmgr.py= tests and expanded testing documentation.
+** Gemini [2026-06-07 Sun 20:34 PDT]: Added initial =mwsync.py= tests and revised Gemini guidance about testing.
+** Claude [2026-06-07 Sun 23:23 PDT]: Added ElectoramaNews feature requests to the =rcmgr.py= specification.
+** ChatGPT [2026-06-07 Sun 23:33 PDT]: Added per-editor summary generation to =rcmgr.py= and its tests.
+** ChatGPT [2026-08-01 Sat 21:13 PDT]: Added =info= and expanded =status= with URLs, revision provenance, JSON output, and tests.
