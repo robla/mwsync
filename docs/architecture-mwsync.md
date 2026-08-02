@@ -136,7 +136,93 @@ All requests set the shared `USER_AGENT`. Network errors and MediaWiki errors ar
 
 `show` prints revision text for expressions such as `New_York@upstream`, `New_York@upstream^`, or `New_York@19778`. If metadata is known but the requested body is not cached yet, `show` fetches that one revision body by revid and stores it in the article cache.
 
-`status` is a purely local mwsync-state command. It performs no network activity and does not inspect the surrounding Git repository. By default it prints a compact Git-like summary: articles with local `.mw` content that differs from cached `refs/base`, pending commits ready to push, unresolved merge state, missing local files, unfetched state, or fetched upstream revisions not yet merged. If all tracked articles are clean, it prints a single clean message. `status --verbose` preserves the detailed output with local path, URL, upstream revision metadata, refs, last pushed revision, pending commit, and merge state.
+`status` is a purely local mwsync-state command. It performs no network activity and does not inspect the surrounding Git repository. By default it prints a compact Git-like summary: articles with local `.mw` content that differs from cached `refs/base`, pending commits ready to push, unresolved merge state, missing local files, unfetched state, or fetched upstream revisions not yet merged. Each non-clean row includes the local file and revision provenance, for example:
+
+```text
+modified  Maine.mw  based on r123; upstream r124
+pending  Ohio.mw   based on r88; ready to push
+behind   Maine.mw  base r123; upstream r124
+```
+
+The compact output uses these revision meanings:
+
+- A clean local file is at `refs/base`, so its working revision is that base
+  revid.
+- A modified local file has no MediaWiki revision yet; report it as
+  `uncommitted`, together with the base revid it was edited from.
+- A pending commit is also not a new wiki revision yet; report its stored
+  `base_revid` and say `ready to push`.
+- A fetched but unmerged revision is the `refs/upstream` revid, while the local
+  file remains based on `refs/base`.
+- A new local article has `uncommitted (no base revision)` until it is pushed.
+
+`status --verbose` retains the detailed per-article report and must include the
+same revision provenance explicitly as `working revision`, `base revision`,
+`upstream revision`, `last pushed revision`, and `pending commit base`. It also
+includes the local path and the canonical remote URL. For example:
+
+```text
+Article: Maine
+  state:             modified
+  local:             Maine.mw
+  remote URL:        https://electowiki.org/wiki/Maine
+  working revision:  uncommitted (based on r123)
+  base revision:     r123
+  upstream revision: r124
+  last pushed:       r123
+  pending commit:    no
+  pending commit base: none
+```
+
+Add `info ARTICLE` as the stable identity and provenance command for one
+tracked article. Its interface is intentionally closer to `svn info` than to
+`git status`: it reports what page the local file represents and which cached
+revision states it refers to, without judging whether the working tree needs
+attention. `info` is local-only and does not fetch; users run `fetch` first when
+they want a newer upstream revision.
+
+```bash
+mwsync.py info Maine
+```
+
+The default `info ARTICLE` output is a single-article report with these fields,
+in this order:
+
+```text
+title:              Maine
+local:              Maine.mw
+remote URL:         https://electowiki.org/wiki/Maine
+working state:      clean
+sync state:         behind
+working revision:   r123
+base revision:      r123
+upstream revision:  r124
+last pushed:        r123
+pending commit:     no
+merge state:        none
+```
+
+When the local file is modified, `working state` becomes `modified` and
+`working revision` becomes `uncommitted (based on r123)`. When no base exists,
+it becomes `uncommitted (no base revision)`. Missing refs and pending/merge
+files are reported as `none`, not as fabricated revision numbers.
+
+The `remote URL` field is the configured article URL when `mwsync.yaml` stores one;
+otherwise it is derived from the configured wiki and page title using the same
+URL normalization rules as `add` and `checkout`. URL derivation must preserve
+namespace titles and URL-encode the page dbkey. `info` and verbose `status`
+should use the same helper so the two commands cannot disagree about page
+identity.
+
+`info` accepts `--json` as a machine-readable form of the same fields. The JSON
+form uses `null` for missing refs
+and separate `working_state`, `working_revision`, `base_revision`,
+`upstream_revision`, `last_pushed_revision`, `pending_commit_base`, and
+`remote_url` fields rather than embedding multiple facts in display strings. It
+should also include a separate `sync_state` field so a clean working file that
+is behind a fetched upstream revision is not confused with a fully synchronized
+file.
+The human-readable form remains the default.
 
 `fsck` checks cache consistency for one article or all registered articles. It reports legacy cache files, malformed refs, missing revision bodies or sidecars, non-chronological history entries, and ref/history mismatches. It does not repair files implicitly.
 

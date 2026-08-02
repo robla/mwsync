@@ -22,6 +22,7 @@ Subcommands:
   fsck      Check cache refs, history, and revision files
   migrate   Update legacy article entries to the current namespace layout
   status    Show sync state of tracked articles
+  info      Show article identity and revision provenance
 
 Usage:
   mwsync.py init
@@ -37,6 +38,7 @@ Usage:
   mwsync.py commit Maine -m "Update Maine article"
   mwsync.py push Maine
   mwsync.py status
+  mwsync.py info Maine
 
 Credentials (for push):
   MWSYNC_MW_USER      MediaWiki bot username
@@ -3271,6 +3273,144 @@ def run_migrate(args, config: dict, config_path: str) -> None:
         print("No migrations needed.")
 
 
+def _revision_label(revid: int | str | None) -> str:
+    return "none" if revid is None else f"r{revid}"
+
+
+def _article_snapshot(config: dict, key: str, art: dict) -> dict:
+    """Collect local-only identity, refs, and working-file state for an article."""
+    local = art.get("local", key + ".mw")
+    base_ref = _read_ref(key, "base")
+    upstream_ref = _read_ref(key, "upstream")
+    last_pushed_ref = _read_ref(key, "last-pushed")
+    pending = _pending_commit(key)
+    merge_state = _read_merge_state(key)
+    history = _read_history(key)
+
+    latest = {}
+    if upstream_ref is not None:
+        matches = [entry for entry in history
+                   if int(entry.get("revid") or 0) == int(upstream_ref)]
+        if matches:
+            latest = matches[-1]
+    elif history:
+        latest = history[-1]
+
+    local_exists = os.path.exists(local)
+    modified = None
+    if local_exists and base_ref is not None:
+        base_path = _revision_body_path(key, base_ref)
+        if os.path.exists(base_path):
+            modified = not _file_content_matches(local, _read_text(base_path))
+
+    if not local_exists:
+        working_state = "missing"
+        working_revision = None
+        working_revision_display = "none"
+    elif modified is True:
+        working_state = "modified"
+        working_revision = None
+        if base_ref is None:
+            working_revision_display = "uncommitted (no base revision)"
+        else:
+            working_revision_display = f"uncommitted (based on {_revision_label(base_ref)})"
+    elif base_ref is not None:
+        working_state = "clean"
+        working_revision = base_ref
+        working_revision_display = _revision_label(base_ref)
+    else:
+        working_state = "uncommitted"
+        working_revision = None
+        working_revision_display = "uncommitted (no base revision)"
+
+    if merge_state:
+        sync_state = "merging"
+    elif pending:
+        sync_state = "pending"
+    elif upstream_ref is None:
+        sync_state = "unfetched"
+    elif base_ref is None:
+        sync_state = "unmerged"
+    elif int(base_ref) != int(upstream_ref):
+        sync_state = "behind"
+    else:
+        sync_state = "up-to-date"
+
+    pending_base = None
+    if pending and not pending.get("create_new"):
+        pending_base = pending.get("base_revid")
+    last_pushed = last_pushed_ref
+    if last_pushed is None:
+        last_pushed = art.get("last_pushed_revid") or None
+
+    return {
+        "key": key,
+        "title": art.get("title", key),
+        "local": local,
+        "remote_url": _article_url(config, key, art),
+        "working_state": working_state,
+        "sync_state": sync_state,
+        "working_revision": working_revision,
+        "working_revision_display": working_revision_display,
+        "base_revision": base_ref,
+        "upstream_revision": upstream_ref,
+        "last_pushed_revision": last_pushed,
+        "last_pushed_at": art.get("last_pushed_at", ""),
+        "upstream_timestamp": art.get("upstream_timestamp", "") or latest.get("timestamp", ""),
+        "upstream_editor": art.get("upstream_editor", "") or latest.get("user", ""),
+        "pending": pending,
+        "pending_commit_base": pending_base,
+        "merge_state": merge_state,
+        "modified": modified,
+    }
+
+
+def _format_optional_revision(revid: int | str | None) -> str:
+    return _revision_label(revid)
+
+
+def run_info(args, config: dict, config_path: str) -> None:
+    key, art = resolve_article_entry(config, args.article)
+    snapshot = _article_snapshot(config, key, art)
+    if getattr(args, "json", False):
+        result = {
+            "title": snapshot["title"],
+            "local": snapshot["local"],
+            "remote_url": snapshot["remote_url"] or None,
+            "working_state": snapshot["working_state"],
+            "sync_state": snapshot["sync_state"],
+            "working_revision": snapshot["working_revision"],
+            "base_revision": snapshot["base_revision"],
+            "upstream_revision": snapshot["upstream_revision"],
+            "last_pushed_revision": snapshot["last_pushed_revision"],
+            "pending_commit": bool(snapshot["pending"]),
+            "pending_commit_base": snapshot["pending_commit_base"],
+            "merge_state": snapshot["merge_state"],
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    print(f"title:              {snapshot['title']}")
+    print(f"local:              {snapshot['local']}")
+    print(f"remote URL:         {snapshot['remote_url'] or 'none'}")
+    print(f"working state:      {snapshot['working_state']}")
+    print(f"sync state:         {snapshot['sync_state']}")
+    print(f"working revision:   {snapshot['working_revision_display']}")
+    print(f"base revision:      {_format_optional_revision(snapshot['base_revision'])}")
+    print(f"upstream revision:  {_format_optional_revision(snapshot['upstream_revision'])}")
+    print(f"last pushed:        {_format_optional_revision(snapshot['last_pushed_revision'])}")
+    print(f"pending commit:     {'yes' if snapshot['pending'] else 'no'}")
+    print(f"merge state:        {_format_merge_state(snapshot['merge_state'])}")
+
+
+def _format_merge_state(merge_state: dict | None) -> str:
+    if not merge_state:
+        return "none"
+    base = merge_state.get("base_revid", "none")
+    upstream = merge_state.get("upstream_revid", "none")
+    return f"base {_revision_label(base)} -> upstream {_revision_label(upstream)}"
+
+
 def run_status(args, config: dict, config_path: str) -> None:
     articles = config.get("wiki", {}).get("articles", {})
     if not articles:
@@ -3287,92 +3427,73 @@ def run_status(args, config: dict, config_path: str) -> None:
 
     rows = []
     for key, art in items:
-        local = art.get("local", key + ".mw")
-        url = _article_url(config, key, art)
-        upstream_ref = _read_ref(key, "upstream")
-        base_ref = _read_ref(key, "base")
-        last_pushed_ref = _read_ref(key, "last-pushed")
-        pending = _pending_commit(key)
-        merge_state = _read_merge_state(key)
-        history = _read_history(key)
-        latest = {}
-        if upstream_ref is not None:
-            matches = [entry for entry in history
-                       if int(entry.get("revid") or 0) == int(upstream_ref)]
-            if matches:
-                latest = matches[-1]
-        elif history:
-            latest = history[-1]
-        revid = art.get("upstream_revid", "") or upstream_ref or ""
-        ts = art.get("upstream_timestamp", "") or latest.get("timestamp", "")
-        editor = art.get("upstream_editor", "") or latest.get("user", "")
-        pushed_revid = art.get("last_pushed_revid", "")
-        pushed_at = art.get("last_pushed_at", "")
-
-        modified = None
-        if os.path.exists(local) and base_ref is not None:
-            base_path = _revision_body_path(key, base_ref)
-            if os.path.exists(base_path):
-                modified = not _file_content_matches(local, _read_text(base_path))
-        if modified is True:
-            flag = "[modified]"
-        elif modified is False:
-            flag = "[clean]"
-        else:
-            flag = ""
+        snapshot = _article_snapshot(config, key, art)
+        pending = snapshot["pending"]
+        merge_state = snapshot["merge_state"]
+        base_ref = snapshot["base_revision"]
+        upstream_ref = snapshot["upstream_revision"]
+        local = snapshot["local"]
 
         if verbose:
-            print(key)
-            print(f"  local:           {local}  {flag}".rstrip())
-            if url:
-                print(f"  url:             {url}")
-            if revid:
-                rev_info = str(revid)
-                if ts:
-                    rev_info += f"  ({ts}"
-                    if editor:
-                        rev_info += f" by {editor}"
-                    rev_info += ")"
-                print(f"  upstream_revid:  {rev_info}")
+            print(f"Article: {key}")
+            flag = f"[{snapshot['working_state']}]"
+            print(f"  local:             {local}  {flag}".rstrip())
+            if snapshot["remote_url"]:
+                print(f"  remote URL:        {snapshot['remote_url']}")
+            upstream_metadata = snapshot["upstream_revision"]
+            if upstream_metadata is not None:
+                metadata = _revision_label(upstream_metadata)
+                if snapshot["upstream_timestamp"]:
+                    metadata += f"  ({snapshot['upstream_timestamp']}"
+                    if snapshot["upstream_editor"]:
+                        metadata += f" by {snapshot['upstream_editor']}"
+                    metadata += ")"
+                print(f"  upstream metadata: {metadata}")
             else:
-                print("  upstream_revid:  (not fetched)")
-            if upstream_ref:
-                print(f"  refs/upstream:   {upstream_ref}")
-            if base_ref:
-                print(f"  refs/base:       {base_ref}")
-            if last_pushed_ref:
-                print(f"  refs/last-pushed:{last_pushed_ref}")
-            if pushed_revid:
-                print(f"  last_pushed:     {pushed_revid}  ({pushed_at})")
-            else:
-                print("  last_pushed:     (never)")
+                print("  upstream metadata: (not fetched)")
+            print(f"  working state:     {snapshot['working_state']}")
+            print(f"  sync state:        {snapshot['sync_state']}")
+            print(f"  working revision:  {snapshot['working_revision_display']}")
+            print(f"  base revision:     {_format_optional_revision(base_ref)}")
+            print(f"  upstream revision: {_format_optional_revision(upstream_ref)}")
+            print(f"  last pushed:       {_format_optional_revision(snapshot['last_pushed_revision'])}")
+            if upstream_ref is not None:
+                print(f"  refs/upstream:     {upstream_ref}")
+            if base_ref is not None:
+                print(f"  refs/base:         {base_ref}")
+            if snapshot["last_pushed_revision"] is not None:
+                print(f"  refs/last-pushed:  {snapshot['last_pushed_revision']}")
+            if snapshot["last_pushed_revision"] is not None:
+                pushed_at = snapshot["last_pushed_at"]
+                suffix = f"  ({pushed_at})" if pushed_at else ""
+                print(f"  last pushed detail: {_revision_label(snapshot['last_pushed_revision'])}{suffix}")
+            print(f"  pending commit:    {'yes' if pending else 'no'}")
+            print(f"  pending commit base: {_format_optional_revision(snapshot['pending_commit_base'])}")
+            print(f"  merge state:       {_format_merge_state(merge_state)}")
             if pending:
                 pending_summary = str(pending.get("summary") or "")
-                pending_base = pending.get("base_revid") or ""
-                pending_created = pending.get("created_at") or ""
-                mode = "new article" if pending.get("create_new") else f"base {pending_base}"
-                print(f"  pending_commit:  {mode}  ({pending_created})")
                 if pending_summary:
-                    print(f"  pending_summary: {pending_summary}")
-            if merge_state:
-                merge_base = merge_state.get("base_revid", "")
-                merge_upstream = merge_state.get("upstream_revid", "")
-                print(f"  merge_state:     base {merge_base} -> upstream {merge_upstream}")
+                    print(f"  pending summary:   {pending_summary}")
             print()
             continue
 
         states = []
         details = []
         if merge_state:
-            merge_base = merge_state.get("base_revid", "")
-            merge_upstream = merge_state.get("upstream_revid", "")
             states.append("merging")
-            details.append(f"resolve conflicts, then commit; base {merge_base} -> upstream {merge_upstream}")
+            details.append(
+                f"resolve conflicts, then commit; {_format_merge_state(merge_state)}"
+            )
         if pending:
             pending_summary = str(pending.get("summary") or "").strip()
             states.append("pending")
+            pending_base = snapshot["pending_commit_base"]
+            if pending_base is None:
+                details.append("uncommitted (no base revision); ready to push")
+            else:
+                details.append(f"based on {_revision_label(pending_base)}; ready to push")
             if pending_summary:
-                details.append(f"ready to push: {pending_summary}")
+                details.append(f"summary: {pending_summary}")
             pending_body = _read_optional_text(_pending_commit_body_path(key))
             if pending_body is not None and os.path.exists(local):
                 try:
@@ -3382,8 +3503,12 @@ def run_status(args, config: dict, config_path: str) -> None:
                     pass
         if not os.path.exists(local):
             states.append("missing")
-        elif modified is True:
+        elif snapshot["modified"] is True:
             states.append("modified")
+            if base_ref is None:
+                details.append("uncommitted (no base revision)")
+            elif not pending:
+                details.append(f"based on {_revision_label(base_ref)}")
         if not (pending and pending.get("create_new")):
             if upstream_ref is None:
                 states.append("unfetched")
@@ -3391,7 +3516,9 @@ def run_status(args, config: dict, config_path: str) -> None:
                 states.append("unmerged")
             elif int(base_ref) != int(upstream_ref):
                 states.append("behind")
-                details.append(f"base {base_ref} -> upstream {upstream_ref}")
+                details.append(
+                    f"base {_revision_label(base_ref)}; upstream {_revision_label(upstream_ref)}"
+                )
 
         if states or key_filter:
             state = ",".join(states) if states else "clean"
@@ -3544,6 +3671,12 @@ def main() -> None:
     p_status.add_argument("-v", "--verbose", action="store_true",
                           help="Show detailed refs, URLs, and metadata")
 
+    # info
+    p_info = sub.add_parser("info", help="Show article identity and revision provenance")
+    p_info.add_argument("article", metavar="ARTICLE", help="Article key or local filename")
+    p_info.add_argument("--json", action="store_true",
+                        help="Print machine-readable JSON")
+
     args = ap.parse_args()
 
     if not args.subcommand:
@@ -3587,6 +3720,8 @@ def main() -> None:
         run_migrate(args, config, config_path)
     elif args.subcommand == "status":
         run_status(args, config, config_path)
+    elif args.subcommand == "info":
+        run_info(args, config, config_path)
 
 
 if __name__ == "__main__":

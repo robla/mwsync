@@ -1,0 +1,4 @@
+#+TITLE: LLM Log
+
+* 2026-08-01
+Implemented the Git-like =mwsync.py status= and =info= commands.
