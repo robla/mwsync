@@ -1,0 +1,194 @@
+#+TITLE: mwmap tasks
+#+TODO: TODO | DONE
+#+PRIORITIES: A B C
+
+* Numbering Status
+
+This is a provisional ordering.  Task IDs may be renumbered and tasks may move
+until Rob and the contributors agree that the ordering is locked.  After that
+agreement, remove this exception and treat every task ID as immutable.
+
+* Tasks
+** TODO [#A] t0001 Complete the first two-MediaWiki page-mirroring workflow  :multi_upstream:mediawiki:
+Make =California.mw= pushable to both Electowiki and the local Crostini wiki
+without losing independent revision state for either upstream.
+
+*** TODO [#A] t0001.1 Add one dual-schema mapping and upstream access layer
+Why: commands currently read legacy =remote=, =pageid=, and =base_revid= fields
+directly.  Done: provide small shared helpers that expose legacy mappings as one
+upstream and multi-upstream mappings as several mutable upstream records,
+without silently rewriting configuration.
+
+*** TODO [#A] t0001.2 Add per-article and per-upstream command selection
+Done: support =status [PATH]=, =fetch [PATH] [--upstream NAME]=, and
+=push [PATH] [--upstream NAME]=.  Reject unknown or ambiguous upstream names;
+keep =merge=, =pull=, and =preview= on the primary upstream by default.
+
+*** TODO [#A] t0001.3 Upgrade status and fsck for mixed mapping schemas
+Done: report every upstream and its state, retain readable legacy output, allow
+=not_created= targets, and validate each tracked upstream's remote, page ID,
+base revision, and cache independently.
+
+*** TODO [#A] t0001.4 Upgrade fetch, merge, pull, and preview
+Done: =fetch PATH= visits all tracked upstreams, targeted fetch visits one,
+=pull= fetches and merges only the primary, and advancing one base never
+advances another.  Preview renders through the primary wiki until an explicit
+preview selector is justified.
+
+*** TODO [#A] t0001.5 Implement page-at-a-time upstream pairing
+Done: =pair page crostini:California California.mw= attaches a second upstream
+to the existing mapping.  Record an existing target as tracked; record a missing
+target as =state: not_created= without requiring a fake page ID.
+
+*** TODO [#A] t0001.6 Make pending commits mapping-scoped and durable
+Why: the current pending commit lives under one upstream's disposable page
+cache.  Done: stage the local body once outside remote/page-ID identity, record
+the base for each target, preserve legacy single-upstream behavior, and define
+safe cleanup and recovery semantics.
+
+*** TODO [#A] t0001.7 Push one commit independently to tracked upstreams
+Done: targeted push uses that upstream's =base_revid=, advances only that
+upstream, and leaves the staged body available for unpushed upstreams.  Clear it
+only when its intended targets are complete or the user explicitly replaces it.
+
+*** TODO [#A] t0001.8 Create missing MediaWiki targets safely by title
+Done: creation sends =title= and =createonly=1=, never an invented page ID or
+=baserevid=.  Cache the returned revision and record its =pageid=,
+=base_revid=, and =state: tracked= only after confirmed success.
+
+*** TODO [#A] t0001.9 Make the offline compatibility suite green
+Done: the mixed-schema, selector, lifecycle, create-only, preview, fsck, and
+migration-preservation tests pass while all existing legacy tests remain green.
+
+*** TODO [#A] t0001.10 Run the California coexistence smoke test
+In =~/tmpsorta/mwmap-electowiki=, migrate only =California.mw=, attach the
+Crostini target, commit once, and push explicitly to each wiki.  Before and
+afterward, verify =mwsync.py= still works with =mwsync.yaml=, =_cache/=, and the
+same working file.  Production Electowiki writes remain user-directed.
+
+** TODO [#A] t0002 Make migration and coexistence boring  :migration:compatibility:
+Keep =mwmap= state isolated under =_mwmap/= while allowing =mwsync.py= to own
+=mwsync.yaml= and =_cache/=.  Neither tool owns the shared working files
+exclusively.
+
+*** DONE [#A] t0002.1 Implement explicit per-article migration and =--all=
+Bare migration refuses to guess among multiple legacy mappings.  Migration
+reads the legacy filename when necessary, writes =_mwmap/mwmap.yaml=, and keeps
+the old file available for recovery.
+
+*** TODO [#A] t0002.2 Remove the remaining load-bearing config version
+Why: =initial_config()=, config loading, tests, and README still introduce
+=version: 1=.  Done: infer schema from mapping shape everywhere and remove stale
+version-number claims without silently rewriting ordinary reads.
+
+*** TODO [#A] t0002.3 Make new clone and pair operations write the current schema
+Done: new mappings use =primary_upstream= and =upstreams:= directly, while old
+single-upstream mappings remain readable until explicitly migrated.
+
+*** TODO [#B] t0002.4 Document and test shared-working-file concurrency
+Explain that each tool has independent config/cache/base state and may observe
+the other's working-file edits.  Provide a safe sequence for switching tools
+and warn against simultaneous commit/merge operations on the same file.
+
+*** TODO [#B] t0002.5 Define retirement of =_mwmap/config.yaml= fallback
+Do not delete or rewrite the legacy file automatically.  Decide when duplicate
+old/new files should warn, how users confirm migration, and whether an explicit
+cleanup command is ever warranted.
+
+** TODO [#A] t0003 Harden revision and write safety  :safety:revisions:
+Close the recovery gaps that matter once =mwmap= performs real writes.
+
+*** TODO [#A] t0003.1 Recover missing base bodies by revision ID
+Port the proven =mwsync.py= behavior that fetches an exact historical revision
+when the disposable cache lacks the recorded base, rather than requiring a
+re-clone.
+
+*** TODO [#A] t0003.2 Reconcile uncertain or manually completed pushes
+Detect a parent-compatible pending edit that already landed after a network
+dropout or browser save.  Adopt it without generating a duplicate revision and
+preserve staged state when ancestry is ambiguous.
+
+*** TODO [#A] t0003.3 Define commit behavior across pull and merge
+Decide whether a pending mapping-scoped commit blocks merge, becomes stale, or
+can be rebased.  Never silently publish content against bases different from
+those reviewed at commit time.
+
+*** TODO [#B] t0003.4 Strengthen cache transactions and fsck recovery guidance
+Test interrupted body/metadata/history writes, per-upstream config/cache drift,
+and alias repair.  Report which state is durable, disposable, or recoverable.
+
+*** TODO [#B] t0003.5 Add opt-in live MediaWiki integration tests
+Use disposable pages and explicit credentials for create, conflict, preview,
+and push reconciliation.  Keep the default suite offline and unable to contact
+production wikis.
+
+** TODO [#B] t0004 Reach practical =mwsync.py= page-workflow parity  :mwsync:parity:
+Replace the remaining reasons to switch tools for ordinary single-page
+MediaWiki work before claiming =mwmap= is a complete successor.
+
+*** TODO [#B] t0004.1 Implement diff and difftool
+Compare working, base, fetched, and staged content with explicit labels and
+useful exit statuses.
+
+*** TODO [#B] t0004.2 Implement restore
+Populate or reset one working file from its recorded base without changing
+upstream revision state.
+
+*** TODO [#B] t0004.3 Implement log and show
+Inspect cached revision history and exact bodies by revision, fetching a known
+revision when necessary.
+
+*** TODO [#B] t0004.4 Add configurable history depth
+Support current-only, bounded depth, metadata-only history, and explicitly
+requested historical bodies without making every fetch expensive.
+
+*** TODO [#B] t0004.5 Audit title, redirect, and namespace parity
+Use siteinfo-driven namespace handling and stable page IDs while preserving
+readable titles and aliases through moves, redirects, and subpages.
+
+** TODO [#B] t0005 Add larger MediaWiki mapping scopes  :mapping:mediawiki:
+Build on proven page mappings rather than generalizing before the revision model
+is trustworthy.
+
+*** TODO [#B] t0005.1 Specify and implement subtree mappings
+Define discovery, local-path ownership, additions, removals, moves, and command
+selection for a title subtree.
+
+*** TODO [#B] t0005.2 Specify and implement namespace mappings
+Use cached namespace IDs and names, define inclusion rules, and avoid title
+string guessing.
+
+*** TODO [#C] t0005.3 Specify and implement whole-wiki mappings
+Address pagination, scale, deletions, redirects, and resume behavior before
+presenting whole-wiki sync as reliable.
+
+** TODO [#C] t0006 Introduce non-MediaWiki formats through explicit adapters  :formats:adapters:
+Keep raw =.mw= mirroring exact.  Add a neutral hub representation only where
+cross-format synchronization demonstrates that it is needed.
+
+*** TODO [#C] t0006.1 Choose the first non-MediaWiki adapter
+Select Zim, Org, or Markdown from a concrete user workflow and document its
+identity, link, attachment, and round-trip requirements.
+
+*** TODO [#C] t0006.2 Define conversion and loss reporting
+Make unsupported or lossy constructs visible before push; never silently claim
+round-trip fidelity.
+
+*** TODO [#C] t0006.3 Build a representative cross-format corpus
+Cover links, templates, categories, tables, references, comments, attachments,
+and deliberately difficult documents before stabilizing a hub profile.
+
+** TODO [#C] t0007 Package and operate mwmap as an installable tool  :packaging:release:
+Do this after the page workflow and state format stop changing rapidly.
+
+*** TODO [#C] t0007.1 Add Python project metadata and console entry points
+Declare supported Python and dependency versions and install =mwmap= and its
+documented alias without relying on a source checkout.
+
+*** TODO [#C] t0007.2 Add formatting, linting, typing, and CI
+Adopt only tools the project will run consistently; document exact local and CI
+commands in =AGENTS.md= and =docs/testing.md=.
+
+*** TODO [#C] t0007.3 Define versions, releases, and configuration stability
+Publish compatibility expectations, migration policy, changelog practice, and
+security guidance before encouraging broader use.
