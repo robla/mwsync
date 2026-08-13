@@ -95,100 +95,136 @@ Do not delete or rewrite the legacy file automatically.  Decide when duplicate
 old/new files should warn, how users confirm migration, and whether an explicit
 cleanup command is ever warranted.
 
-** TODO [#A] t0003 Harden revision and write safety  :safety:revisions:
+** TODO [#A] t0003 Merge the mwmap repository into mwsync  :git:repository:
+Make the =mwsync= repository the authoritative combined repository.  Import
+=mwmap= as a subdirectory first, preserve useful history from both projects,
+and perform the consolidation primarily on a branch named =mwmap=.
+
+*** TODO [#A] t0003.1 Design and rehearse the history-preserving import
+Record clean source commits, remotes, branches, tags, and a recoverable command
+sequence before changing either repository.  Decide whether to use a non-squash
+=git subtree= import or another explicit history-preserving method; verify the
+result in a disposable clone first.
+
+*** TODO [#A] t0003.2 Create the mwsync =mwmap= branch and import the subdirectory
+Branch =mwmap= from =mwsync/main=, then import this repository at =mwmap/=
+without a nested =.git= directory.  Preserve authorship and commit ancestry and
+do not rewrite or delete the standalone source repository during the import.
+
+*** TODO [#A] t0003.3 Make the combined tree understandable and runnable
+Resolve root-level documentation, agent instructions, ignores, test discovery,
+and script-path assumptions.  Done: =mwsync.py= works from the combined root and
+the imported =mwmap/mwmap.py= plus its offline suite work from the subdirectory.
+
+*** TODO [#A] t0003.4 Keep both implementations usable during replacement
+Document which command owns =mwsync.yaml= and =_cache/= versus =_mwmap/=, while
+both continue sharing working files.  Port behavior incrementally; do not rename
+or remove =mwsync.py= merely because the repositories have been combined.
+
+*** TODO [#A] t0003.5 Verify the combined branch before merging to =main=
+Run both test suites, repeat the California coexistence workflow, inspect the
+combined history, and verify fresh-clone setup.  Merge the =mwmap= branch into
+=mwsync/main= only after Rob agrees the repository merge is successful.
+
+*** TODO [#B] t0003.6 Decide the standalone mwmap repository's later status
+After the combined branch lands, decide whether this repository becomes an
+archive, read-only mirror, or temporary import source.  Keep links and contributor
+instructions clear until =mwmap.py= eventually replaces =mwsync.py=.
+
+** TODO [#A] t0004 Harden revision and write safety  :safety:revisions:
 Close the recovery gaps that matter once =mwmap= performs real writes.
 
-*** TODO [#A] t0003.1 Recover missing base bodies by revision ID
+*** TODO [#A] t0004.1 Recover missing base bodies by revision ID
 Port the proven =mwsync.py= behavior that fetches an exact historical revision
 when the disposable cache lacks the recorded base, rather than requiring a
 re-clone.
 
-*** TODO [#A] t0003.2 Reconcile uncertain or manually completed pushes
+*** TODO [#A] t0004.2 Reconcile uncertain or manually completed pushes
 Detect a parent-compatible pending edit that already landed after a network
 dropout or browser save.  Adopt it without generating a duplicate revision and
 preserve staged state when ancestry is ambiguous.
 
-*** TODO [#A] t0003.3 Define commit behavior across pull and merge
+*** TODO [#A] t0004.3 Define commit behavior across pull and merge
 Decide whether a pending mapping-scoped commit blocks merge, becomes stale, or
 can be rebased.  Never silently publish content against bases different from
 those reviewed at commit time.
 
-*** TODO [#B] t0003.4 Strengthen cache transactions and fsck recovery guidance
+*** TODO [#B] t0004.4 Strengthen cache transactions and fsck recovery guidance
 Test interrupted body/metadata/history writes, per-upstream config/cache drift,
 and alias repair.  Report which state is durable, disposable, or recoverable.
 
-*** TODO [#B] t0003.5 Add opt-in live MediaWiki integration tests
+*** TODO [#B] t0004.5 Add opt-in live MediaWiki integration tests
 Use disposable pages and explicit credentials for create, conflict, preview,
 and push reconciliation.  Keep the default suite offline and unable to contact
 production wikis.
 
-** TODO [#B] t0004 Reach practical =mwsync.py= page-workflow parity  :mwsync:parity:
+** TODO [#B] t0005 Reach practical =mwsync.py= page-workflow parity  :mwsync:parity:
 Replace the remaining reasons to switch tools for ordinary single-page
 MediaWiki work before claiming =mwmap= is a complete successor.
 
-*** TODO [#B] t0004.1 Implement diff and difftool
+*** TODO [#B] t0005.1 Implement diff and difftool
 Compare working, base, fetched, and staged content with explicit labels and
 useful exit statuses.
 
-*** TODO [#B] t0004.2 Implement restore
+*** TODO [#B] t0005.2 Implement restore
 Populate or reset one working file from its recorded base without changing
 upstream revision state.
 
-*** TODO [#B] t0004.3 Implement log and show
+*** TODO [#B] t0005.3 Implement log and show
 Inspect cached revision history and exact bodies by revision, fetching a known
 revision when necessary.
 
-*** TODO [#B] t0004.4 Add configurable history depth
+*** TODO [#B] t0005.4 Add configurable history depth
 Support current-only, bounded depth, metadata-only history, and explicitly
 requested historical bodies without making every fetch expensive.
 
-*** TODO [#B] t0004.5 Audit title, redirect, and namespace parity
+*** TODO [#B] t0005.5 Audit title, redirect, and namespace parity
 Use siteinfo-driven namespace handling and stable page IDs while preserving
 readable titles and aliases through moves, redirects, and subpages.
 
-** TODO [#B] t0005 Add larger MediaWiki mapping scopes  :mapping:mediawiki:
+** TODO [#B] t0006 Add larger MediaWiki mapping scopes  :mapping:mediawiki:
 Build on proven page mappings rather than generalizing before the revision model
 is trustworthy.
 
-*** TODO [#B] t0005.1 Specify and implement subtree mappings
+*** TODO [#B] t0006.1 Specify and implement subtree mappings
 Define discovery, local-path ownership, additions, removals, moves, and command
 selection for a title subtree.
 
-*** TODO [#B] t0005.2 Specify and implement namespace mappings
+*** TODO [#B] t0006.2 Specify and implement namespace mappings
 Use cached namespace IDs and names, define inclusion rules, and avoid title
 string guessing.
 
-*** TODO [#C] t0005.3 Specify and implement whole-wiki mappings
+*** TODO [#C] t0006.3 Specify and implement whole-wiki mappings
 Address pagination, scale, deletions, redirects, and resume behavior before
 presenting whole-wiki sync as reliable.
 
-** TODO [#C] t0006 Introduce non-MediaWiki formats through explicit adapters  :formats:adapters:
+** TODO [#C] t0007 Introduce non-MediaWiki formats through explicit adapters  :formats:adapters:
 Keep raw =.mw= mirroring exact.  Add a neutral hub representation only where
 cross-format synchronization demonstrates that it is needed.
 
-*** TODO [#C] t0006.1 Choose the first non-MediaWiki adapter
+*** TODO [#C] t0007.1 Choose the first non-MediaWiki adapter
 Select Zim, Org, or Markdown from a concrete user workflow and document its
 identity, link, attachment, and round-trip requirements.
 
-*** TODO [#C] t0006.2 Define conversion and loss reporting
+*** TODO [#C] t0007.2 Define conversion and loss reporting
 Make unsupported or lossy constructs visible before push; never silently claim
 round-trip fidelity.
 
-*** TODO [#C] t0006.3 Build a representative cross-format corpus
+*** TODO [#C] t0007.3 Build a representative cross-format corpus
 Cover links, templates, categories, tables, references, comments, attachments,
 and deliberately difficult documents before stabilizing a hub profile.
 
-** TODO [#C] t0007 Package and operate mwmap as an installable tool  :packaging:release:
+** TODO [#C] t0008 Package and operate mwmap as an installable tool  :packaging:release:
 Do this after the page workflow and state format stop changing rapidly.
 
-*** TODO [#C] t0007.1 Add Python project metadata and console entry points
+*** TODO [#C] t0008.1 Add Python project metadata and console entry points
 Declare supported Python and dependency versions and install =mwmap= and its
 documented alias without relying on a source checkout.
 
-*** TODO [#C] t0007.2 Add formatting, linting, typing, and CI
+*** TODO [#C] t0008.2 Add formatting, linting, typing, and CI
 Adopt only tools the project will run consistently; document exact local and CI
 commands in =AGENTS.md= and =docs/testing.md=.
 
-*** TODO [#C] t0007.3 Define versions, releases, and configuration stability
+*** TODO [#C] t0008.3 Define versions, releases, and configuration stability
 Publish compatibility expectations, migration policy, changelog practice, and
 security guidance before encouraging broader use.
