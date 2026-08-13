@@ -33,9 +33,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_init = sub.add_parser("init", help="Initialize an mwmap workspace")
-    p_init.set_defaults(func=run_init)
-
+    # argparse preserves registration order in help, so keep command blocks alphabetical.
     p_clone = sub.add_parser("clone", help="Onboard a MediaWiki page URL")
     p_clone.add_argument("url", help="MediaWiki page URL")
     p_clone.add_argument("path", nargs="?", help="Optional local output path")
@@ -46,29 +44,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
     )
     p_clone.set_defaults(func=run_clone)
 
-    p_remote = sub.add_parser("remote", help="Manage remotes")
-    remote_sub = p_remote.add_subparsers(dest="remote_command", required=True)
-    p_remote_add = remote_sub.add_parser("add", help="Add a remote")
-    p_remote_add.add_argument("name")
-    p_remote_add.add_argument("type")
-    p_remote_add.add_argument("location")
-    p_remote_add.set_defaults(func=run_remote_add)
-
-    p_status = sub.add_parser("status", help="Show workspace status")
-    p_status.set_defaults(func=run_status)
-
-    p_fetch = sub.add_parser("fetch", help="Fetch upstream revisions into the cache")
-    p_fetch.add_argument("path", nargs="?", help="Limit to one paired local path")
-    p_fetch.set_defaults(func=run_fetch)
-
-    p_merge = sub.add_parser("merge", help="Merge cached upstream into working files")
-    p_merge.add_argument("path", nargs="?", help="Limit to one paired local path")
-    p_merge.set_defaults(func=run_merge)
-
-    p_pull = sub.add_parser("pull", help="Fetch then merge (git pull)")
-    p_pull.add_argument("path", nargs="?", help="Limit to one paired local path")
-    p_pull.set_defaults(func=run_pull)
-
     p_commit = sub.add_parser("commit", help="Stage a pending edit from working files")
     p_commit.add_argument("path", nargs="?", help="Limit to one paired local path")
     p_commit.add_argument("-m", "--message", help="Edit summary (prompts an editor if omitted)")
@@ -78,14 +53,19 @@ def build_cli_parser() -> argparse.ArgumentParser:
     )
     p_commit.set_defaults(func=run_commit)
 
-    p_push = sub.add_parser("push", help="Publish staged commits to MediaWiki")
-    p_push.add_argument("path", nargs="?", help="Limit to one paired local path")
-    p_push.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be pushed without contacting MediaWiki",
-    )
-    p_push.set_defaults(func=run_push)
+    p_fetch = sub.add_parser("fetch", help="Fetch upstream revisions into the cache")
+    p_fetch.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_fetch.set_defaults(func=run_fetch)
+
+    p_fsck = sub.add_parser("fsck", help="Check cache and mapping integrity")
+    p_fsck.set_defaults(func=run_fsck)
+
+    p_init = sub.add_parser("init", help="Initialize an mwmap workspace")
+    p_init.set_defaults(func=run_init)
+
+    p_merge = sub.add_parser("merge", help="Merge cached upstream into working files")
+    p_merge.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_merge.set_defaults(func=run_merge)
 
     p_preview = sub.add_parser("preview", help="Render local wikitext through the wiki parser")
     p_preview.add_argument("path", nargs="?", help="Limit to one paired local path")
@@ -105,8 +85,29 @@ def build_cli_parser() -> argparse.ArgumentParser:
     )
     p_preview.set_defaults(func=run_preview)
 
-    p_fsck = sub.add_parser("fsck", help="Check cache and mapping integrity")
-    p_fsck.set_defaults(func=run_fsck)
+    p_pull = sub.add_parser("pull", help="Fetch then merge (git pull)")
+    p_pull.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_pull.set_defaults(func=run_pull)
+
+    p_push = sub.add_parser("push", help="Publish staged commits to MediaWiki")
+    p_push.add_argument("path", nargs="?", help="Limit to one paired local path")
+    p_push.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be pushed without contacting MediaWiki",
+    )
+    p_push.set_defaults(func=run_push)
+
+    p_remote = sub.add_parser("remote", help="Manage remotes")
+    remote_sub = p_remote.add_subparsers(dest="remote_command", required=True)
+    p_remote_add = remote_sub.add_parser("add", help="Add a remote")
+    p_remote_add.add_argument("name")
+    p_remote_add.add_argument("type")
+    p_remote_add.add_argument("location")
+    p_remote_add.set_defaults(func=run_remote_add)
+
+    p_status = sub.add_parser("status", help="Show workspace status")
+    p_status.set_defaults(func=run_status)
 
     return parser
 
