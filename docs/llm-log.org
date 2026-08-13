@@ -74,3 +74,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** Gemini [2026-06-24 Wed 22:31 PDT]: create docs/Makefile to build HTML docs via pandoc.
 ** ChatGPT [2026-08-13 Thu 15:55 PDT]: add failing per-article migrate CLI tests.
 ** ChatGPT [2026-08-13 Thu 16:03 PDT]: alphabetize CLI verbs in help output.
+** ChatGPT [2026-08-13 Thu 16:09 PDT]: implement per-article and --all config migration.

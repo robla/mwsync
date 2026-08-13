@@ -24,9 +24,9 @@ integer to decide how to read it.
 
 Legacy mappings are identifiable because they have top-level `remote`, `pageid`,
 and `base_revid` fields. Multi-upstream mappings are identifiable because they
-have an `upstreams:` mapping. A future `migrate` verb should rewrite old shapes
-to the current shape intentionally; ordinary reads should not silently perform a
-schema upgrade.
+have an `upstreams:` mapping. The `migrate` verb rewrites old shapes to the
+current shape intentionally; ordinary reads do not silently perform a schema
+upgrade.
 
 ## Terms
 
@@ -175,14 +175,17 @@ The `migrate` verb should rewrite them mechanically:
       state: tracked
 ```
 
-The migration should be explicit:
+Migration is one article at a time by default:
 
 ```sh
-mwmap migrate
+mwmap migrate California.mw
+mwmap migrate --all
 ```
 
-Before migration is implemented, code may keep accepting the legacy shape.
-New multi-upstream work should target the `upstreams:` shape directly.
+Bare `mwmap migrate` works only when exactly one legacy page mapping remains.
+With multiple candidates it lists their local paths and refuses to guess. Only
+`--all` performs a bulk migration. Code should keep accepting the legacy shape
+while consumer commands gain multi-upstream support.
 
 ## Schema Upgrade Priority
 

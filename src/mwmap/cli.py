@@ -15,6 +15,7 @@ from mwmap.commands.fetch import run_fetch
 from mwmap.commands.fsck import run_fsck
 from mwmap.commands.init import run_init
 from mwmap.commands.merge import run_merge
+from mwmap.commands.migrate import run_migrate
 from mwmap.commands.preview import run_preview
 from mwmap.commands.pull import run_pull
 from mwmap.commands.push import run_push
@@ -66,6 +67,13 @@ def build_cli_parser() -> argparse.ArgumentParser:
     p_merge = sub.add_parser("merge", help="Merge cached upstream into working files")
     p_merge.add_argument("path", nargs="?", help="Limit to one paired local path")
     p_merge.set_defaults(func=run_merge)
+
+    p_migrate = sub.add_parser("migrate", help="Upgrade legacy page mappings")
+    p_migrate.add_argument("path", nargs="?", help="Migrate one mapped local path")
+    p_migrate.add_argument(
+        "--all", action="store_true", help="Migrate every legacy page mapping"
+    )
+    p_migrate.set_defaults(func=run_migrate)
 
     p_preview = sub.add_parser("preview", help="Render local wikitext through the wiki parser")
     p_preview.add_argument("path", nargs="?", help="Limit to one paired local path")

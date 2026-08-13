@@ -56,20 +56,26 @@ The fuller command surface:
 
 ```sh
 python3 mwmap.py --help
-python3 mwmap.py --root ~/Notes/electowiki init
-python3 mwmap.py --root ~/Notes/electowiki remote add electowiki mediawiki https://electowiki.org/w/
 python3 mwmap.py --root ~/Notes/electowiki clone https://electowiki.org/wiki/California
 python3 mwmap.py --root ~/Notes/electowiki clone --follow https://electowiki.org/wiki/A_Redirect
-python3 mwmap.py --root ~/Notes/electowiki status
-python3 mwmap.py --root ~/Notes/electowiki fetch
-python3 mwmap.py --root ~/Notes/electowiki pull
 python3 mwmap.py --root ~/Notes/electowiki commit -m "Edit summary"
-python3 mwmap.py --root ~/Notes/electowiki preview
-python3 mwmap.py --root ~/Notes/electowiki push
+python3 mwmap.py --root ~/Notes/electowiki fetch
 python3 mwmap.py --root ~/Notes/electowiki fsck
+python3 mwmap.py --root ~/Notes/electowiki init
+python3 mwmap.py --root ~/Notes/electowiki migrate California.mw
+python3 mwmap.py --root ~/Notes/electowiki preview
+python3 mwmap.py --root ~/Notes/electowiki pull
+python3 mwmap.py --root ~/Notes/electowiki push
+python3 mwmap.py --root ~/Notes/electowiki remote add electowiki mediawiki https://electowiki.org/w/
+python3 mwmap.py --root ~/Notes/electowiki status
 ```
 
 `clone` contacts MediaWiki — it registers a remote derived from the URL, pairs the page, fetches it, caches the remote's `siteinfo`, and writes the local file. If the URL names a redirect, `clone` onboards the redirect page itself and warns (matching `mwsync.py`); pass `--follow` to resolve the redirect to its target instead. `fsck` checks cache/mapping integrity.
+
+`migrate PATH` upgrades one legacy page mapping to the multi-upstream schema.
+Use `migrate --all` for every legacy mapping; bare `migrate` refuses to guess
+when more than one legacy mapping remains. Other sync commands are still being
+upgraded to consume the new shape.
 
 For ongoing sync of already-paired pages, mwmap mirrors Git:
 
