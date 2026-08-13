@@ -182,49 +182,86 @@ requested historical bodies without making every fetch expensive.
 Use siteinfo-driven namespace handling and stable page IDs while preserving
 readable titles and aliases through moves, redirects, and subpages.
 
-** TODO [#B] t0006 Add larger MediaWiki mapping scopes  :mapping:mediawiki:
+** TODO [#B] t0006 Deprecate the mwmap name and cut over to the new mwsync  :naming:compatibility:
+After page-workflow parity, make the next-generation implementation the normal
+=mwsync= command.  Keep naming changes reversible and give scripts and users a
+clear transition path.
+
+*** TODO [#B] t0006.1 Choose the executable and compatibility names
+Recommended: the new implementation becomes =mwsync.py= and =mwsync=; the
+previous implementation temporarily becomes =mwsync-legacy.py=.  Prefer
+=legacy= over =old= or a load-bearing =v1= unless the project first defines a
+real version contract.  Check aliases, imports, documentation, and downstream
+scripts before locking the choice.
+
+*** TODO [#B] t0006.2 Put the new implementation behind the mwsync command
+Make the combined repository's normal =mwsync.py= entry point dispatch to the
+new implementation.  Preserve the previous implementation under the agreed
+legacy name without rewriting its behavior or state files.
+
+*** TODO [#B] t0006.3 Deprecate mwmap as a user-facing command
+Keep =mwmap= and =mwmap.py= as compatibility aliases for a defined transition
+period.  Print a concise warning directing users to the equivalent =mwsync=
+invocation, while preserving exit status and automation behavior.
+
+*** TODO [#B] t0006.4 Inventory and migrate user-visible mwmap names separately
+The Python package, imported =mwmap/= subdirectory, documentation, and
+=_mwmap/= durable state do not need to change on the same day.  Design explicit,
+recoverable metadata migration and legacy-read behavior before renaming paths;
+never strand an existing workspace for cosmetic consistency.
+
+*** TODO [#B] t0006.5 Update tests, help, and documentation for the cutover
+Run the same command-surface and workspace tests through =mwsync=.  Clearly
+label the legacy executable and compatibility aliases, and remove claims that
+=mwmap= is a separate long-term product.
+
+*** TODO [#C] t0006.6 Remove transitional names only after observed compatibility
+Define evidence and timing for removing =mwmap= aliases and, later, the legacy
+script.  Do not remove either merely because the default command changed.
+
+** TODO [#B] t0007 Add larger MediaWiki mapping scopes  :mapping:mediawiki:
 Build on proven page mappings rather than generalizing before the revision model
 is trustworthy.
 
-*** TODO [#B] t0006.1 Specify and implement subtree mappings
+*** TODO [#B] t0007.1 Specify and implement subtree mappings
 Define discovery, local-path ownership, additions, removals, moves, and command
 selection for a title subtree.
 
-*** TODO [#B] t0006.2 Specify and implement namespace mappings
+*** TODO [#B] t0007.2 Specify and implement namespace mappings
 Use cached namespace IDs and names, define inclusion rules, and avoid title
 string guessing.
 
-*** TODO [#C] t0006.3 Specify and implement whole-wiki mappings
+*** TODO [#C] t0007.3 Specify and implement whole-wiki mappings
 Address pagination, scale, deletions, redirects, and resume behavior before
 presenting whole-wiki sync as reliable.
 
-** TODO [#C] t0007 Introduce non-MediaWiki formats through explicit adapters  :formats:adapters:
+** TODO [#C] t0008 Introduce non-MediaWiki formats through explicit adapters  :formats:adapters:
 Keep raw =.mw= mirroring exact.  Add a neutral hub representation only where
 cross-format synchronization demonstrates that it is needed.
 
-*** TODO [#C] t0007.1 Choose the first non-MediaWiki adapter
+*** TODO [#C] t0008.1 Choose the first non-MediaWiki adapter
 Select Zim, Org, or Markdown from a concrete user workflow and document its
 identity, link, attachment, and round-trip requirements.
 
-*** TODO [#C] t0007.2 Define conversion and loss reporting
+*** TODO [#C] t0008.2 Define conversion and loss reporting
 Make unsupported or lossy constructs visible before push; never silently claim
 round-trip fidelity.
 
-*** TODO [#C] t0007.3 Build a representative cross-format corpus
+*** TODO [#C] t0008.3 Build a representative cross-format corpus
 Cover links, templates, categories, tables, references, comments, attachments,
 and deliberately difficult documents before stabilizing a hub profile.
 
-** TODO [#C] t0008 Package and operate mwmap as an installable tool  :packaging:release:
+** TODO [#C] t0009 Package and operate the combined mwsync as an installable tool  :packaging:release:
 Do this after the page workflow and state format stop changing rapidly.
 
-*** TODO [#C] t0008.1 Add Python project metadata and console entry points
-Declare supported Python and dependency versions and install =mwmap= and its
-documented alias without relying on a source checkout.
+*** TODO [#C] t0009.1 Add Python project metadata and console entry points
+Declare supported Python and dependency versions and install =mwsync= plus any
+temporary compatibility aliases without relying on a source checkout.
 
-*** TODO [#C] t0008.2 Add formatting, linting, typing, and CI
+*** TODO [#C] t0009.2 Add formatting, linting, typing, and CI
 Adopt only tools the project will run consistently; document exact local and CI
 commands in =AGENTS.md= and =docs/testing.md=.
 
-*** TODO [#C] t0008.3 Define versions, releases, and configuration stability
+*** TODO [#C] t0009.3 Define versions, releases, and configuration stability
 Publish compatibility expectations, migration policy, changelog practice, and
 security guidance before encouraging broader use.
