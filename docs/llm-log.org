@@ -75,3 +75,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** ChatGPT [2026-08-13 Thu 15:55 PDT]: add failing per-article migrate CLI tests.
 ** ChatGPT [2026-08-13 Thu 16:03 PDT]: alphabetize CLI verbs in help output.
 ** ChatGPT [2026-08-13 Thu 16:09 PDT]: implement per-article and --all config migration.
+** ChatGPT [2026-08-13 Thu 16:28 PDT]: add failing multi-upstream compatibility tests.

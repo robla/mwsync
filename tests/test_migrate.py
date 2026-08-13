@@ -118,3 +118,34 @@ def test_migrate_without_path_refuses_multiple_articles(tmp_path):
     assert "02ns_User/RobLa.mw" in output
     assert "--all" in output
     assert _read_config(tmp_path) == original
+
+
+def test_migrate_preserves_mwsync_workspace_and_legacy_mwmap_config(tmp_path):
+    # Verifies migration changes only mwmap's new config, preserving shared files and mwsync state.
+    original = _workspace_config()
+    metadata_dir = tmp_path / "_mwmap"
+    metadata_dir.mkdir()
+    legacy_config = metadata_dir / "config.yaml"
+    legacy_config.write_text(yaml.safe_dump(original, sort_keys=False), encoding="utf-8")
+    (tmp_path / "mwsync.yaml").write_text("articles:\n  California: {}\n", encoding="utf-8")
+    old_cache = tmp_path / "_cache" / "California"
+    old_cache.mkdir(parents=True)
+    (old_cache / "16692.mw").write_text("old mwsync cache\n", encoding="utf-8")
+    (tmp_path / "California.mw").write_text("working text\n", encoding="utf-8")
+    before = {
+        path: path.read_bytes()
+        for path in (
+            legacy_config,
+            tmp_path / "mwsync.yaml",
+            old_cache / "16692.mw",
+            tmp_path / "California.mw",
+        )
+    }
+
+    result = run_mwmap("--root", str(tmp_path), "migrate", "California.mw")
+
+    assert result.returncode == 0, result.stderr
+    assert all(path.read_bytes() == content for path, content in before.items())
+    migrated = _read_config(tmp_path)["mappings"]
+    assert migrated[0] == _multi_upstream_mapping(original["mappings"][0])
+    assert migrated[1] == original["mappings"][1]

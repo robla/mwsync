@@ -177,3 +177,42 @@ def test_fetch_siteinfo_trims_payload(monkeypatch):
     assert info["general"]["articlepath"] == "/wiki/$1"
     assert "ignored_extra_field" not in info["general"]
     assert info["namespaces"]["14"] == {"name": "Category", "canonical": "Category"}
+
+
+def test_create_page_uses_title_and_createonly():
+    # Verifies a missing upstream is created safely by title and cannot overwrite an existing page.
+    payload = {
+        "edit": {
+            "result": "Success",
+            "pageid": 22,
+            "title": "California",
+            "oldrevid": 0,
+            "newrevid": 1,
+        }
+    }
+
+    class CapturingOpener:
+        def __init__(self):
+            self.request = None
+
+        def open(self, req, timeout=30):
+            self.request = req
+            return _FakeResponse(payload)
+
+    opener = CapturingOpener()
+    result = mediawiki.mediawiki_create_page(
+        "https://x/w/api.php",
+        opener,
+        title="California",
+        text="body\n",
+        csrf_token="token",
+        summary="initial mirror",
+    )
+
+    params = mediawiki.parse.parse_qs(opener.request.data.decode("utf-8"))
+    assert params["title"] == ["California"]
+    assert params["createonly"] == ["1"]
+    assert "pageid" not in params
+    assert "baserevid" not in params
+    assert result["pageid"] == 22
+    assert result["revid"] == 1
