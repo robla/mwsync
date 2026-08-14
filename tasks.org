@@ -131,137 +131,181 @@ After the combined branch lands, decide whether this repository becomes an
 archive, read-only mirror, or temporary import source.  Keep links and contributor
 instructions clear until =mwmap.py= eventually replaces =mwsync.py=.
 
-** TODO [#A] t0004 Harden revision and write safety  :safety:revisions:
+** TODO [#A] t0004 Make mwmap legacy-mwsync-aware during coexistence  :legacy:compatibility:
+Once the repositories are merged (t0003), let =mwmap.py= and legacy =mwsync.py=
+manage the same working files side by side at first, then narrow legacy's
+freedom to act on its own terms over time instead of leaving silent
+dual-management in place indefinitely.
+
+*** TODO [#A] t0004.1 Read legacy =mwsync.yaml=/=_cache/= state instead of hand-copying it
+Why: today's draft process (=docs/migration.md=) has a user manually retype
+each =mwsync.yaml= article entry into =_mwmap/mwmap.yaml=.  Done: =mwmap= can
+detect an existing legacy pairing for a title or local path and derive an
+equivalent mapping (remote, page id, base revision) from it, without requiring
+the user to re-enter anything =mwsync= already recorded.
+
+*** TODO [#A] t0004.2 Define how two independent base-revision trackers coexist
+Why: =mwsync= records its base in =refs/base=/=refs/upstream= files; =mwmap=
+records =base_revid= in =mwmap.yaml=.  Done: decide which is authoritative the
+first time =mwmap= detects a legacy pairing, and specify what each tool does
+when the other has advanced its own base past what the reading tool expects.
+
+*** TODO [#A] t0004.3 Detect and report cross-tool base drift
+Done: =mwmap fsck= (or an equivalent check) flags a working file whose legacy
+=refs/base= and mwmap =base_revid= disagree about which revision is
+incorporated, before either tool merges or pushes against a stale assumption.
+
+*** TODO [#B] t0004.4 Give legacy =mwsync.py= a claimed-file check
+Why: this changes legacy's own source, only safe once t0003 brings it into
+this repository as an editable file (never edit through the gitignored symlink
+before that).  Done: legacy =mwsync.py= can recognize that a file it's about to
+touch is also mapped in =_mwmap/mwmap.yaml=, as the hook point for the
+warn/refuse behavior below.
+
+*** TODO [#B] t0004.5 Stage legacy's response from warning to refusing
+Done: legacy =mwsync.py= only warns on a mwmap-claimed file at first, changing
+nothing about its own on-disk behavior; later, following the same
+warn-then-remove pattern as t0007.3/t0007.6, it refuses to act on a claimed
+file by default, with an explicit opt-out for users still deliberately running
+both tools.
+
+*** TODO [#A] t0004.6 Extend the coexistence smoke test for auto-detected pairings
+Done: the t0001.10-style California smoke test also covers a file mwmap
+onboards by reading an existing legacy pairing (not just =migrate=), and
+exercises legacy =mwsync.py= in both its warn and, once built, refuse modes
+against a mwmap-claimed file.
+
+** TODO [#A] t0005 Harden revision and write safety  :safety:revisions:
 Close the recovery gaps that matter once =mwmap= performs real writes.
 
-*** TODO [#A] t0004.1 Recover missing base bodies by revision ID
+*** TODO [#A] t0005.1 Recover missing base bodies by revision ID
 Port the proven =mwsync.py= behavior that fetches an exact historical revision
 when the disposable cache lacks the recorded base, rather than requiring a
 re-clone.
 
-*** TODO [#A] t0004.2 Reconcile uncertain or manually completed pushes
+*** TODO [#A] t0005.2 Reconcile uncertain or manually completed pushes
 Detect a parent-compatible pending edit that already landed after a network
 dropout or browser save.  Adopt it without generating a duplicate revision and
 preserve staged state when ancestry is ambiguous.
 
-*** TODO [#A] t0004.3 Define commit behavior across pull and merge
+*** TODO [#A] t0005.3 Define commit behavior across pull and merge
 Decide whether a pending mapping-scoped commit blocks merge, becomes stale, or
 can be rebased.  Never silently publish content against bases different from
 those reviewed at commit time.
 
-*** TODO [#B] t0004.4 Strengthen cache transactions and fsck recovery guidance
+*** TODO [#B] t0005.4 Strengthen cache transactions and fsck recovery guidance
 Test interrupted body/metadata/history writes, per-upstream config/cache drift,
 and alias repair.  Report which state is durable, disposable, or recoverable.
 
-*** TODO [#B] t0004.5 Add opt-in live MediaWiki integration tests
+*** TODO [#B] t0005.5 Add opt-in live MediaWiki integration tests
 Use disposable pages and explicit credentials for create, conflict, preview,
 and push reconciliation.  Keep the default suite offline and unable to contact
 production wikis.
 
-** TODO [#B] t0005 Reach practical =mwsync.py= page-workflow parity  :mwsync:parity:
+** TODO [#B] t0006 Reach practical =mwsync.py= page-workflow parity  :mwsync:parity:
 Replace the remaining reasons to switch tools for ordinary single-page
 MediaWiki work before claiming =mwmap= is a complete successor.
 
-*** TODO [#B] t0005.1 Implement diff and difftool
+*** TODO [#B] t0006.1 Implement diff and difftool
 Compare working, base, fetched, and staged content with explicit labels and
 useful exit statuses.
 
-*** TODO [#B] t0005.2 Implement restore
+*** TODO [#B] t0006.2 Implement restore
 Populate or reset one working file from its recorded base without changing
 upstream revision state.
 
-*** TODO [#B] t0005.3 Implement log and show
+*** TODO [#B] t0006.3 Implement log and show
 Inspect cached revision history and exact bodies by revision, fetching a known
 revision when necessary.
 
-*** TODO [#B] t0005.4 Add configurable history depth
+*** TODO [#B] t0006.4 Add configurable history depth
 Support current-only, bounded depth, metadata-only history, and explicitly
 requested historical bodies without making every fetch expensive.
 
-*** TODO [#B] t0005.5 Audit title, redirect, and namespace parity
+*** TODO [#B] t0006.5 Audit title, redirect, and namespace parity
 Use siteinfo-driven namespace handling and stable page IDs while preserving
 readable titles and aliases through moves, redirects, and subpages.
 
-** TODO [#B] t0006 Deprecate the mwmap name and cut over to the new mwsync  :naming:compatibility:
+** TODO [#B] t0007 Deprecate the mwmap name and cut over to the new mwsync  :naming:compatibility:
 After page-workflow parity, make the next-generation implementation the normal
 =mwsync= command.  Keep naming changes reversible and give scripts and users a
 clear transition path.
 
-*** TODO [#B] t0006.1 Choose the executable and compatibility names
+*** TODO [#B] t0007.1 Choose the executable and compatibility names
 Recommended: the new implementation becomes =mwsync.py= and =mwsync=; the
 previous implementation temporarily becomes =mwsync-legacy.py=.  Prefer
 =legacy= over =old= or a load-bearing =v1= unless the project first defines a
 real version contract.  Check aliases, imports, documentation, and downstream
 scripts before locking the choice.
 
-*** TODO [#B] t0006.2 Put the new implementation behind the mwsync command
+*** TODO [#B] t0007.2 Put the new implementation behind the mwsync command
 Make the combined repository's normal =mwsync.py= entry point dispatch to the
 new implementation.  Preserve the previous implementation under the agreed
 legacy name without rewriting its behavior or state files.
 
-*** TODO [#B] t0006.3 Deprecate mwmap as a user-facing command
+*** TODO [#B] t0007.3 Deprecate mwmap as a user-facing command
 Keep =mwmap= and =mwmap.py= as compatibility aliases for a defined transition
 period.  Print a concise warning directing users to the equivalent =mwsync=
 invocation, while preserving exit status and automation behavior.
 
-*** TODO [#B] t0006.4 Inventory and migrate user-visible mwmap names separately
+*** TODO [#B] t0007.4 Inventory and migrate user-visible mwmap names separately
 The Python package, imported =mwmap/= subdirectory, documentation, and
 =_mwmap/= durable state do not need to change on the same day.  Design explicit,
 recoverable metadata migration and legacy-read behavior before renaming paths;
 never strand an existing workspace for cosmetic consistency.
 
-*** TODO [#B] t0006.5 Update tests, help, and documentation for the cutover
+*** TODO [#B] t0007.5 Update tests, help, and documentation for the cutover
 Run the same command-surface and workspace tests through =mwsync=.  Clearly
 label the legacy executable and compatibility aliases, and remove claims that
 =mwmap= is a separate long-term product.
 
-*** TODO [#C] t0006.6 Remove transitional names only after observed compatibility
+*** TODO [#C] t0007.6 Remove transitional names only after observed compatibility
 Define evidence and timing for removing =mwmap= aliases and, later, the legacy
 script.  Do not remove either merely because the default command changed.
 
-** TODO [#B] t0007 Add larger MediaWiki mapping scopes  :mapping:mediawiki:
+** TODO [#B] t0008 Add larger MediaWiki mapping scopes  :mapping:mediawiki:
 Build on proven page mappings rather than generalizing before the revision model
 is trustworthy.
 
-*** TODO [#B] t0007.1 Specify and implement subtree mappings
+*** TODO [#B] t0008.1 Specify and implement subtree mappings
 Define discovery, local-path ownership, additions, removals, moves, and command
 selection for a title subtree.
 
-*** TODO [#B] t0007.2 Specify and implement namespace mappings
+*** TODO [#B] t0008.2 Specify and implement namespace mappings
 Use cached namespace IDs and names, define inclusion rules, and avoid title
 string guessing.
 
-*** TODO [#C] t0007.3 Specify and implement whole-wiki mappings
+*** TODO [#C] t0008.3 Specify and implement whole-wiki mappings
 Address pagination, scale, deletions, redirects, and resume behavior before
 presenting whole-wiki sync as reliable.
 
-** TODO [#C] t0008 Introduce non-MediaWiki formats through explicit adapters  :formats:adapters:
+** TODO [#C] t0009 Introduce non-MediaWiki formats through explicit adapters  :formats:adapters:
 Keep raw =.mw= mirroring exact.  Add a neutral hub representation only where
 cross-format synchronization demonstrates that it is needed.
 
-*** TODO [#C] t0008.1 Choose the first non-MediaWiki adapter
+*** TODO [#C] t0009.1 Choose the first non-MediaWiki adapter
 Select Zim, Org, or Markdown from a concrete user workflow and document its
 identity, link, attachment, and round-trip requirements.
 
-*** TODO [#C] t0008.2 Define conversion and loss reporting
+*** TODO [#C] t0009.2 Define conversion and loss reporting
 Make unsupported or lossy constructs visible before push; never silently claim
 round-trip fidelity.
 
-*** TODO [#C] t0008.3 Build a representative cross-format corpus
+*** TODO [#C] t0009.3 Build a representative cross-format corpus
 Cover links, templates, categories, tables, references, comments, attachments,
 and deliberately difficult documents before stabilizing a hub profile.
 
-** TODO [#C] t0009 Package and operate the combined mwsync as an installable tool  :packaging:release:
+** TODO [#C] t0010 Package and operate the combined mwsync as an installable tool  :packaging:release:
 Do this after the page workflow and state format stop changing rapidly.
 
-*** TODO [#C] t0009.1 Add Python project metadata and console entry points
+*** TODO [#C] t0010.1 Add Python project metadata and console entry points
 Declare supported Python and dependency versions and install =mwsync= plus any
 temporary compatibility aliases without relying on a source checkout.
 
-*** TODO [#C] t0009.2 Add formatting, linting, typing, and CI
+*** TODO [#C] t0010.2 Add formatting, linting, typing, and CI
 Adopt only tools the project will run consistently; document exact local and CI
 commands in =AGENTS.md= and =docs/testing.md=.
 
-*** TODO [#C] t0009.3 Define versions, releases, and configuration stability
+*** TODO [#C] t0010.3 Define versions, releases, and configuration stability
 Publish compatibility expectations, migration policy, changelog practice, and
 security guidance before encouraging broader use.
