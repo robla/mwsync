@@ -37,6 +37,7 @@ Use Python 3 directly; there is no build system.
 - `pytest -q tests`: run the green legacy suite.
 - `pytest -q mwmap/tests`: run next-generation specifications.
 - `pytest -q`: collect both suites from the combined root.
+- `ruff check --no-cache .`: run the enforced Python lint baseline.
 - `python3 mwsync.py --help`: show mwsync subcommands.
 - `python3 ledecopy.py --help`: show ledecopy usage.
 - `python3 catmgr.py --help`: show category cache commands.
@@ -93,6 +94,11 @@ live network test.
 
 Place legacy tests under `tests/` and next-generation tests under
 `mwmap/tests/`. Name files `test_<feature>.py`.
+
+Ruff lint is enforced. Ruff formatting is selected but not yet enforced because
+the initial format pass changes many legacy and imported files; make that a
+dedicated mechanical commit. Static typing is deferred until the scripts have a
+useful annotation baseline rather than introducing a permanently ignored check.
 
 ## Combined-Repository Transition
 

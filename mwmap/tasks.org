@@ -51,13 +51,13 @@ subdirectory and from combined-root test commands.  Reconcile the two
 =pytest.ini= files so one root command collects both suites without erasing the
 intentional failing specifications for later tasks.
 
-*** TODO [#A] t0001.6 Establish baseline checks in the combined repository
+*** DONE [#A] t0001.6 Establish baseline checks in the combined repository
 Document commands that run both suites and add lightweight CI for them.  Decide
 which formatter, linter, and type checker the project will run consistently,
 then configure adopted tools early rather than deferring all engineering checks
 until release packaging.
 
-*** TODO [#A] t0001.7 Keep both implementations usable during replacement
+*** DONE [#A] t0001.7 Keep both implementations usable during replacement
 Document which command owns =mwsync.yaml= and =_cache/= versus =_mwmap/=, while
 both continue sharing working files.  Port behavior incrementally; do not rename
 or remove =mwsync.py= merely because the repositories have been combined.
@@ -67,7 +67,7 @@ Run both test suites, repeat the California coexistence workflow, inspect the
 combined history, and verify fresh-clone setup.  Merge the =mwmap= branch into
 =mwsync/main= only after Rob agrees the repository merge is successful.
 
-*** TODO [#B] t0001.9 Decide the standalone mwmap repository's later status
+*** DONE [#B] t0001.9 Decide the standalone mwmap repository's later status
 After the combined branch lands, decide whether this repository becomes an
 archive, read-only mirror, or temporary import source.  Keep links and
 contributor instructions clear until =mwmap.py= eventually replaces

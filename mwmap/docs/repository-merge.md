@@ -63,3 +63,8 @@ The actual import completed on 2026-08-13. Commit `8c0e93b` has the original
 `mwsync` tip `d606b5c` and exact `mwmap` tip `7a52ade` as its parents. The
 ancestry and omitted-commit checks passed, and the branch was published as
 `github/mwmap` before the primary checkout switched to track it.
+
+The standalone source is retained as a clean archival checkout at
+`/home/robla/src/mwmap2`. `/home/robla/src/mwmap` is now a compatibility
+symlink to the imported subtree. New development belongs on the combined
+repository's `mwmap` branch; the archive is not a second writable authority.

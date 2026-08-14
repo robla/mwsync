@@ -30,7 +30,9 @@ its `mwsync.yaml`/`_cache/` workflow remain usable during the transition.
 Run the imported CLI from a source checkout with `python3 mwmap/mwmap.py`.
 See [`mwmap/tasks.org`](mwmap/tasks.org) for the locked roadmap and
 [`mwmap/docs/repository-merge.md`](mwmap/docs/repository-merge.md) for the
-history-preserving import record.
+history-preserving import record. During the transition, follow
+[`docs/coexistence.md`](docs/coexistence.md) when both implementations manage
+the same working files.
 
 ## Relationship to other MediaWiki synchronization tools
 

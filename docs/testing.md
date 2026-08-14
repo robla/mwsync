@@ -1,6 +1,7 @@
-# Pytest Suite Design for mwsync.py
+# Pytest Suite Design
 
-This document outlines the testing strategy, tools, and a minimal set of first-pass tests for implementing a `pytest`-based test suite in the `mwsync` repository.
+This repository has a legacy suite under `tests/` and next-generation
+specifications under `mwmap/tests/`.
 
 ## Testing Strategy and Tools
 
@@ -16,32 +17,32 @@ To keep the repository lightweight and aligned with standard Python workflows, t
 
 ### Layout and Invocation
 
-Tests live under `tests/` at the repo root, named `test_*.py`. Run the suite with:
+Tests are named `test_*.py`. Run them with:
 
 ```bash
-python3 -m pytest                          # full suite
-python3 -m pytest tests/test_rcmgr.py      # one file
-python3 -m pytest -k idempotent            # by keyword
+pytest -q tests                            # green legacy suite
+pytest -q mwmap/tests                      # next-generation specifications
+pytest -q                                  # combined, intentionally red in t0002
 ```
 
-Pytest is the only test-time dependency; install it with `pip install pytest` (or via a virtualenv).
+Install test and lint dependencies with `pip install -r requirements-dev.txt`.
+CI enforces the legacy suite, the 38 currently passing next-generation tests,
+and Ruff lint. It also runs the 11 `t0002` specifications as a visible
+non-blocking step. Bare `pytest` remains intentionally red until those features
+are implemented.
 
 A `pytest.ini` at the repo root is **required**, not optional:
 
 ```ini
 [pytest]
-testpaths = tests
+testpaths = tests mwmap/tests
 pythonpath = .
 ```
 
 It does two things, both necessary:
 
-- **`testpaths = tests`** pins collection to `tests/`. A bare `pytest` then
-  collects only that directory and never walks the rest of the checkout. This
-  matters because a working copy may contain symlinks or large unrelated
-  directories at its root; without this, collection can descend into them and
-  hang. Contributors are free to keep such symlinks locally — pinning collection
-  keeps them harmless rather than enumerating any specific names here.
+- **`testpaths = tests mwmap/tests`** pins collection to both suites. A bare
+  `pytest` never walks unrelated checkout directories or local symlinks.
 - **`pythonpath = .`** puts the repo root on `sys.path` so tests can
   `import rcmgr` / `import mwsync`. The `pytest` console script does not add the
   current directory to `sys.path`; only `python -m pytest` does. Without this,
@@ -51,8 +52,7 @@ Do not delete `pytest.ini` thinking pytest's defaults suffice — they do not in
 this repo.
 
 If you explicitly collect the whole tree (for example `pytest .`) you opt out of
-`testpaths`, so a checkout with root-level symlinks to large trees can be slow;
-prefer the bare `pytest` or name a path under `tests/`.
+`testpaths`; prefer bare `pytest` or name one of the two test directories.
 
 ---
 
