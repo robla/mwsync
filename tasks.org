@@ -4,9 +4,10 @@
 
 * Numbering Status
 
-This is a provisional ordering.  Task IDs may be renumbered and tasks may move
-until Rob and the contributors agree that the ordering is locked.  After that
-agreement, remove this exception and treat every task ID as immutable.
+Task numbering was locked on 2026-08-13.  Existing task IDs are immutable: do
+not renumber them or reuse an ID after removing or completing a task.  Add newly
+discovered work under the appropriate existing task or assign the next unused
+top-level ID.
 
 * Tasks
 ** TODO [#A] t0001 Merge the mwmap repository into mwsync  :git:repository:
@@ -20,7 +21,7 @@ source tips, branches, remotes, and tags immediately before import.  Do not
 rewrite, delete, or repurpose the standalone =mwmap= repository, and move aside
 the untracked =~/src/mwsync/mwmap= symlink before importing at that path.
 
-*** TODO [#A] t0001.2 Rehearse the exact non-squashed subtree import
+*** DONE [#A] t0001.2 Rehearse the exact non-squashed subtree import
 Use a disposable clone of the local =mwsync= repository so its unpushed history
 is included.  Branch =mwmap= from =main=, add the standalone repository as the
 =mwmap-source= remote, fetch its =main= branch, and run
@@ -46,7 +47,9 @@ merge; do not rewrite commits merely to make old paths match =mwmap/=.
 Resolve root-level documentation, agent instructions, ignores, test discovery,
 and script-path assumptions.  Done: legacy =mwsync.py= works from the combined
 root and imported =mwmap/mwmap.py= plus its offline suite work from the
-subdirectory and from combined-root test commands.
+subdirectory and from combined-root test commands.  Reconcile the two
+=pytest.ini= files so one root command collects both suites without erasing the
+intentional failing specifications for later tasks.
 
 *** TODO [#A] t0001.6 Establish baseline checks in the combined repository
 Document commands that run both suites and add lightweight CI for them.  Decide

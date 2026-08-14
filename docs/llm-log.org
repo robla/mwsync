@@ -85,3 +85,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** Gemini [2026-08-13 Thu 17:34 PDT]: add credentials, merge override, and push tracking tasks to tasks.org.
 ** ChatGPT [2026-08-13 Thu 17:44 PDT]: review and tighten the provisional task roadmap.
 ** ChatGPT [2026-08-13 Thu 18:12 PDT]: finalize the pre-lockdown task order and import plan.
+** ChatGPT [2026-08-13 Thu 18:21 PDT]: lock task IDs and rehearse the history-preserving repository import.
