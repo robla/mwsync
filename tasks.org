@@ -21,9 +21,10 @@ without silently rewriting configuration.
 
 *** TODO [#A] t0001.2 Add per-article and per-upstream command selection
 Done: support =status [PATH]=, =fetch [PATH] [--upstream NAME]=,
-=merge [PATH] [--upstream NAME]=, and =push [PATH] [--upstream NAME]=.
-Reject unknown or ambiguous upstream names; keep =pull= and =preview=
-on the primary upstream by default.
+=merge [PATH] [--upstream NAME]=, =preview [PATH] [--upstream NAME]=, and
+=push [PATH] [--upstream NAME]=.
+Reject unknown or ambiguous upstream names; keep =pull= and an unqualified
+=preview= on the primary upstream by default.
 
 *** TODO [#A] t0001.3 Upgrade status and fsck for mixed mapping schemas
 Done: report every upstream and its state, retain readable legacy output, allow
@@ -32,123 +33,149 @@ base revision, and cache independently.
 
 *** TODO [#A] t0001.4 Upgrade fetch, merge, pull, and preview
 Done: =fetch PATH= visits all tracked upstreams, targeted fetch visits one,
-=merge PATH= merges the primary (or specified upstream), =pull= fetches
-and merges only the primary, and advancing one base never advances another.
-Preview renders through the primary wiki until an explicit preview selector
-is justified.
+=merge PATH= merges the primary, and explicit =--upstream NAME= can merge a
+different tracked upstream without changing =primary_upstream=.  =pull=
+fetches and merges only the primary, and advancing one base never advances
+another.  Preview renders through the primary wiki by default or through an
+explicitly selected target wiki.
 
 *** TODO [#A] t0001.5 Implement page-at-a-time upstream pairing
 Done: =pair page crostini:California California.mw= attaches a second upstream
 to the existing mapping.  Record an existing target as tracked; record a missing
 target as =state: not_created= without requiring a fake page ID.
 
-*** TODO [#A] t0001.6 Make pending commits mapping-scoped and durable
+*** TODO [#A] t0001.6 Define upstream direction and commit target intent
+Why: "clear when intended targets are complete" is undefined until mwmap knows
+which upstreams a commit is meant to reach.  Done: decide whether direction and
+write intent live in mapping policy, commit metadata, command selection, or a
+small combination; represent read-only and writable upstreams without assuming
+every configured upstream receives every commit.
+
+*** TODO [#A] t0001.7 Make pending commits mapping-scoped and durable
 Why: the current pending commit lives under one upstream's disposable page
 cache.  Done: stage the local body once outside remote/page-ID identity, record
-the base for each target, track which upstreams have pending staged commits
-vs which ones are already pushed, preserve legacy single-upstream behavior,
-and define safe cleanup and recovery semantics.
+the base and intended delivery state for each target, preserve legacy
+single-upstream behavior, and define safe cleanup and recovery semantics.
 
-*** TODO [#A] t0001.7 Push one commit independently to tracked upstreams
+*** TODO [#A] t0001.8 Support remote-specific credentials
+Done: normalize remote names to uppercase environment suffixes, for example
+=MWMAP_MW_USER_CROSTINI= and =MWMAP_MW_PASSWORD_CROSTINI=, before falling back
+to the global variables.  Detect normalization collisions, never store secrets
+in workspace config, and support two remotes with different accounts in one
+process.
+
+*** TODO [#A] t0001.9 Make insecure credential transport explicit
+Why: the Crostini target currently uses plain HTTP, so login credentials are
+not protected in transit.  Done: refuse authenticated HTTP writes by default
+and provide one conspicuous per-remote or per-command opt-in suitable for a
+trusted local VM network; never weaken HTTPS remotes globally.
+
+*** TODO [#A] t0001.10 Push one commit independently to tracked upstreams
 Done: targeted push uses that upstream's =base_revid=, advances only that
 upstream, and leaves the staged body available for unpushed upstreams.  Clear it
 only when its intended targets are complete or the user explicitly replaces it.
+An explicit =--upstream= is automation-safe; an early default-target push asks
+for confirmation, and a write spanning multiple targets requires explicit intent.
 
-*** TODO [#A] t0001.8 Create missing MediaWiki targets safely by title
+*** TODO [#A] t0001.11 Create missing MediaWiki targets safely by title
 Done: creation sends =title= and =createonly=1=, never an invented page ID or
 =baserevid=.  Cache the returned revision and record its =pageid=,
 =base_revid=, and =state: tracked= only after confirmed success.
 
-*** TODO [#A] t0001.9 Make the offline compatibility suite green
+*** TODO [#A] t0001.12 Make the offline compatibility suite green
 Done: the mixed-schema, selector, lifecycle, create-only, preview, fsck, and
 migration-preservation tests pass while all existing legacy tests remain green.
+Also cover target intent, credential-name normalization, and authenticated HTTP
+refusal/opt-in without contacting a live wiki.
 
-*** TODO [#A] t0001.10 Run the California coexistence smoke test
+*** TODO [#A] t0001.13 Run the California coexistence smoke test
 In =~/tmpsorta/mwmap-electowiki=, migrate only =California.mw=, attach the
 Crostini target, commit once, and push explicitly to each wiki.  Before and
 afterward, verify =mwsync.py= still works with =mwsync.yaml=, =_cache/=, and the
 same working file.  Production Electowiki writes remain user-directed.
 
-*** TODO [#B] t0001.11 Support remote-specific credentials
-Done: resolve environment variables using the remote name (e.g. =MWMAP_MW_USER_crostini=) before falling back to the global =MWMAP_MW_USER=.
-
-** TODO [#A] t0002 Make migration and coexistence boring  :migration:compatibility:
-Keep =mwmap= state isolated under =_mwmap/= while allowing =mwsync.py= to own
-=mwsync.yaml= and =_cache/=.  Neither tool owns the shared working files
-exclusively.
-
-*** DONE [#A] t0002.1 Implement explicit per-article migration and =--all=
-Bare migration refuses to guess among multiple legacy mappings.  Migration
-reads the legacy filename when necessary, writes =_mwmap/mwmap.yaml=, and keeps
-the old file available for recovery.
-
-*** TODO [#A] t0002.2 Remove the remaining load-bearing config version
-Why: =initial_config()=, config loading, tests, and README still introduce
-=version: 1=.  Done: infer schema from mapping shape everywhere and remove stale
-version-number claims without silently rewriting ordinary reads.
-
-*** TODO [#A] t0002.3 Make new clone and pair operations write the current schema
-Done: new mappings use =primary_upstream= and =upstreams:= directly, while old
-single-upstream mappings remain readable until explicitly migrated.
-
-*** TODO [#B] t0002.4 Document and test shared-working-file concurrency
-Explain that each tool has independent config/cache/base state and may observe
-the other's working-file edits.  Provide a safe sequence for switching tools
-and warn against simultaneous commit/merge operations on the same file.
-
-*** TODO [#B] t0002.5 Define retirement of =_mwmap/config.yaml= fallback
-Do not delete or rewrite the legacy file automatically.  Decide when duplicate
-old/new files should warn, how users confirm migration, and whether an explicit
-cleanup command is ever warranted.
-
-** TODO [#A] t0003 Merge the mwmap repository into mwsync  :git:repository:
+** TODO [#A] t0002 Merge the mwmap repository into mwsync  :git:repository:
 Make the =mwsync= repository the authoritative combined repository.  Import
 =mwmap= as a subdirectory first, preserve useful history from both projects,
 and perform the consolidation primarily on a branch named =mwmap=.
 
-*** TODO [#A] t0003.1 Design and rehearse the history-preserving import
+*** TODO [#A] t0002.1 Design and rehearse the history-preserving import
 Record clean source commits, remotes, branches, tags, and a recoverable command
 sequence before changing either repository.  Decide whether to use a non-squash
 =git subtree= import or another explicit history-preserving method; verify the
 result in a disposable clone first.
 
-*** TODO [#A] t0003.2 Create the mwsync =mwmap= branch and import the subdirectory
+*** TODO [#A] t0002.2 Create the mwsync =mwmap= branch and import the subdirectory
 Branch =mwmap= from =mwsync/main=, then import this repository at =mwmap/=
 without a nested =.git= directory.  Preserve authorship and commit ancestry and
 do not rewrite or delete the standalone source repository during the import.
+Once the import is verified, make the combined branch the development authority
+instead of accumulating independent feature commits in two writable histories.
 
-*** TODO [#A] t0003.3 Make the combined tree understandable and runnable
+*** TODO [#A] t0002.3 Make the combined tree understandable and runnable
 Resolve root-level documentation, agent instructions, ignores, test discovery,
 and script-path assumptions.  Done: =mwsync.py= works from the combined root and
 the imported =mwmap/mwmap.py= plus its offline suite work from the subdirectory.
 
-*** TODO [#A] t0003.4 Keep both implementations usable during replacement
+*** TODO [#A] t0002.4 Keep both implementations usable during replacement
 Document which command owns =mwsync.yaml= and =_cache/= versus =_mwmap/=, while
 both continue sharing working files.  Port behavior incrementally; do not rename
 or remove =mwsync.py= merely because the repositories have been combined.
 
-*** TODO [#A] t0003.5 Verify the combined branch before merging to =main=
+*** TODO [#A] t0002.5 Verify the combined branch before merging to =main=
 Run both test suites, repeat the California coexistence workflow, inspect the
 combined history, and verify fresh-clone setup.  Merge the =mwmap= branch into
 =mwsync/main= only after Rob agrees the repository merge is successful.
 
-*** TODO [#B] t0003.6 Decide the standalone mwmap repository's later status
+*** TODO [#B] t0002.6 Decide the standalone mwmap repository's later status
 After the combined branch lands, decide whether this repository becomes an
 archive, read-only mirror, or temporary import source.  Keep links and contributor
 instructions clear until =mwmap.py= eventually replaces =mwsync.py=.
 
+** TODO [#A] t0003 Make migration and coexistence boring  :migration:compatibility:
+Keep =mwmap= state isolated under =_mwmap/= while allowing =mwsync.py= to own
+=mwsync.yaml= and =_cache/=.  Neither tool owns the shared working files
+exclusively.
+
+*** DONE [#A] t0003.1 Implement explicit per-article migration and =--all=
+Bare migration refuses to guess among multiple legacy mappings.  Migration
+reads the legacy filename when necessary, writes =_mwmap/mwmap.yaml=, and keeps
+the old file available for recovery.
+
+*** TODO [#A] t0003.2 Remove the remaining load-bearing config version
+Why: =initial_config()=, config loading, tests, and README still introduce
+=version: 1=.  Done: infer schema from mapping shape everywhere and remove stale
+version-number claims without silently rewriting ordinary reads.
+
+*** TODO [#A] t0003.3 Make new clone and pair operations write the current schema
+Done: new mappings use =primary_upstream= and =upstreams:= directly, while old
+single-upstream mappings remain readable until explicitly migrated.
+
+*** TODO [#B] t0003.4 Document and test shared-working-file concurrency
+Explain that each tool has independent config/cache/base state and may observe
+the other's working-file edits.  Provide a safe sequence for switching tools
+and warn against simultaneous commit/merge operations on the same file.
+
+*** TODO [#B] t0003.5 Define retirement of =_mwmap/config.yaml= fallback
+Do not delete or rewrite the legacy file automatically.  Decide when duplicate
+old/new files should warn, how users confirm migration, and whether an explicit
+cleanup command is ever warranted.
+
 ** TODO [#A] t0004 Make mwmap legacy-mwsync-aware during coexistence  :legacy:compatibility:
-Once the repositories are merged (t0003), let =mwmap.py= and legacy =mwsync.py=
-manage the same working files side by side at first, then narrow legacy's
-freedom to act on its own terms over time instead of leaving silent
-dual-management in place indefinitely.
+Once the repositories are merged (t0002), let =mwmap.py= and legacy =mwsync.py=
+manage the same working files side by side deliberately.  Detect and explain
+cross-tool state instead of leaving silent dual-management in place, but do not
+remove coexistence before the replacement reaches parity.
 
 *** TODO [#A] t0004.1 Read legacy =mwsync.yaml=/=_cache/= state instead of hand-copying it
 Why: today's draft process (=docs/migration.md=) has a user manually retype
 each =mwsync.yaml= article entry into =_mwmap/mwmap.yaml=.  Done: =mwmap= can
 detect an existing legacy pairing for a title or local path and derive an
-equivalent mapping (remote, page id, base revision) from it, without requiring
-the user to re-enter anything =mwsync= already recorded.
+equivalent mapping from =mwsync.yaml=, revision sidecars, and =refs/base=,
+without requiring the user to re-enter state that =mwsync= already recorded.
+Legacy state does not contain MediaWiki =pageid=, so resolve it from the
+recorded base revid through the API (falling back carefully to title) rather
+than pretending it can be copied locally.
 
 *** TODO [#A] t0004.2 Define how two independent base-revision trackers coexist
 Why: =mwsync= records its base in =refs/base=/=refs/upstream= files; =mwmap=
@@ -162,24 +189,23 @@ Done: =mwmap fsck= (or an equivalent check) flags a working file whose legacy
 incorporated, before either tool merges or pushes against a stale assumption.
 
 *** TODO [#B] t0004.4 Give legacy =mwsync.py= a claimed-file check
-Why: this changes legacy's own source, only safe once t0003 brings it into
+Why: this changes legacy's own source, only safe once t0002 brings it into
 this repository as an editable file (never edit through the gitignored symlink
 before that).  Done: legacy =mwsync.py= can recognize that a file it's about to
-touch is also mapped in =_mwmap/mwmap.yaml=, as the hook point for the
-warn/refuse behavior below.
+touch is also mapped in =_mwmap/mwmap.yaml= and issue a specific coexistence
+warning before changing shared working content.
 
-*** TODO [#B] t0004.5 Stage legacy's response from warning to refusing
-Done: legacy =mwsync.py= only warns on a mwmap-claimed file at first, changing
-nothing about its own on-disk behavior; later, following the same
-warn-then-remove pattern as t0007.3/t0007.6, it refuses to act on a claimed
-file by default, with an explicit opt-out for users still deliberately running
-both tools.
+*** TODO [#B] t0004.5 Gate any legacy refusal on parity and cutover
+During coexistence, legacy =mwsync.py= warns but remains usable on a claimed
+file.  A default refusal belongs no earlier than t0007, after replacement
+parity and an explicit cutover decision; retain an opt-out if deliberate
+dual-tool operation remains supported then.
 
 *** TODO [#A] t0004.6 Extend the coexistence smoke test for auto-detected pairings
-Done: the t0001.10-style California smoke test also covers a file mwmap
+Done: the t0001.13-style California smoke test also covers a file mwmap
 onboards by reading an existing legacy pairing (not just =migrate=), and
-exercises legacy =mwsync.py= in both its warn and, once built, refuse modes
-against a mwmap-claimed file.
+exercises legacy =mwsync.py= warning without preventing the intentional
+coexistence workflow.
 
 ** TODO [#A] t0005 Harden revision and write safety  :safety:revisions:
 Close the recovery gaps that matter once =mwmap= performs real writes.
@@ -258,7 +284,8 @@ invocation, while preserving exit status and automation behavior.
 The Python package, imported =mwmap/= subdirectory, documentation, and
 =_mwmap/= durable state do not need to change on the same day.  Design explicit,
 recoverable metadata migration and legacy-read behavior before renaming paths;
-never strand an existing workspace for cosmetic consistency.
+never strand an existing workspace for cosmetic consistency.  Include
+=MWMAP_*= environment variables in the compatibility inventory.
 
 *** TODO [#B] t0007.5 Update tests, help, and documentation for the cutover
 Run the same command-surface and workspace tests through =mwsync=.  Clearly

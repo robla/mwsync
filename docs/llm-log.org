@@ -83,3 +83,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** Claude [2026-08-13 Thu 17:16 PDT]: add t0004 (mwmap legacy-mwsync awareness, staged warn-then-refuse for legacy) to tasks.org; renumber t0004-t0009 to t0005-t0010.
 ** Gemini [2026-08-13 Thu 17:26 PDT]: update GEMINI.md for new commands, mwmap.yaml rename, and cache layout.
 ** Gemini [2026-08-13 Thu 17:34 PDT]: add credentials, merge override, and push tracking tasks to tasks.org.
+** ChatGPT [2026-08-13 Thu 17:44 PDT]: review and tighten the provisional task roadmap.
