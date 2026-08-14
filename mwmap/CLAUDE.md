@@ -8,18 +8,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 with other local wiki-like formats (Zim notebooks, Org-mode files, Markdown
 trees). The core abstraction is a **map**: rules describing how wiki objects
 (page, subtree, namespace, whole wiki) correspond to local structures, with
-two-way sync as the long-term goal. It is a prototype/idea-stage companion to
-a sibling project, legacy `mwsync.py` — see "Relationship to mwsync" below.
+two-way sync as the long-term goal.
+
+This directory is the `mwmap/` subtree of the combined `mwsync` repository,
+imported non-destructively onto the `mwmap` branch (not yet merged to `main`;
+see `docs/repository-merge.md` for the import record). It is the intended
+next-generation replacement for the repo-root legacy `mwsync.py` — read the
+repo-root `CLAUDE.md` for that implementation, and the repo-root
+`docs/coexistence.md` for the rules when both tools manage the same working
+files during the transition. `tasks.org` here is the locked roadmap for that
+transition.
 
 `src/mwmap/` is the current CLI implementation. The root `mwmap.py` is a thin
 source-checkout entry point (adds `src/` to `sys.path`, calls `mwmap.cli.main()`)
 that the tests hardcode as `PROJECT_ROOT / "mwmap.py"`; the `mwmap` shell
 wrapper calls `python3 mwmap.py`. Locally, `mwm` is often used as a shorthand
 alias for `mwmap.py` in examples and conversation — the two names are
-interchangeable. The repository also holds design docs (`README.md`, `docs/`),
-contributor guidance (`AGENTS.md`, `GEMINI.md`), a provisional roadmap
-(`tasks.org`), and a pytest suite. Much of `git log` is still design history
-rather than implementation history.
+interchangeable. This subdirectory also holds design docs (`README.md`,
+`docs/`), contributor guidance (`AGENTS.md`, `GEMINI.md`), a roadmap
+(`tasks.org`, task IDs locked as of 2026-08-13), and a pytest suite. Much of
+`git log` is still design history rather than implementation history.
 
 ## Commands
 
@@ -151,14 +159,17 @@ init/remote/status path, and README.md for the full worked command list.
   `test_mediawiki.py`), never by hitting a live wiki, so the suite stays fast
   and offline. That fixture only covers the in-process tests, not the spawned
   CLI subprocess.
-- The `mwsync` symlink points to the sibling `mwsync` project
-  (`/home/robla/src/mwsync/mwsync.py`, a ~3,600-line monolith). It is
-  gitignored and **not part of this repo — read it for reference, never edit
-  through it.** `docs/legacy-code-copy.md` says what's safe to port verbatim
-  (MediaWiki-facing logic, merge algorithms) versus what must be re-homed
-  (anything touching page identity, config shape, or storage — mwmap uses
-  stable pageids and `mwmap.yaml`, not mwsync's title-derived keys and
-  `refs/base`/`refs/upstream` files).
+- **Legacy `mwsync.py` now lives at the combined repo root** (`../mwsync.py`
+  from here, a ~3,600-line monolith) — a real tracked file in this same repo,
+  not a gitignored symlink to a separate checkout. `docs/legacy-code-copy.md`
+  still says what's safe to port verbatim (MediaWiki-facing logic, merge
+  algorithms) versus what must be re-homed (anything touching page identity,
+  config shape, or storage — mwmap uses stable pageids and `mwmap.yaml`, not
+  mwsync's title-derived keys and `refs/base`/`refs/upstream` files). It's
+  editable in-repo now (e.g. `tasks.org` task `t0004.4` depends on that), but
+  people coexist on its current behavior — see the repo-root `CLAUDE.md` and
+  `docs/coexistence.md` before changing it, and don't rename or remove it
+  outside the `t0007` naming cutover.
 - Commit messages: concise, sentence-style summaries, no prefixes (e.g.
   "Clarify relationship between mwsync and mwmap"). Recent multi-model commits
   append an attribution suffix like `(Claude)` or `(Gemini)`.

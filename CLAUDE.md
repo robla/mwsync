@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repository scope
+
+This repository combines two implementations:
+
+- **`mwsync.py`** (this file's original subject) — the established, single-file legacy CLI at the repo root. Everything below this section describes it.
+- **`mwmap/`** — the next-generation replacement, imported as a subtree on the `mwmap` branch (not yet merged to `main`; see `mwmap/docs/repository-merge.md` for the import record). It has its own `mwmap/CLAUDE.md` — read that when working under `mwmap/`.
+
+Both may operate on the same `.mw` working files but keep independent sync state — read `docs/coexistence.md` before switching tools on a shared file. The transition plan and locked task IDs live in `mwmap/tasks.org`.
+
+`pytest -q` from this root collects both suites (legacy `tests/` + next-generation `mwmap/tests/`); expect 11 intentional failures until `mwmap/tasks.org` task `t0002` (multi-upstream) lands. `ruff check --no-cache .` is the enforced lint baseline. `.github/workflows/checks.yml` defines CI.
+
 ## Project
 
 `mwsync.py` is a single-file Python 3 CLI that syncs individual MediaWiki articles between a local `.mw` working copy and a remote wiki (default: Electowiki). Command shape and refs are deliberately git-like (`fetch` / `merge` / `commit` / `push` / `diff` / `log` / `show` / `checkout`).
@@ -63,4 +74,4 @@ Things to know when working on it:
 
 `AGENTS.md` is the source of truth for commit message style, code style, and PR expectations. Honor it — don't restate it here. Notably: short imperative commit subjects (e.g. `Add fetch dry-run guard - preserve local edits`), 4-space Python indentation, `snake_case`, keep dependencies to stdlib + PyYAML.
 
-There is no automated test suite. For changes, at minimum run `python3 -m py_compile mwsync.py ledecopy.py` and exercise the affected subcommand, ideally with `--dry-run` where supported.
+`tests/` holds the legacy pytest suite (`pytest -q tests`, currently 13 passing). For changes, at minimum run `python3 -m py_compile mwsync.py ledecopy.py`, the affected test file, and exercise the affected subcommand, ideally with `--dry-run` where supported.

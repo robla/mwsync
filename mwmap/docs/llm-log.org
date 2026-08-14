@@ -91,3 +91,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** ChatGPT [2026-08-13 Thu 19:27 PDT]: document safe legacy and next-generation coexistence.
 ** ChatGPT [2026-08-13 Thu 19:31 PDT]: add combined lint, test-baseline, and CI checks.
 ** ChatGPT [2026-08-13 Thu 19:31 PDT]: retain the standalone repository as a clean archive.
+** Claude [2026-08-13 Thu 22:20 PDT]: update root CLAUDE.md and mwmap/CLAUDE.md for the merged repo — combined-repo scope/test commands at root, drop the stale gitignored-mwsync-symlink framing here now that mwsync.py is a real in-repo sibling file.
