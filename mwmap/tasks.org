@@ -15,7 +15,7 @@ Make the =mwsync= repository the authoritative combined repository before the
 next substantial implementation phase.  Import =mwmap= as a subdirectory,
 preserve both complete histories, and work primarily on a branch named =mwmap=.
 
-*** TODO [#A] t0001.1 Prepare clean, recoverable import inputs
+*** DONE [#A] t0001.1 Prepare clean, recoverable import inputs
 Commit or deliberately exclude every change in both repositories.  Record both
 source tips, branches, remotes, and tags immediately before import.  Do not
 rewrite, delete, or repurpose the standalone =mwmap= repository, and move aside
@@ -28,14 +28,14 @@ is included.  Branch =mwmap= from =main=, add the standalone repository as the
 =git subtree add --prefix=mwmap mwmap-source main= without =--squash=.  Record
 the successful command sequence before changing the main checkout.
 
-*** TODO [#A] t0001.3 Create the combined =mwsync/mwmap= branch
+*** DONE [#A] t0001.3 Create the combined =mwsync/mwmap= branch
 Repeat the rehearsed import in the =mwsync= checkout.  The subtree merge must
 retain original =mwmap= commit IDs, authorship, timestamps, and ancestry while
 placing the current tree under =mwmap/= without a nested =.git= directory.
 After verification, use this combined branch as the development authority
 instead of accumulating independent feature commits in two writable histories.
 
-*** TODO [#A] t0001.4 Prove that both histories survived the import
+*** DONE [#A] t0001.4 Prove that both histories survived the import
 Verify that =git rev-list mwmap-source/main --not HEAD= is empty and that the
 recorded =mwmap= source tip passes =git merge-base --is-ancestor TIP HEAD=.
 Inspect old commits with =git show= and the combined graph with =git log=.
@@ -43,7 +43,7 @@ Preserve any source tags under unambiguous names before removing the temporary
 remote.  Historical =mwmap= paths may remain root-relative before the subtree
 merge; do not rewrite commits merely to make old paths match =mwmap/=.
 
-*** TODO [#A] t0001.5 Make the combined tree understandable and runnable
+*** DONE [#A] t0001.5 Make the combined tree understandable and runnable
 Resolve root-level documentation, agent instructions, ignores, test discovery,
 and script-path assumptions.  Done: legacy =mwsync.py= works from the combined
 root and imported =mwmap/mwmap.py= plus its offline suite work from the

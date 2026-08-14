@@ -54,5 +54,12 @@ python3 -m pytest -q mwmap/tests
 The first command must print nothing and the second must exit successfully.
 The rehearsal produced 13 passing legacy tests. The imported suite produced 38
 passes and 11 intentional failures specifying `t0002` work. Combined-root test
-discovery currently runs only the legacy suite and must be fixed under
-`t0001.5`.
+discovery initially ran only the legacy suite; the combined branch now includes
+both `tests` and `mwmap/tests` in root discovery.
+
+## Actual Import
+
+The actual import completed on 2026-08-13. Commit `8c0e93b` has the original
+`mwsync` tip `d606b5c` and exact `mwmap` tip `7a52ade` as its parents. The
+ancestry and omitted-commit checks passed, and the branch was published as
+`github/mwmap` before the primary checkout switched to track it.

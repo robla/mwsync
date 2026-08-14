@@ -10,11 +10,15 @@ This is especially important for synchronization behavior, merge behavior, page 
 
 ## Running Tests
 
-Run the current tests with:
+From the combined repository root, run this suite with:
 
 ```sh
-python3 -m pytest -q
+pytest -q mwmap/tests
 ```
+
+Use `pytest -q tests` for the legacy suite and bare `pytest -q` for combined
+discovery. The combined command currently includes intentional failing
+specifications for `t0002`; distinguish those from regressions in test reports.
 
 The current tests use PyYAML to inspect `_mwmap/mwmap.yaml`.
 

@@ -1,9 +1,11 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is a small Python CLI toolkit for Electowiki/MediaWiki workflows.
+This repository combines the established `mwsync` CLI with its next-generation
+replacement, currently developed under `mwmap/` on the `mwmap` branch.
 
 - `mwsync.py`: main sync CLI for local `.mw` working files and MediaWiki pages.
+- `mwmap/`: imported next-generation CLI, tests, design docs, and task roadmap.
 - `ledecopy.py`: creates an mwsync-compatible Electowiki draft from an enwiki lede.
 - `catmgr.py`: fetches and inspects the target wiki category cache.
 - `docs/`: design notes and specs, including `architecture-mwsync.md`,
@@ -21,6 +23,7 @@ Runtime state is created in the working directory where the tools are run:
 - `_cache/<Article_Key>/commit.mw` and `commit.json`: pending local edit for `push`.
 - `_cache/<Article_Key>/merge.json`: unresolved merge-conflict state.
 - `_cache/categories/`: planned category cache for `catmgr.py`.
+- `_mwmap/mwmap.yaml` and `_mwmap/cache/`: next-generation config and cache.
 
 The legacy `_cache/server--<Article_Key>.mw` format is intentionally not mainline
 state. Current code should detect it and produce a friendly migration/reset
@@ -30,6 +33,10 @@ error, not silently read it.
 Use Python 3 directly; there is no build system.
 
 - `python3 -m py_compile mwsync.py ledecopy.py`: syntax check both scripts.
+- `python3 mwmap/mwmap.py --help`: show next-generation subcommands.
+- `pytest -q tests`: run the green legacy suite.
+- `pytest -q mwmap/tests`: run next-generation specifications.
+- `pytest -q`: collect both suites from the combined root.
 - `python3 mwsync.py --help`: show mwsync subcommands.
 - `python3 ledecopy.py --help`: show ledecopy usage.
 - `python3 catmgr.py --help`: show category cache commands.
@@ -63,7 +70,17 @@ Use the MediaWiki Action API (`w/api.php`) for current scripts. Set a
 User-Agent on HTTP requests.
 
 ## Testing Guidelines
-There is no committed automated test suite yet. For changes, at minimum run:
+The repository has separate legacy and next-generation pytest suites. During
+the `t0002` TDD phase, the combined command intentionally reports 11 failures;
+do not hide them by running only root `tests/`. For changes, run the affected
+suite and report the known baseline separately from new failures.
+
+Do not write tests concurrently with implementation unless explicitly
+requested. If existing tests are insufficient for a safe change, stop and ask
+before editing. Every new test must begin with a comment under 500 characters
+describing what it hopes to accomplish.
+
+At minimum also run:
 
 - `python3 -m py_compile mwsync.py ledecopy.py`
 - `python3 mwsync.py --help`
@@ -74,8 +91,15 @@ Use mocked/local smoke tests for network-sensitive behavior when possible. If
 live Electowiki/enwiki behavior matters, say whether you did or did not run a
 live network test.
 
-If tests are added later, place them under `tests/` and name files
-`test_<feature>.py`.
+Place legacy tests under `tests/` and next-generation tests under
+`mwmap/tests/`. Name files `test_<feature>.py`.
+
+## Combined-Repository Transition
+
+Treat the `mwmap` branch in this repository as the development authority. Do
+not accumulate new implementation commits in the standalone `mwmap` checkout.
+Keep legacy `mwsync.py` and its state formats usable until the roadmap explicitly
+cuts over command names. The locked roadmap is `mwmap/tasks.org`.
 
 ## Commit & Pull Request Guidelines
 Use short, imperative commit subjects, optionally with context after a dash, for

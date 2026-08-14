@@ -2,7 +2,11 @@
 
 ## Project Structure & Module Organization
 
-This repository is a prototype-stage implementation and design repository for `mwmap`. `src/mwmap/` contains the CLI implementation, `mwmap.py` is the source-checkout entry point, `docs/` contains notes, and `tests/` contains pytest specs. The `mwsync` path is a gitignored symlink to the sibling `mwsync` project and should not be treated as part of this repo.
+This subtree contains the prototype next-generation implementation imported
+into the combined `mwsync` repository. `src/mwmap/` contains the CLI,
+`mwmap.py` is its source-checkout entry point, `docs/` contains design notes,
+and `tests/` contains pytest specifications. The parent repository's
+`AGENTS.md` also applies.
 
 Current Python source layout:
 
@@ -24,7 +28,8 @@ There is no build system or package metadata yet.
 - `git status --short`: check local changes before editing.
 - `git log --oneline`: review the short commit-history style.
 - `rg <term>`: search repository text quickly.
-- `python3 -m pytest -q`: run the current CLI milestone tests.
+- `pytest -q mwmap/tests`: run this suite from the combined repository root.
+- `python3 -m pytest -q`: run this suite from within `mwmap/`.
 
 When Python packaging is introduced, document the exact commands here before relying on them.
 
@@ -48,4 +53,7 @@ Pull requests should include a short purpose statement, a summary of changed fil
 
 ## Agent-Specific Instructions
 
-Do not edit through the gitignored `mwsync` symlink. Keep contributor guidance aligned with the prototype status and avoid inventing commands, package names, or workflows not present in the repo.
+Make implementation changes in the combined repository's `mwmap` branch, not
+in the former standalone checkout. Keep contributor guidance aligned with the
+prototype status and avoid inventing commands, package names, or workflows not
+present in the repository.

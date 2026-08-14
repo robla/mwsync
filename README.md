@@ -20,6 +20,18 @@ to pushing changes back through the MediaWiki API.
 Contributions are welcome; see [CONTRIBUTORS](CONTRIBUTORS) and
 [docs/contributor-guide.md](docs/contributor-guide.md) for more.
 
+## Next-generation implementation
+
+The `mwmap/` subtree contains the complete history of the next-generation
+implementation that is intended to replace `mwsync.py` incrementally. Work is
+currently consolidated on the `mwmap` branch; the established `mwsync.py` and
+its `mwsync.yaml`/`_cache/` workflow remain usable during the transition.
+
+Run the imported CLI from a source checkout with `python3 mwmap/mwmap.py`.
+See [`mwmap/tasks.org`](mwmap/tasks.org) for the locked roadmap and
+[`mwmap/docs/repository-merge.md`](mwmap/docs/repository-merge.md) for the
+history-preserving import record.
+
 ## Relationship to other MediaWiki synchronization tools
 
 `mwsync` is far from the only tool in this problem space.
