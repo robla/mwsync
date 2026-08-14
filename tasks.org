@@ -20,9 +20,10 @@ upstream and multi-upstream mappings as several mutable upstream records,
 without silently rewriting configuration.
 
 *** TODO [#A] t0001.2 Add per-article and per-upstream command selection
-Done: support =status [PATH]=, =fetch [PATH] [--upstream NAME]=, and
-=push [PATH] [--upstream NAME]=.  Reject unknown or ambiguous upstream names;
-keep =merge=, =pull=, and =preview= on the primary upstream by default.
+Done: support =status [PATH]=, =fetch [PATH] [--upstream NAME]=,
+=merge [PATH] [--upstream NAME]=, and =push [PATH] [--upstream NAME]=.
+Reject unknown or ambiguous upstream names; keep =pull= and =preview=
+on the primary upstream by default.
 
 *** TODO [#A] t0001.3 Upgrade status and fsck for mixed mapping schemas
 Done: report every upstream and its state, retain readable legacy output, allow
@@ -31,9 +32,10 @@ base revision, and cache independently.
 
 *** TODO [#A] t0001.4 Upgrade fetch, merge, pull, and preview
 Done: =fetch PATH= visits all tracked upstreams, targeted fetch visits one,
-=pull= fetches and merges only the primary, and advancing one base never
-advances another.  Preview renders through the primary wiki until an explicit
-preview selector is justified.
+=merge PATH= merges the primary (or specified upstream), =pull= fetches
+and merges only the primary, and advancing one base never advances another.
+Preview renders through the primary wiki until an explicit preview selector
+is justified.
 
 *** TODO [#A] t0001.5 Implement page-at-a-time upstream pairing
 Done: =pair page crostini:California California.mw= attaches a second upstream
@@ -43,8 +45,9 @@ target as =state: not_created= without requiring a fake page ID.
 *** TODO [#A] t0001.6 Make pending commits mapping-scoped and durable
 Why: the current pending commit lives under one upstream's disposable page
 cache.  Done: stage the local body once outside remote/page-ID identity, record
-the base for each target, preserve legacy single-upstream behavior, and define
-safe cleanup and recovery semantics.
+the base for each target, track which upstreams have pending staged commits
+vs which ones are already pushed, preserve legacy single-upstream behavior,
+and define safe cleanup and recovery semantics.
 
 *** TODO [#A] t0001.7 Push one commit independently to tracked upstreams
 Done: targeted push uses that upstream's =base_revid=, advances only that
@@ -65,6 +68,9 @@ In =~/tmpsorta/mwmap-electowiki=, migrate only =California.mw=, attach the
 Crostini target, commit once, and push explicitly to each wiki.  Before and
 afterward, verify =mwsync.py= still works with =mwsync.yaml=, =_cache/=, and the
 same working file.  Production Electowiki writes remain user-directed.
+
+*** TODO [#B] t0001.11 Support remote-specific credentials
+Done: resolve environment variables using the remote name (e.g. =MWMAP_MW_USER_crostini=) before falling back to the global =MWMAP_MW_USER=.
 
 ** TODO [#A] t0002 Make migration and coexistence boring  :migration:compatibility:
 Keep =mwmap= state isolated under =_mwmap/= while allowing =mwsync.py= to own
