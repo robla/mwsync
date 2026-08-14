@@ -1,0 +1,39 @@
+name: checks
+
+on:
+  push:
+    branches: [main, mwmap]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install development dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check --no-cache .
+      - name: Check entry points
+        run: |
+          python mwsync.py --help >/dev/null
+          python mwmap/mwmap.py --help >/dev/null
+      - name: Run legacy tests
+        run: pytest -q tests
+      - name: Run passing next-generation tests
+        run: >-
+          pytest -q mwmap/tests
+          --ignore=mwmap/tests/test_multi_upstream.py
+          --deselect=tests/test_mediawiki.py::test_create_page_uses_title_and_createonly
+      - name: Display t0002 failing specifications
+        continue-on-error: true
+        run: >-
+          pytest -q mwmap/tests/test_multi_upstream.py
+          mwmap/tests/test_mediawiki.py::test_create_page_uses_title_and_createonly
