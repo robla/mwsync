@@ -1,0 +1,126 @@
+#+TITLE: mwmap LLM summary
+
+* About this summary
+This file is a periodically refreshed, multi-LLM assessment of the current
+state of =mwmap=. It complements =docs/llm-log.org=: the log is append-only
+change history, while this file is a small set of longer current-state
+summaries.
+
+Each assisting model should maintain one entry under =* LLM summaries= and
+upsert that entry when asked for a fresh assessment. "Upsert" means:
+
+- If your model name already has an entry, replace that entry's timestamp and
+  body with your current assessment.
+- If your model name has no entry yet, add one.
+- Do not edit another model's entry except for mechanical file-format fixes.
+- Keep entries long enough to be useful, roughly 400 words, but not exhaustive.
+
+Entry format:
+
+: ** Name [YYYY-MM-DD Ddd HH:MM TZ]
+: Summary text...
+
+* LLM summaries
+** ChatGPT [2026-06-21 Sun 21:18 PDT]
+The project has moved from design-only scaffolding into a small but real
+prototype, and the current direction is mostly sound. The strongest architectural
+decision is treating files and cache layout as first-class product surface
+rather than incidental implementation detail. The move from hidden =.mwmap= to
+visible =_mwmap=, then from title-keyed cache directories to stable
+MediaWiki =pageid= directories, is the right kind of correction: it makes the
+on-disk model inspectable and robust against page moves. Likewise, backing away
+from a generic =latest.mw= file and using revid-named bodies plus
+=history.jsonl= preserves the most important lesson from =mwsync.py= without
+blindly copying its git-like =refs= vocabulary.
+
+The Claude/RobLa direction after the initial implementation is a clear
+improvement. Splitting =clone= into reusable pieces through =sync.py= and a
+=Remote= protocol prevents clone from becoming the next overloaded checkout.
+That seam matters because the whole point of =mwmap= is cross-store mapping:
+MediaWiki is only the first backend, and Zim/Org/Markdown-like stores will need
+their own backend behavior later. Page fetch, cache write, siteinfo fetch, and
+working-file write now have more obvious homes. Adding =fsck= early is also a
+good sign; this project will live or die by whether local state can be inspected
+and repaired without guessing.
+
+The main design tension is how much git alignment to keep. Git verbs are useful
+for user intuition, but the cache should not pretend to be a git object store.
+The current compromise is pragmatic: use familiar verbs where semantics match
+(=clone=, =status=, future =fetch=/=merge=/=push=), but keep the actual state
+model explicitly MediaWiki-aware: =pageid=, =revid=, =base_revid=,
+=history.jsonl=, and readable YAML sidecars. Avoiding =_mwmap/refs/= remains
+important unless the project later defines a non-misleading equivalent.
+
+Code readability is improving. Moving from a monolithic =mwmap.py= to
+=src/mwmap/{cli,commands,workspace,core,sync}= was worth doing once the call
+stack became hard to follow. The function naming pass also helped, especially
+=build_cli_parser=, =load_workspace_config=, =cache_page_rev=, and
+=parse_mediawiki_page_url=. I would continue using concise docstrings and
+module-level call-stack notes, but avoid larger comment blocks unless they
+define storage invariants.
+
+Near-term priorities: keep tests offline and targeted; add tests only when
+needed for confidence; document exact cache invariants; avoid expanding format
+conversion until raw MediaWiki page clone/fetch/status/fsck feel boring and
+predictable. The current path is promising because it is becoming concrete
+without losing sight of the file architecture.
+
+** Claude [2026-06-22 Mon 11:20 PDT]
+=mwmap= (aliased =mwm= locally; interchangeable) now implements a full
+single-page sync lifecycle, not just onboarding: =init=, =clone= (with
+=--follow= redirect handling), =remote add=, =status=, =fetch=, =merge=,
+=pull=, =commit=, =push=, =preview=, and =fsck=, over the thin =mwmap.py= ->
+=cli= -> =commands= -> =workspace=/=sync=/=core= stack. State is split exactly
+as the design calls for: =workspace.py= owns pairing/config and the two-layer
+cache; =sync.py= owns content movement; =core/remote.py= is the single
+=Remote= seam. The cache stays two-layer — canonical pageid-keyed
+=pages/<pageid>/= (revid bodies/sidecars, =history.jsonl=, =page.yaml=) plus a
+rebuildable =by-title/= alias index. =base_revid= (durable, config) is the
+merge-base; =current_revid= (cache) is the latest fetched. The merge is
+pure-Python diff3 (=core/textmerge.py=), deliberately *not* shelling out to
+=git merge-file=; push reuses mwsync's login/CSRF/edit primitives, edits by
+=pageid=, and guards on =baserevid= for conflict detection. Credentials come
+only from =MWMAP_MW_USER=/=MWMAP_MW_PASSWORD=. We also fixed working-tree
+filenames to be mwsync-style (root + =NNns_Name/= dirs, =/=→=__=, never a
+literal =:=), closing a colon-filename bug.
+
+The thing to watch now is =docs/hub-format.md= (ChatGPT's new spec). It's a
+strong vision doc but premature as "0.1": it diverges from decisions already
+implemented — it proposes TOML =maps/*.toml= sidecars and a
+=pages/<Remote>/<Title>.mw= working tree, whereas we run a single YAML
+=_mwmap/mwmap.yaml= and root + =NNns_= working files. More importantly it
+overloads =.mw=: today =.mw= is *exact upstream wikitext* (byte-preserved for
+safe same-site round-trips), but the hub format is a normalized *portable
+profile* with =<mwmap-raw>= escape hatches that "are not intended for
+publication." Our diff3 correctness depends on base/mine/other being the same
+dialect, so any normalization-on-round-trip would manufacture phantom
+conflicts. I'd hold the line: zero normalization for MW↔MW, and treat the rest
+of the hub spec (Google Docs/Zim/Org/Typst adapters, validation levels) as
+roadmap, not current contract.
+
+Tests remain offline-*enforced* (autouse socket-blocking fixture in
+=conftest.py=); 34 pass with the network down. The clearest remaining gaps are
+unchanged and worth keeping on the list: =fsck --rebuild= to regenerate the
+derived layer; alias verification that each =by-title/= link resolves to the
+*expected* pageid (collision-safe), not merely unbroken; and a single declared
+source of truth for =base_revid= across =mwmap.yaml= and =page.yaml=, with
+fsck flagging drift. Hold format conversion until raw clone/fetch/merge/push
+feel boring.
+
+** Gemini [2026-06-21 Sun 22:34 PDT]
+The project has evolved into a working CLI prototype with `init`, `remote add`, `clone`, `status`, and `fsck` subcommands. Over the recent development cycles, several critical refactoring steps have established a clean and robust architecture.
+
+The most significant structural improvement is the decoupling of the CLI commands from the underlying storage and network protocols. A `Remote` protocol now defines the backend interface, implemented initially via the `MediaWikiRemote` class in `src/mwmap/core/remote.py`. All state-transfer operations are consolidated in `src/mwmap/sync.py`. This separation ensures that the tool is ready for future mapping stores (such as Zim or Org-mode) without cluttering the CLI command files.
+
+Furthermore, the cache layout has been updated to a resilient two-tier model. To prevent page-move operations from orphaning the cache history, pages are canonically stored under pageid-keyed directories (`cache/<remote>/pages/<pageid>/`) along with revision metadata, bodies, and a `history.jsonl` log. To restore human-readability, a derived `by-title/` symlink directory structures namespace-aware links back to the pageid directories. This derived layer remains a pure function of the canonical data, enabling easy recreation.
+
+On CLI UX, the team aligned commands closer to modern version control rather than overloading legacy verbs:
+1. `clone` is now the onboarding entry-point, setting up a tracking workspace.
+2. Legacy `checkout` is retained as a deprecated alias pointing to `clone` for compatibility with `mwsync.py` habits.
+3. `restore` and `switch` are adopted as clean, specialized operations matching Git's split UX (reverting files vs switching mapping targets).
+4. The config and CLI have transitioned from using the term "sources" to "remotes", treating the local tree as the base and registering remotes.
+
+Next steps should prioritize:
+- Extending `fsck` with a `--rebuild` action to regenerate the derived `by-title/` directory in case of cache corruption or missing links.
+- Handling title-key collisions in the `by-title/` indexing.
+- Implementing offline-first `fetch`, `diff`, `merge`, and `push` subcommands, leveraging the `base_revid` tracking field to handle synchronization state correctly.
