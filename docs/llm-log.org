@@ -81,3 +81,4 @@ re-verified and adopted by Gemini on 2026-06-11.
 ** ChatGPT [2026-08-13 Thu 16:50 PDT]: schedule the mwmap-to-mwsync naming cutover.
 ** Claude [2026-08-13 Thu 17:00 PDT]: rewrite CLAUDE.md to cover the full command surface, mwmap.yaml rename, cache layout, and multi-upstream direction.
 ** Claude [2026-08-13 Thu 17:16 PDT]: add t0004 (mwmap legacy-mwsync awareness, staged warn-then-refuse for legacy) to tasks.org; renumber t0004-t0009 to t0005-t0010.
+** Gemini [2026-08-13 Thu 17:26 PDT]: update GEMINI.md for new commands, mwmap.yaml rename, and cache layout.
